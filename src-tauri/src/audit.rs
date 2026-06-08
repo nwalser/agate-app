@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use bitwarden_vault::{CipherType, CipherView};
 use chrono::Utc;
 use sha1::{Digest, Sha1};
-use zeroize::Zeroize;
+use zeroize::Zeroizing;
 
 use crate::dto::{ExposedResult, HealthBand, ItemAudit, VaultHealthReport};
 use crate::error::{AgateError, AgateResult, ErrorKind};
@@ -25,11 +25,13 @@ use crate::state::AppState;
 const OLD_PASSWORD_DAYS: i64 = 365;
 const HIBP_RANGE_URL: &str = "https://api.pwnedpasswords.com/range/";
 
-/// A decrypted login distilled to the fields the audit needs.
+/// A decrypted login distilled to the fields the audit needs. `password` is a
+/// `Zeroizing<String>` so the plaintext is scrubbed on every drop — including
+/// early returns (HIBP network errors) and panic unwinding, not just success.
 struct LoginAudit {
     id: String,
     name: String,
-    password: String,
+    password: Zeroizing<String>,
     username: Option<String>,
     uris: Vec<String>,
     has_totp: bool,
@@ -84,7 +86,7 @@ async fn collect_logins(state: &AppState) -> AgateResult<Vec<LoginAudit>> {
         out.push(LoginAudit {
             id: view.id.map(|i| i.to_string()).unwrap_or_default(),
             name: view.name.clone(),
-            password,
+            password: Zeroizing::new(password),
             username: login.username.clone(),
             uris,
             has_totp: login.totp.as_ref().map(|t| !t.is_empty()).unwrap_or(false),
@@ -106,7 +108,7 @@ fn band_for(score: u8) -> HealthBand {
 
 /// Run all offline checks and produce a vault-health report.
 pub async fn audit_offline(state: &AppState) -> AgateResult<VaultHealthReport> {
-    let mut logins = collect_logins(state).await?;
+    let logins = collect_logins(state).await?;
 
     // Reuse: group by SHA-1 of the password (hash, not plaintext).
     let mut groups: HashMap<String, usize> = HashMap::new();
@@ -129,7 +131,7 @@ pub async fn audit_offline(state: &AppState) -> AgateResult<VaultHealthReport> {
         for uri in &l.uris {
             inputs.push(uri.as_str());
         }
-        let score = u8::from(zxcvbn::zxcvbn(&l.password, &inputs).score());
+        let score = u8::from(zxcvbn::zxcvbn(l.password.as_str(), &inputs).score());
         let is_weak = score < 3;
         let is_insecure = l.uris.iter().any(|u| u.trim().to_lowercase().starts_with("http://"));
         let is_no_totp = !l.has_totp;
@@ -168,11 +170,7 @@ pub async fn audit_offline(state: &AppState) -> AgateResult<VaultHealthReport> {
     let penalty = reused as i32 * 10 + weak as i32 * 8 + insecure as i32 * 5 + old as i32 * 2;
     let score = (100 - penalty).clamp(0, 100) as u8;
 
-    // Scrub plaintext password buffers.
-    for l in &mut logins {
-        l.password.zeroize();
-    }
-
+    // `logins` (Zeroizing passwords) scrub automatically on drop.
     Ok(VaultHealthReport {
         score,
         band: band_for(score),
@@ -188,7 +186,7 @@ pub async fn audit_offline(state: &AppState) -> AgateResult<VaultHealthReport> {
 
 /// Opt-in HIBP exposed-password check via the k-anonymity range API.
 pub async fn audit_exposed(state: &AppState) -> AgateResult<Vec<ExposedResult>> {
-    let mut logins = collect_logins(state).await?;
+    let logins = collect_logins(state).await?;
 
     // Query each UNIQUE password once. Map prefix -> suffix -> count for matching.
     let client = reqwest::Client::builder()
@@ -244,10 +242,7 @@ pub async fn audit_exposed(state: &AppState) -> AgateResult<Vec<ExposedResult>> 
             }
         }
     }
-
-    for l in &mut logins {
-        l.password.zeroize();
-    }
+    // `logins` (Zeroizing passwords) scrub automatically on every exit path.
     Ok(results)
 }
 

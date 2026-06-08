@@ -32,7 +32,7 @@ import {
   Trash2,
   UserRound,
 } from 'lucide-solid';
-import { writeText } from '@tauri-apps/plugin-clipboard-manager';
+import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { ipc } from '../lib/ipc.ts';
 import { filterItems, type VaultFilter } from '../lib/search.ts';
@@ -177,6 +177,10 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
   // Ctrl/Cmd-K toggles the command palette.
   function onGlobalKeyDown(e: KeyboardEvent) {
     if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
+      // Don't open the palette over an open editor/audit modal — palette
+      // commands could switch the editor state without it remounting, leaving
+      // stale field values.
+      if (editor().mode !== 'closed' || showAudit()) return;
       e.preventDefault();
       setPaletteOpen((v) => !v);
     }
@@ -184,11 +188,26 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
   onMount(() => document.addEventListener('keydown', onGlobalKeyDown));
   onCleanup(() => document.removeEventListener('keydown', onGlobalKeyDown));
 
+  // Seconds before a copied secret is wiped from the clipboard.
+  const CLIPBOARD_CLEAR_SECONDS = 15;
+
   async function copy(label: string, value: string | null | undefined) {
     if (!value) return;
     try {
       await writeText(value);
-      pushToast('success', `${label} copied.`);
+      pushToast('success', `${label} copied — clears in ${CLIPBOARD_CLEAR_SECONDS}s.`);
+      const copied = value;
+      // Auto-clear, but only if the clipboard still holds what we wrote (don't
+      // clobber something the user copied afterwards).
+      setTimeout(() => {
+        void (async () => {
+          try {
+            if ((await readText()) === copied) await writeText('');
+          } catch {
+            // ignore: clipboard may be unavailable or hold non-text content
+          }
+        })();
+      }, CLIPBOARD_CLEAR_SECONDS * 1000);
     } catch (err) {
       toastError(err);
     }

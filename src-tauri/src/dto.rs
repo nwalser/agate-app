@@ -90,11 +90,12 @@ pub struct VaultItem {
     pub organization_id: Option<String>,
 }
 
-/// A single login URI.
+/// A single login URI (with its match strategy so edits round-trip).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LoginUri {
     pub uri: Option<String>,
+    pub match_type: Option<u8>,
 }
 
 /// Login-type detail.
@@ -103,6 +104,8 @@ pub struct LoginUri {
 pub struct LoginDetail {
     pub username: Option<String>,
     pub password: Option<String>,
+    /// The TOTP secret/URI itself (so an edit can preserve it).
+    pub totp: Option<String>,
     pub uris: Vec<LoginUri>,
     pub has_totp: bool,
 }
@@ -117,7 +120,7 @@ pub struct CustomField {
     pub field_type: String,
 }
 
-/// Full decrypted item detail for the detail pane.
+/// Full decrypted item detail for the detail pane and the editor (prefill).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ItemDetail {
@@ -125,8 +128,13 @@ pub struct ItemDetail {
     pub name: String,
     pub item_type: ItemType,
     pub favorite: bool,
+    /// Whether "require master password to view" (reprompt) is set.
+    pub reprompt: bool,
     pub notes: Option<String>,
     pub login: Option<LoginDetail>,
+    pub card: Option<CardInput>,
+    pub identity: Option<IdentityInput>,
+    pub ssh_key: Option<SshKeyInput>,
     pub fields: Vec<CustomField>,
     pub folder_id: Option<String>,
     pub organization_id: Option<String>,
@@ -221,7 +229,7 @@ pub struct LoginInput {
     pub uris: Vec<UriInput>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CardInput {
     pub cardholder_name: Option<String>,
@@ -232,7 +240,7 @@ pub struct CardInput {
     pub code: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IdentityInput {
     pub title: Option<String>,
@@ -255,7 +263,7 @@ pub struct IdentityInput {
     pub country: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SshKeyInput {
     pub private_key: String,

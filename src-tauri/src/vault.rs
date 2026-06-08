@@ -14,7 +14,7 @@
 use bitwarden_generators::{PassphraseGeneratorRequest, PasswordGeneratorRequest};
 use bitwarden_pm::PasswordManagerClient;
 use bitwarden_sync::SyncRequest;
-use bitwarden_vault::{generate_totp, Cipher, CipherType, CipherView};
+use bitwarden_vault::{generate_totp, Cipher, CipherRepromptType, CipherType, CipherView};
 use chrono::Utc;
 
 use crate::dto::{
@@ -140,13 +140,37 @@ pub fn view_to_detail(view: &CipherView) -> ItemDetail {
     let login = view.login.as_ref().map(|l| LoginDetail {
         username: l.username.clone(),
         password: l.password.clone(),
+        totp: l.totp.clone(),
         uris: l
             .uris
             .as_ref()
-            .map(|uris| uris.iter().map(|u| LoginUri { uri: u.uri.clone() }).collect())
+            .map(|uris| {
+                uris.iter()
+                    .map(|u| LoginUri { uri: u.uri.clone(), match_type: u.r#match.map(|m| m as u8) })
+                    .collect()
+            })
             .unwrap_or_default(),
-        has_totp: l.totp.is_some(),
+        has_totp: l.totp.as_ref().map(|t| !t.is_empty()).unwrap_or(false),
     });
+
+    // Type-specific sub-views round-tripped through serde so the editor can
+    // prefill every field (preventing edit-time data loss). Infallible: on a
+    // shape mismatch we fall back to None rather than panic.
+    let card = view
+        .card
+        .as_ref()
+        .and_then(|c| serde_json::to_value(c).ok())
+        .and_then(|v| serde_json::from_value(v).ok());
+    let identity = view
+        .identity
+        .as_ref()
+        .and_then(|i| serde_json::to_value(i).ok())
+        .and_then(|v| serde_json::from_value(v).ok());
+    let ssh_key = view
+        .ssh_key
+        .as_ref()
+        .and_then(|s| serde_json::to_value(s).ok())
+        .and_then(|v| serde_json::from_value(v).ok());
 
     let fields = view
         .fields
@@ -168,8 +192,12 @@ pub fn view_to_detail(view: &CipherView) -> ItemDetail {
         name: view.name.clone(),
         item_type: cipher_type_to_dto(view.r#type),
         favorite: view.favorite,
+        reprompt: matches!(view.reprompt, CipherRepromptType::Password),
         notes: view.notes.clone(),
         login,
+        card,
+        identity,
+        ssh_key,
         fields,
         folder_id: view.folder_id.map(|i| i.to_string()),
         organization_id: view.organization_id.map(|i| i.to_string()),

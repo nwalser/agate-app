@@ -313,6 +313,13 @@ pub fn run() {
                 .app_config_dir()
                 .unwrap_or_else(|_| std::path::PathBuf::from("."));
             app.manage(AppState::load(config_dir));
+
+            // Exclude the window from screen capture on Windows (decrypted
+            // secrets are rendered in the DOM).
+            #[cfg(target_os = "windows")]
+            if let Some(window) = app.get_webview_window("main") {
+                hello::protect_window(&window);
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

@@ -22,9 +22,22 @@ use windows::Security::Credentials::UI::{
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
 use windows::Win32::System::WinRT::IUserConsentVerifierInterop;
+use windows::Win32::UI::WindowsAndMessaging::{SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE};
 
 use crate::error::{AgateError, AgateResult, ErrorKind};
 use crate::state::AppState;
+
+/// Exclude the window from screen capture (screenshots / screen recording /
+/// screen-share) on Windows, so decrypted secrets can't be grabbed off-screen.
+/// Best-effort: capture shows the window as black where supported.
+pub fn protect_window(window: &WebviewWindow) {
+    if let Ok(hwnd) = window.hwnd() {
+        let h = HWND(hwnd.0 as isize as *mut core::ffi::c_void);
+        unsafe {
+            let _ = SetWindowDisplayAffinity(h, WDA_EXCLUDEFROMCAPTURE);
+        }
+    }
+}
 
 fn co_init() {
     // Idempotent; RPC_E_CHANGED_MODE if the thread was already initialized — fine.

@@ -15,7 +15,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["devtools"] }
+# NOTE: do NOT add the "devtools" feature here — it would enable the web
+# inspector in RELEASE builds (a debug surface exposing decrypted secrets in the
+# DOM). Debug builds enable devtools automatically without the feature.
+tauri = { version = "2" }
 tauri-plugin-log = "2"
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-opener = "2"

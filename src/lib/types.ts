@@ -79,11 +79,13 @@ export interface VaultItem {
 
 export interface LoginUri {
   uri: string | null;
+  matchType: number | null;
 }
 
 export interface LoginDetail {
   username: string | null;
   password: string | null;
+  totp: string | null;
   uris: LoginUri[];
   hasTotp: boolean;
 }
@@ -99,8 +101,12 @@ export interface ItemDetail {
   name: string;
   itemType: ItemType;
   favorite: boolean;
+  reprompt: boolean;
   notes: string | null;
   login: LoginDetail | null;
+  card: CardInput | null;
+  identity: IdentityInput | null;
+  sshKey: SshKeyInput | null;
   fields: CustomField[];
   folderId: string | null;
   organizationId: string | null;

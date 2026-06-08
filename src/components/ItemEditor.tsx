@@ -100,7 +100,7 @@ export default function ItemEditor(props: {
     props.item?.folderId ?? null,
   );
   const [favorite, setFavorite] = createSignal(props.item?.favorite ?? false);
-  const [reprompt, setReprompt] = createSignal(false);
+  const [reprompt, setReprompt] = createSignal(props.item?.reprompt ?? false);
   const [notes, setNotes] = createSignal(props.item?.notes ?? '');
   const [fields, setFields] = createSignal<FieldRow[]>(
     (props.item?.fields ?? []).map((f) => ({
@@ -114,46 +114,50 @@ export default function ItemEditor(props: {
   const [username, setUsername] = createSignal(props.item?.login?.username ?? '');
   const [password, setPassword] = createSignal(props.item?.login?.password ?? '');
   const [revealPw, setRevealPw] = createSignal(false);
-  const [totp, setTotp] = createSignal('');
+  // Prefill the real TOTP secret so an edit preserves it (backend also guards).
+  const [totp, setTotp] = createSignal(props.item?.login?.totp ?? '');
   const [uris, setUris] = createSignal<UriRow[]>(
     (props.item?.login?.uris ?? []).map((u) => ({
       uri: u.uri ?? '',
-      matchType: null,
+      matchType: u.matchType ?? null,
     })),
   );
 
-  // ---- card (no prefill available from ItemDetail) ----
-  const [cardholderName, setCardholderName] = createSignal('');
-  const [cardNumber, setCardNumber] = createSignal('');
-  const [cardBrand, setCardBrand] = createSignal('');
-  const [expMonth, setExpMonth] = createSignal('');
-  const [expYear, setExpYear] = createSignal('');
-  const [cardCode, setCardCode] = createSignal('');
+  // ---- card (prefilled from ItemDetail.card so edits don't wipe it) ----
+  const c = () => props.item?.card ?? null;
+  const [cardholderName, setCardholderName] = createSignal(c()?.cardholderName ?? '');
+  const [cardNumber, setCardNumber] = createSignal(c()?.number ?? '');
+  const [cardBrand, setCardBrand] = createSignal(c()?.brand ?? '');
+  const [expMonth, setExpMonth] = createSignal(c()?.expMonth ?? '');
+  const [expYear, setExpYear] = createSignal(c()?.expYear ?? '');
+  const [cardCode, setCardCode] = createSignal(c()?.code ?? '');
 
-  // ---- identity ----
-  const [idTitle, setIdTitle] = createSignal('');
-  const [firstName, setFirstName] = createSignal('');
-  const [middleName, setMiddleName] = createSignal('');
-  const [lastName, setLastName] = createSignal('');
-  const [idUsername, setIdUsername] = createSignal('');
-  const [company, setCompany] = createSignal('');
-  const [ssn, setSsn] = createSignal('');
-  const [passportNumber, setPassportNumber] = createSignal('');
-  const [licenseNumber, setLicenseNumber] = createSignal('');
-  const [email, setEmail] = createSignal('');
-  const [phone, setPhone] = createSignal('');
-  const [address1, setAddress1] = createSignal('');
-  const [address2, setAddress2] = createSignal('');
-  const [address3, setAddress3] = createSignal('');
-  const [city, setCity] = createSignal('');
-  const [stateRegion, setStateRegion] = createSignal('');
-  const [postalCode, setPostalCode] = createSignal('');
-  const [country, setCountry] = createSignal('');
+  // ---- identity (prefilled from ItemDetail.identity) ----
+  const idd = () => props.item?.identity ?? null;
+  const [idTitle, setIdTitle] = createSignal(idd()?.title ?? '');
+  const [firstName, setFirstName] = createSignal(idd()?.firstName ?? '');
+  const [middleName, setMiddleName] = createSignal(idd()?.middleName ?? '');
+  const [lastName, setLastName] = createSignal(idd()?.lastName ?? '');
+  const [idUsername, setIdUsername] = createSignal(idd()?.username ?? '');
+  const [company, setCompany] = createSignal(idd()?.company ?? '');
+  const [ssn, setSsn] = createSignal(idd()?.ssn ?? '');
+  const [passportNumber, setPassportNumber] = createSignal(idd()?.passportNumber ?? '');
+  const [licenseNumber, setLicenseNumber] = createSignal(idd()?.licenseNumber ?? '');
+  const [email, setEmail] = createSignal(idd()?.email ?? '');
+  const [phone, setPhone] = createSignal(idd()?.phone ?? '');
+  const [address1, setAddress1] = createSignal(idd()?.address1 ?? '');
+  const [address2, setAddress2] = createSignal(idd()?.address2 ?? '');
+  const [address3, setAddress3] = createSignal(idd()?.address3 ?? '');
+  const [city, setCity] = createSignal(idd()?.city ?? '');
+  const [stateRegion, setStateRegion] = createSignal(idd()?.state ?? '');
+  const [postalCode, setPostalCode] = createSignal(idd()?.postalCode ?? '');
+  const [country, setCountry] = createSignal(idd()?.country ?? '');
 
-  // ---- ssh key ----
-  const [privateKey, setPrivateKey] = createSignal('');
-  const [publicKey, setPublicKey] = createSignal('');
-  const [fingerprint, setFingerprint] = createSignal('');
+  // ---- ssh key (prefilled from ItemDetail.sshKey) ----
+  const sk = () => props.item?.sshKey ?? null;
+  const [privateKey, setPrivateKey] = createSignal(sk()?.privateKey ?? '');
+  const [publicKey, setPublicKey] = createSignal(sk()?.publicKey ?? '');
+  const [fingerprint, setFingerprint] = createSignal(sk()?.fingerprint ?? '');
 
   // ---- generator popover ----
   const [genOpen, setGenOpen] = createSignal(false);

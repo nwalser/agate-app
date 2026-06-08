@@ -222,6 +222,9 @@ pub async fn save_item(state: &AppState, input: ItemInput) -> AgateResult<()> {
             // Round-trip the decrypted view so unenumerated fields survive.
             let existing = decrypt_one(state, id).await?;
             let mut v = serde_json::to_value(&existing).map_err(build_err)?;
+            // The original login sub-view, captured before we overwrite it, so we
+            // can preserve fields the editor form does not carry.
+            let prev_login = v.get("login").cloned();
             v["name"] = json!(input.name);
             v["notes"] = json!(input.notes);
             v["favorite"] = json!(input.favorite);
@@ -229,6 +232,27 @@ pub async fn save_item(state: &AppState, input: ItemInput) -> AgateResult<()> {
             v["reprompt"] = reprompt_value(input.reprompt);
             v["fields"] = json!(build_fields(&input));
             set_type_payload(&mut v, &input)?;
+
+            // set_type_payload rebuilds the login sub-view from the form, which
+            // omits passkeys / password-revision date / autofill flag and would
+            // clear the TOTP secret when the editor couldn't show it. Restore
+            // those from the original so an edit never destroys hidden secrets.
+            if matches!(input.item_type, ItemType::Login) {
+                if let (Some(prev), Some(new_login)) = (prev_login.as_ref(), v.get_mut("login")) {
+                    for k in ["fido2Credentials", "passwordRevisionDate", "autofillOnPageLoad"] {
+                        if let Some(val) = prev.get(k) {
+                            new_login[k] = val.clone();
+                        }
+                    }
+                    let totp_blank = new_login.get("totp").map(|t| t.is_null()).unwrap_or(true);
+                    if totp_blank {
+                        if let Some(t) = prev.get("totp") {
+                            new_login["totp"] = t.clone();
+                        }
+                    }
+                }
+            }
+
             let edited: CipherView = serde_json::from_value(v).map_err(build_err)?;
             let cipher_id = parse_id::<CipherId>(id)?;
             encrypt_and_push(&client, edited, Some(cipher_id)).await
