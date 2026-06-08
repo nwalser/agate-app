@@ -47,3 +47,8 @@ bitwarden-vault = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef
 bitwarden-sync = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e" }
 bitwarden-generators = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e" }
 bitwarden-api-api = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e" }
+bitwarden-collections = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e" }
+bitwarden-state = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e" }
+zxcvbn = "3.1"
+sha1 = "0.10"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }

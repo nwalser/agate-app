@@ -11,7 +11,7 @@
 //! `Cipher`s here. Folder *names* are encrypted and their decryption path is in
 //! flux upstream, so v0.1 lists items without folder grouping (see `list_folders`).
 
-use bitwarden_generators::PasswordGeneratorRequest;
+use bitwarden_generators::{PassphraseGeneratorRequest, PasswordGeneratorRequest};
 use bitwarden_pm::PasswordManagerClient;
 use bitwarden_sync::SyncRequest;
 use bitwarden_vault::{generate_totp, Cipher, CipherType, CipherView};
@@ -39,7 +39,7 @@ fn cipher_type_to_dto(t: CipherType) -> ItemType {
 }
 
 /// A fresh handle to the unlocked client, or a typed error if locked.
-async fn client(state: &AppState) -> AgateResult<PasswordManagerClient> {
+pub(crate) async fn client(state: &AppState) -> AgateResult<PasswordManagerClient> {
     state
         .session
         .lock()
@@ -66,6 +66,22 @@ pub async fn sync(state: &AppState, force: bool) -> AgateResult<()> {
             Ok(c) => ciphers.push(c),
             Err(e) => log::warn!("skipping cipher that failed to decode: {e}"),
         }
+    }
+
+    // Populate the SDK's local cipher repository so repository-backed write ops
+    // work (notably `edit`, which reads the original to build password history).
+    // Best-effort: if no Cipher repository is registered, skip and log.
+    match client.0.platform().state().get::<Cipher>() {
+        Ok(repo) => {
+            for c in &ciphers {
+                if let Some(id) = c.id {
+                    if let Err(e) = repo.set(id, c.clone()).await {
+                        log::warn!("cipher repository populate failed: {e}");
+                    }
+                }
+            }
+        }
+        Err(e) => log::warn!("no cipher repository registered; edits may be limited: {e}"),
     }
 
     let mut session = state.session.lock().await;
@@ -115,7 +131,11 @@ fn view_to_list_item(view: &CipherView) -> VaultItem {
 /// Find and decrypt one cipher into full detail.
 pub async fn item_detail(state: &AppState, id: &str) -> AgateResult<ItemDetail> {
     let view = decrypt_one(state, id).await?;
+    Ok(view_to_detail(&view))
+}
 
+/// Map a decrypted `CipherView` into the frontend `ItemDetail` DTO.
+pub fn view_to_detail(view: &CipherView) -> ItemDetail {
     let login = view.login.as_ref().map(|l| LoginDetail {
         username: l.username.clone(),
         password: l.password.clone(),
@@ -142,7 +162,7 @@ pub async fn item_detail(state: &AppState, id: &str) -> AgateResult<ItemDetail> 
         })
         .unwrap_or_default();
 
-    Ok(ItemDetail {
+    ItemDetail {
         id: view.id.map(|i| i.to_string()).unwrap_or_default(),
         name: view.name.clone(),
         item_type: cipher_type_to_dto(view.r#type),
@@ -152,7 +172,7 @@ pub async fn item_detail(state: &AppState, id: &str) -> AgateResult<ItemDetail> 
         fields,
         folder_id: view.folder_id.map(|i| i.to_string()),
         organization_id: view.organization_id.map(|i| i.to_string()),
-    })
+    }
 }
 
 /// Generate the current TOTP code for an item that has one.
@@ -177,7 +197,7 @@ pub async fn item_totp(state: &AppState, id: &str) -> AgateResult<TotpCode> {
     Ok(TotpCode { code: response.code, period, remaining })
 }
 
-async fn decrypt_one(state: &AppState, id: &str) -> AgateResult<CipherView> {
+pub(crate) async fn decrypt_one(state: &AppState, id: &str) -> AgateResult<CipherView> {
     let (client, cipher) = {
         let session = state.session.lock().await;
         let client = session.cloned_client().ok_or_else(AgateError::not_authenticated)?;
@@ -221,10 +241,35 @@ pub async fn generate_password(state: &AppState, opts: PasswordGenOptions) -> Ag
         numbers: opts.numbers,
         special: opts.special,
         length,
+        avoid_ambiguous: opts.avoid_ambiguous,
+        min_number: opts.min_number,
+        min_special: opts.min_special,
         ..Default::default()
     };
     client
         .generator()
         .password(request)
+        .map_err(|e| AgateError::new(ErrorKind::Internal, format!("generate failed: {e}")))
+}
+
+/// Generate a passphrase (EFF wordlist) with the given options.
+pub async fn generate_passphrase(
+    state: &AppState,
+    opts: crate::dto::PassphraseGenOptions,
+) -> AgateResult<String> {
+    let num_words = opts.num_words.clamp(3, 20);
+    let client = match state.session.lock().await.cloned_client() {
+        Some(c) => c,
+        None => PasswordManagerClient::new(None),
+    };
+    let request = PassphraseGeneratorRequest {
+        num_words,
+        word_separator: if opts.word_separator.is_empty() { "-".into() } else { opts.word_separator },
+        capitalize: opts.capitalize,
+        include_number: opts.include_number,
+    };
+    client
+        .generator()
+        .passphrase(request)
         .map_err(|e| AgateError::new(ErrorKind::Internal, format!("generate failed: {e}")))
 }

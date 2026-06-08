@@ -5,7 +5,9 @@ import { invoke } from '@tauri-apps/api/core';
 import type {
   Folder,
   ItemDetail,
+  ItemInput,
   LoginResult,
+  PassphraseGenOptions,
   PasswordGenOptions,
   ServerConfig,
   SessionStatus,
@@ -57,4 +59,29 @@ export const ipc = {
 
   generatePassword: (options: PasswordGenOptions): Promise<string> =>
     invoke('generate_password', { options }),
+
+  generatePassphrase: (options: PassphraseGenOptions): Promise<string> =>
+    invoke('generate_passphrase', { options }),
+
+  // ---- vault write operations ----
+
+  saveItem: (input: ItemInput): Promise<void> => invoke('save_item', { input }),
+
+  cloneItem: (id: string): Promise<void> => invoke('clone_item', { id }),
+
+  setFavorite: (id: string, favorite: boolean): Promise<void> =>
+    invoke('set_favorite', { id, favorite }),
+
+  moveItems: (ids: string[], folderId: string | null): Promise<void> =>
+    invoke('move_items', { ids, folderId }),
+
+  deleteItems: (ids: string[], permanent: boolean): Promise<void> =>
+    invoke('delete_items', { ids, permanent }),
+
+  restoreItems: (ids: string[]): Promise<void> => invoke('restore_items', { ids }),
+
+  createFolder: (name: string): Promise<Folder> => invoke('create_folder', { name }),
+
+  renameFolder: (id: string, name: string): Promise<Folder> =>
+    invoke('rename_folder', { id, name }),
 };

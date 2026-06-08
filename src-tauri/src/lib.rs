@@ -7,6 +7,7 @@
 mod auth;
 mod dto;
 mod error;
+mod mutate;
 mod secrets;
 mod server;
 mod state;
@@ -17,8 +18,8 @@ use bitwarden_core::{init_host_platform_info, DeviceType, HostPlatformInfo};
 use tauri::Manager;
 
 use dto::{
-    Folder, ItemDetail, LoginResult, PasswordGenOptions, ServerConfig, SessionStatus, TotpCode,
-    TwoFactorInput, VaultItem,
+    Folder, ItemDetail, ItemInput, LoginResult, PassphraseGenOptions, PasswordGenOptions,
+    ServerConfig, SessionStatus, TotpCode, TwoFactorInput, VaultItem,
 };
 use error::AgateResult;
 use state::AppState;
@@ -128,6 +129,53 @@ async fn generate_password(state: State<'_>, options: PasswordGenOptions) -> Aga
     vault::generate_password(&state, options).await
 }
 
+#[tauri::command]
+async fn generate_passphrase(state: State<'_>, options: PassphraseGenOptions) -> AgateResult<String> {
+    vault::generate_passphrase(&state, options).await
+}
+
+// ---- vault write operations (mutate.rs) ----
+
+#[tauri::command]
+async fn save_item(state: State<'_>, input: ItemInput) -> AgateResult<()> {
+    mutate::save_item(&state, input).await
+}
+
+#[tauri::command]
+async fn clone_item(state: State<'_>, id: String) -> AgateResult<()> {
+    mutate::clone_item(&state, &id).await
+}
+
+#[tauri::command]
+async fn set_favorite(state: State<'_>, id: String, favorite: bool) -> AgateResult<()> {
+    mutate::set_favorite(&state, &id, favorite).await
+}
+
+#[tauri::command]
+async fn move_items(state: State<'_>, ids: Vec<String>, folder_id: Option<String>) -> AgateResult<()> {
+    mutate::move_items(&state, ids, folder_id).await
+}
+
+#[tauri::command]
+async fn delete_items(state: State<'_>, ids: Vec<String>, permanent: bool) -> AgateResult<()> {
+    mutate::delete_items(&state, ids, permanent).await
+}
+
+#[tauri::command]
+async fn restore_items(state: State<'_>, ids: Vec<String>) -> AgateResult<()> {
+    mutate::restore_items(&state, ids).await
+}
+
+#[tauri::command]
+async fn create_folder(state: State<'_>, name: String) -> AgateResult<Folder> {
+    mutate::create_folder(&state, name).await
+}
+
+#[tauri::command]
+async fn rename_folder(state: State<'_>, id: String, name: String) -> AgateResult<Folder> {
+    mutate::rename_folder(&state, &id, name).await
+}
+
 fn device_type() -> DeviceType {
     // The desktop variants vary across SDK revs; `SDK` is always present and is a
     // safe, accurate descriptor for a third-party client.
@@ -184,6 +232,15 @@ pub fn run() {
             item_detail,
             item_totp,
             generate_password,
+            generate_passphrase,
+            save_item,
+            clone_item,
+            set_favorite,
+            move_items,
+            delete_items,
+            restore_items,
+            create_folder,
+            rename_folder,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Agate");
