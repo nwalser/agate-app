@@ -57,11 +57,13 @@ async fn collect_logins(state: &AppState) -> AgateResult<Vec<LoginAudit>> {
             session.ciphers.clone(),
         )
     };
-    let ciphers_client = client.vault().ciphers();
+    // Synchronous key-store decrypt in a loop — avoids the async per-item
+    // feature-flag fetch that CiphersClient::decrypt does (hundreds of awaits).
+    let key_store = client.0.internal.get_key_store();
     let now = Utc::now();
     let mut out = Vec::new();
-    for cipher in ciphers {
-        let view: CipherView = match ciphers_client.decrypt(cipher).await {
+    for cipher in &ciphers {
+        let view: CipherView = match key_store.decrypt(cipher) {
             Ok(v) => v,
             Err(e) => {
                 log::warn!("audit: skipping undecryptable cipher: {e}");

@@ -101,6 +101,11 @@ pub async fn sync(state: &AppState, force: bool) -> AgateResult<()> {
 }
 
 /// Decrypt the cached ciphers into list rows.
+///
+/// Uses the key store's synchronous `decrypt` in a tight loop rather than the
+/// async `CiphersClient::decrypt` per item — the latter does an async
+/// feature-flag fetch on every call, which is hundreds of awaits for a large
+/// vault. This is the same `CipherView` output without that per-item overhead.
 pub async fn list_items(state: &AppState) -> AgateResult<Vec<VaultItem>> {
     let (client, ciphers) = {
         let session = state.session.lock().await;
@@ -108,14 +113,15 @@ pub async fn list_items(state: &AppState) -> AgateResult<Vec<VaultItem>> {
         (client, session.ciphers.clone())
     };
 
-    let ciphers_client = client.vault().ciphers();
+    let key_store = client.0.internal.get_key_store();
     let mut items = Vec::with_capacity(ciphers.len());
-    for cipher in ciphers {
-        let view = ciphers_client
-            .decrypt(cipher)
-            .await
-            .map_err(|e| AgateError::new(ErrorKind::Crypto, format!("decrypt failed: {e}")))?;
-        items.push(view_to_list_item(&view));
+    for cipher in &ciphers {
+        let decrypted: Result<CipherView, _> = key_store.decrypt(cipher);
+        match decrypted {
+            Ok(view) => items.push(view_to_list_item(&view)),
+            // A single undecryptable item shouldn't blank the whole list.
+            Err(e) => log::warn!("skipping item that failed to decrypt: {e}"),
+        }
     }
     Ok(items)
 }
