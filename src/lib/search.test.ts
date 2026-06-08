@@ -5,6 +5,8 @@ import type { VaultItem } from './types.ts';
 function item(partial: Partial<VaultItem>): VaultItem {
   return {
     id: partial.id ?? 'id',
+    accountEmail: partial.accountEmail ?? 'a@example.com',
+    accountLabel: partial.accountLabel ?? 'Bitwarden US',
     name: partial.name ?? 'name',
     itemType: partial.itemType ?? 'login',
     username: partial.username ?? null,

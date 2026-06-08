@@ -27,7 +27,7 @@ public use and not supported at this stage. The interface is unstable and will
 change without warning." We therefore:
 - Depend on `sdk-internal` as a **git dependency pinned through `Cargo.lock`**
   (never float `main` in a release).
-- Keep every SDK call behind the thin wrappers in `auth.rs` / `vault.rs` / `unlock.rs`
+- Keep every SDK call behind the thin wrappers in `auth.rs` / `vault.rs` / `appunlock.rs`
   so an SDK API break is contained to one layer, not spread across the app.
 - Treat the API docs at https://sdk-api-docs.bitwarden.com as the reference, and the
   `bw` crate in `sdk-internal` as the canonical login/sync example.
@@ -62,35 +62,55 @@ src-tauri/
     error.rs            # AgateError → serialized to the frontend (typed, no panics)
     dto.rs              # serde structs sent to the frontend (mirror src/lib/types.ts)
     server.rs           # Server config (cloud regions + self-hosted URL), prelogin/KDF
-    auth.rs             # login (email+master password), 2FA, logout
-    vault.rs            # sync, list items, item detail, TOTP, password generator
-    unlock.rs           # local-password unlock: wrap/unwrap the vault key
-    secrets.rs          # OS keychain (keyring) storage of the wrapped key + session
+    auth.rs             # master-password login helpers (2FA-capable), shared
+    appunlock.rs        # app-unlock: VMK wrap/unwrap, unlock-all, per-connection 2FA
+    connections.rs      # add/remove/list connections, app-wide lock + logout
+    vault.rs            # sync, unified item list, item detail, TOTP, generator (per-account)
+    mutate.rs           # vault writes (create/edit/delete/move/folders), routed by account
+    secrets.rs          # KEK/DEK crypto envelope + OS keychain (keyring) storage
 ```
 
-## Local-password unlock — security model (the headline feature)
-Goal: don't force the master password on every unlock, AND never persist the master
-password. Implemented in `secrets.rs` (the crypto envelope) + `unlock.rs` (the flow).
+## Unified app-unlock — security model (the headline feature)
+Goal: configure each Bitwarden connection once, then ONE app secret (an app password,
+or Windows Hello) unlocks **every** connection at once and the set survives a full app
+restart. Items from all unlocked vaults show in one unified list. Implemented in
+`secrets.rs` (the crypto envelope) + `appunlock.rs` (unlock flow) + `connections.rs`
+(connection management).
 
-- **First login** uses email + master password; the SDK unlocks the vault in memory.
-  The master password is never written to disk.
-- **Enabling local unlock** (`unlock::enable`): the user sets a separate local password.
-  We derive a key from it with **Argon2id** (random per-user salt) and seal a random
-  verifier token with **AES-256-GCM**, storing the blob in the **OS keychain**
-  (`keyring`). No plaintext check value is stored — opening the blob *is* the check.
-- **Lock** (`auth::lock`): when local unlock is configured, the app *soft-locks* — the
-  SDK client is moved to `Session.locked_client` (kept in memory) and the decrypted
-  item cache is cleared. Otherwise it hard-clears all key material.
-- **Unlock** (`unlock::unlock_local`): the local password must open the keychain blob
-  (GCM tag = the check), then the held client is reactivated — no master password.
-- **Current SDK limitation:** at the pinned `sdk-internal` rev, `SessionKey` has no
-  public serialization, so we cannot seal a *persistable* vault key to the keychain
-  yet. The held client therefore lives only in memory and does not survive a process
-  restart (after relaunch, unlock once with the master password). `secrets.rs` already
-  seals/opens arbitrary bytes, so when the SDK exposes a serializable unlock key,
-  `enable`/`unlock_local` seal/restore *that* instead of a verifier and local unlock
-  survives restarts. `unlock.rs` is the single integration point for that upgrade.
-- **Logout** clears the session and deletes the keychain blob.
+⚠️ **Inverted invariant — read this.** The original design promised "never persist the
+master password." That is **no longer true**, by deliberate, user-authorized design.
+Delivering "survives restart + the vault actually syncs" is only possible at the pinned
+SDK rev by re-logging-in on unlock (token injection is `pub(crate)`; there is no public
+token restore — see [[agate-sdk-restart-unlock-constraints]]), and `login_password`
+needs the cleartext password. So each connection's **master password is persisted,
+sealed**. Hardening below keeps that acceptable; do not "fix" the apparent contradiction
+by reintroducing the old in-memory-only soft-lock.
+
+- **KEK/DEK envelope** (`secrets.rs`): a random **Vault Master Key (VMK)** is the data
+  key; it seals every connection's master password into `cred:<email>` and is stable for
+  the install's life. The app password derives an **App Unlock Key (AUK)** with
+  **Argon2id**; the AUK only *wraps the VMK* (`app-unlock` keychain entry). Every seal is
+  **AES-256-GCM with AAD** binding the blob to its identity (version, service, account,
+  KDF params), so a swapped / rolled-back / KDF-downgraded blob fails the tag.
+- **Configure** (`appunlock::configure`): generate the VMK, wrap it under a fresh AUK,
+  hold the VMK in `Session.vmk` so connections can be added immediately.
+- **Add connection** (`connections::add_connection`): SDK login → seal the master password
+  under the VMK → only then record the connection (no phantom, unopenable accounts).
+- **Unlock all** (`appunlock::unlock_all` / Hello): unwrap the VMK (a wrong app password
+  fails the GCM tag), then re-login every connection. Returns a **per-connection outcome**
+  — `unlocked | twoFactorRequired | failed` — because re-login uses an SDK-hardcoded
+  device id, so **2FA-enforced accounts re-prompt 2FA on every cold start**
+  (`unlock_connection_2fa` completes them).
+- **Change app password** (`appunlock::change`): re-wrap the VMK under a new AUK — one
+  atomic keychain write; the per-connection blobs never move, so it can't half-rekey.
+- **Windows Hello**: a consent gate (`UserConsentVerifier`) that releases a copy of the
+  VMK from the keychain (Credential Manager / DPAPI-protected under the user) to unlock
+  all. *Not* a key-binding (KeyCredentialManager signatures are non-deterministic).
+- **Lock** clears all clients + caches + the VMK (zeroized). **Logout** additionally
+  deletes every `cred:` blob + the `app-unlock` + Hello blobs and resets the app-unlock
+  flags (the connection list is kept for easy re-add).
+- **Future hardening:** when the SDK exposes public token persistence, store a
+  PIN-protected user key + tokens and stop persisting the master password.
 
 ## Engineering Principles — READ BEFORE IMPLEMENTING
 Non-negotiables for new/changed code (this is a password manager — correctness and

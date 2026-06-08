@@ -13,6 +13,7 @@ mod dto;
 mod error;
 #[cfg(target_os = "windows")]
 mod hello;
+mod keepass;
 mod mutate;
 mod proxy;
 mod secrets;

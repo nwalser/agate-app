@@ -1,9 +1,9 @@
 import { createSignal, For, onMount, Show } from 'solid-js';
-import { ArrowLeft, Copy, DownloadCloud, Fingerprint, LogIn, Monitor, Moon, RefreshCw, Sun, Trash2, UserPlus } from 'lucide-solid';
+import { ArrowLeft, Copy, DownloadCloud, Fingerprint, Monitor, Moon, RefreshCw, Sun, Trash2, UserPlus } from 'lucide-solid';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { ipc } from '../lib/ipc.ts';
-import type { AccountSummary, PasswordGenOptions, ServerConfig } from '../lib/types.ts';
-import { refreshSession, server, setAddingAccount, status } from '../state/session.ts';
+import type { ConnectionSummary, PasswordGenOptions } from '../lib/types.ts';
+import { refreshSession, setAddingConnection, status } from '../state/session.ts';
 import { pushToast, toastError } from '../state/toast.ts';
 import { setTheme, theme, type ThemePref } from '../state/theme.ts';
 import './Settings.css';
@@ -15,14 +15,8 @@ const THEME_OPTIONS: { value: ThemePref; label: string; icon: typeof Sun }[] = [
   { value: 'dark', label: 'Dark', icon: Moon },
 ];
 
-function serverLabel(s: ServerConfig): string {
-  if (s.region === 'eu') return 'Bitwarden EU';
-  if (s.region === 'selfHosted') return s.baseUrl;
-  return 'Bitwarden US';
-}
-
 export default function Settings(props: { onBack: () => void }) {
-  const [localPw, setLocalPw] = createSignal('');
+  const [newPw, setNewPw] = createSignal('');
   const [confirmPw, setConfirmPw] = createSignal('');
   const [busy, setBusy] = createSignal(false);
 
@@ -39,11 +33,11 @@ export default function Settings(props: { onBack: () => void }) {
   const [helloAvailable, setHelloAvailable] = createSignal(false);
   const [helloBusy, setHelloBusy] = createSignal(false);
 
-  // ---- accounts ----
-  const [accounts, setAccounts] = createSignal<AccountSummary[]>([]);
-  async function loadAccounts() {
+  // ---- connections ----
+  const [connections, setConnections] = createSignal<ConnectionSummary[]>([]);
+  async function loadConnections() {
     try {
-      setAccounts(await ipc.listAccounts());
+      setConnections(await ipc.listConnections());
     } catch (err) {
       toastError(err);
     }
@@ -57,24 +51,24 @@ export default function Settings(props: { onBack: () => void }) {
         toastError(err);
       }
     })();
-    void loadAccounts();
+    void loadConnections();
   });
 
-  async function switchTo(email: string) {
+  async function removeConn(email: string) {
     try {
-      await ipc.switchAccount(email);
-      await refreshSession(); // session cleared → app routes to that account's unlock/login
+      await ipc.removeConnection(email);
+      await loadConnections();
+      await refreshSession();
+      pushToast('success', 'Connection removed.');
     } catch (err) {
       toastError(err);
     }
   }
 
-  async function removeAcct(email: string) {
+  async function logout() {
     try {
-      await ipc.removeAccount(email);
-      await loadAccounts();
+      await ipc.logout();
       await refreshSession();
-      pushToast('success', 'Account removed.');
     } catch (err) {
       toastError(err);
     }
@@ -132,35 +126,21 @@ export default function Settings(props: { onBack: () => void }) {
     }
   }
 
-  async function enableLocal() {
-    if (localPw().length < 4) {
-      pushToast('error', 'Local password must be at least 4 characters.');
+  async function changeAppPw() {
+    if (newPw().length < 8) {
+      pushToast('error', 'App password must be at least 8 characters.');
       return;
     }
-    if (localPw() !== confirmPw()) {
-      pushToast('error', 'Local passwords do not match.');
+    if (newPw() !== confirmPw()) {
+      pushToast('error', 'Passwords do not match.');
       return;
     }
     setBusy(true);
     try {
-      await ipc.enableLocalUnlock(localPw());
-      setLocalPw('');
+      await ipc.changeAppUnlock(newPw());
+      setNewPw('');
       setConfirmPw('');
-      await refreshSession();
-      pushToast('success', 'Local unlock enabled.');
-    } catch (err) {
-      toastError(err);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function disableLocal() {
-    setBusy(true);
-    try {
-      await ipc.disableLocalUnlock();
-      await refreshSession();
-      pushToast('success', 'Local unlock disabled.');
+      pushToast('success', 'App password changed.');
     } catch (err) {
       toastError(err);
     } finally {
@@ -215,83 +195,54 @@ export default function Settings(props: { onBack: () => void }) {
         </section>
 
         <section class="settings-section">
-          <h3>Account</h3>
-          <div class="settings-kv">
-            <span class="muted">Email</span>
-            <span>{status().email ?? '—'}</span>
-          </div>
-          <div class="settings-kv">
-            <span class="muted">Server</span>
-            <span>{serverLabel(server())}</span>
-          </div>
-          <button class="danger" onClick={() => void (async () => { await ipc.logout(); await refreshSession(); })()}>
-            Log out
-          </button>
-        </section>
-
-        <section class="settings-section">
-          <h3>Accounts</h3>
+          <h3>Connections</h3>
           <p class="muted settings-help">
-            Switch between accounts (cloud or self-hosted). One is active at a time;
-            switching locks the current vault and unlocks the selected account.
+            Each connection is a Bitwarden account. One app unlock opens them all; removing one
+            forgets its stored credentials on this device.
           </p>
-          <For each={accounts()}>
-            {(acct) => (
+          <For each={connections()}>
+            {(conn) => (
               <div class="settings-row settings-account">
                 <span class="settings-account-info">
-                  <span>{acct.email}</span>
-                  <span class="muted settings-account-server">{acct.serverLabel}</span>
+                  <span>{conn.email}</span>
+                  <span class="muted settings-account-server">{conn.serverLabel}</span>
                 </span>
                 <span class="row">
-                  <Show
-                    when={!acct.active}
-                    fallback={<span class="settings-account-active">Active</span>}
-                  >
-                    <button class="ghost icon-btn" title="Switch to this account" onClick={() => void switchTo(acct.email)}>
-                      <LogIn size={14} strokeWidth={1.75} />
-                    </button>
+                  <Show when={conn.unlocked}>
+                    <span class="settings-account-active">Unlocked</span>
                   </Show>
-                  <button class="ghost icon-btn" title="Remove account" onClick={() => void removeAcct(acct.email)}>
+                  <button class="ghost icon-btn" title="Remove connection" onClick={() => void removeConn(conn.email)}>
                     <Trash2 size={14} strokeWidth={1.75} />
                   </button>
                 </span>
               </div>
             )}
           </For>
-          <button class="add-account" onClick={() => setAddingAccount(true)}>
-            <UserPlus size={14} strokeWidth={1.75} /> Add account
+          <button class="add-account" onClick={() => setAddingConnection(true)}>
+            <UserPlus size={14} strokeWidth={1.75} /> Add connection
+          </button>
+          <button class="danger" onClick={() => void logout()}>
+            Log out of everything
           </button>
         </section>
 
         <section class="settings-section">
-          <h3>Local-password unlock</h3>
+          <h3>App unlock</h3>
           <p class="muted settings-help">
-            Unlock with a separate local password instead of your master password. Your master
-            password is never stored on this device.
+            Change the single app password that unlocks every connection. Stored master passwords
+            are re-protected under the new one automatically.
           </p>
-          <Show
-            when={status().localUnlockConfigured}
-            fallback={
-              <>
-                <div class="field">
-                  <label>Local password</label>
-                  <input type="password" value={localPw()} onInput={(e) => setLocalPw(e.currentTarget.value)} />
-                </div>
-                <div class="field">
-                  <label>Confirm local password</label>
-                  <input type="password" value={confirmPw()} onInput={(e) => setConfirmPw(e.currentTarget.value)} />
-                </div>
-                <button class="primary" disabled={busy()} onClick={() => void enableLocal()}>
-                  Enable local unlock
-                </button>
-              </>
-            }
-          >
-            <p class="settings-enabled">✓ Local unlock is enabled for this account.</p>
-            <button class="danger" disabled={busy()} onClick={() => void disableLocal()}>
-              Disable local unlock
-            </button>
-          </Show>
+          <div class="field">
+            <label>New app password</label>
+            <input type="password" autocomplete="new-password" value={newPw()} onInput={(e) => setNewPw(e.currentTarget.value)} />
+          </div>
+          <div class="field">
+            <label>Confirm new password</label>
+            <input type="password" autocomplete="new-password" value={confirmPw()} onInput={(e) => setConfirmPw(e.currentTarget.value)} />
+          </div>
+          <button class="primary" disabled={busy()} onClick={() => void changeAppPw()}>
+            Change app password
+          </button>
         </section>
 
         <section class="settings-section">
