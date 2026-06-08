@@ -1,43 +1,39 @@
 /**
  * Shared helpers for agate Tauri e2e specs.
  *
- * Model: the app boots to Onboarding against the REAL (logged-out) backend, then
- * each spec installs an in-page fake backend (`installFakeBackend`) and re-derives
- * the screen (`refreshSessionInApp`). Every screen is then driven through its real
- * reactive flow — login, unlock, sync, edit — with the fake answering IPC. No live
- * Bitwarden vault, no network, fully deterministic.
- *
- * Selectors track the existing CSS classes in the app (App.tsx, screens/*, and
- * components/*). Buttons are addressed by their `title` attribute where present.
+ * Model: each spec installs an in-page fake backend (`installFakeBackend`) and
+ * lands the app on a known screen (`gotoSetup` / `gotoUnlock` / `gotoVault` /
+ * `gotoSettings` / `gotoSecurity`). Every screen then runs its real reactive
+ * flow — app-unlock, unlock-all, sync, edit — with the fake answering IPC. The
+ * binary under test is the real Tauri app, so Tauri plugin APIs (clipboard,
+ * window, opener) work for real; only agate's own `invoke` calls are faked.
  */
 import { browser, $, $$ } from '@wdio/globals';
 import { TIMEOUT, waitFor } from './wait.ts';
 import {
   type FakeConfig,
   FIXTURE_EMAIL,
-  loggedOutFake,
+  FIXTURE_LABEL,
   lockedFake,
+  setupFake,
   unlockedFake,
 } from './fixtures.ts';
 
-export { FIXTURE_EMAIL, loggedOutFake, lockedFake, unlockedFake };
+export { FIXTURE_EMAIL, FIXTURE_LABEL, lockedFake, setupFake, unlockedFake };
 export type { FakeConfig };
 
 // ── Window attach ─────────────────────────────────────────────────────────────
-/**
- * Switch the WebDriver session onto the agate app window. tauri-driver also
- * exposes an `about:blank` context; we pick the real app URL (tauri.localhost or
- * the dev-server localhost) and confirm the `#app` mount root is present.
- */
-// The built (frozen-dist) app serves from http://tauri.localhost/; the dev binary
-// from the vite dev server. tauri-driver often hands us the app's WebView already
-// attached but parked at about:blank, so we force-navigate to the app URL.
 const APP_URLS = ['http://tauri.localhost/', 'http://localhost:5173/'];
 
 async function mountedHere(): Promise<boolean> {
   return browser.execute(() => !!document.getElementById('app')).catch(() => false);
 }
 
+/**
+ * Switch onto the agate app window. tauri-driver commonly attaches to the app's
+ * WebView while it is still parked at `about:blank`, so we force-navigate the
+ * context to the app URL and confirm the `#app` mount root is present.
+ */
 export async function attachToApp(): Promise<void> {
   const isAppUrl = (u: string) => !!u && u !== 'about:blank' && !u.startsWith('data:');
   const deadline = Date.now() + TIMEOUT.crawl;
@@ -51,8 +47,6 @@ export async function attachToApp(): Promise<void> {
       seen[h] = url;
       if (isAppUrl(url) && (await mountedHere())) return;
     }
-    // tauri-driver commonly attaches to the app's WebView while it's still at
-    // about:blank. Force-navigate the current context to the app URL and check.
     for (const target of APP_URLS) {
       try {
         await browser.url(target);
@@ -67,10 +61,9 @@ export async function attachToApp(): Promise<void> {
 
 // ── Fake backend ──────────────────────────────────────────────────────────────
 /**
- * Replace the IPC transport with an in-page stateful fake that answers every
- * command the app issues. Mutations (login/lock/favorite/delete/…) update the
- * in-page state so follow-up reads (`get_session_status`, `list_items`, …) stay
- * consistent within a spec. Re-callable — a fresh call resets the fake state.
+ * Replace the IPC transport with an in-page stateful fake answering every command
+ * the app issues (app-unlock model). Mutations (configure/unlock/lock/favorite/
+ * delete/…) update in-page state so follow-up reads stay consistent. Re-callable.
  */
 export async function installFakeBackend(cfg: FakeConfig): Promise<void> {
   await browser.execute((c: FakeConfig) => {
@@ -82,25 +75,23 @@ export async function installFakeBackend(cfg: FakeConfig): Promise<void> {
       };
     };
     if (!w.__agateInvoke) {
-      throw new Error(
-        '__agateInvoke missing — run via tauri-driver (navigator.webdriver) against a DEV build',
-      );
+      throw new Error('__agateInvoke missing — run via tauri-driver against a debug build');
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v));
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     type Any = any;
+    const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v));
     const state = {
       status: clone(c.status),
+      connections: clone(c.connections) as Any[],
       items: clone(c.items) as Any[],
       folders: clone(c.folders) as Any[],
-      accounts: clone(c.accounts) as Any[],
       details: clone(c.details) as Record<string, Any>,
     };
     let seq = 1000;
-
     const findItem = (id: string) => state.items.find((x) => x.id === id);
+    const outcomes = () =>
+      state.connections.map((cn) => ({ email: cn.email, serverLabel: cn.serverLabel, status: 'unlocked' }));
 
     w.__agateInvoke.setInvoke(async (cmd, rawArgs) => {
       const a = (rawArgs ?? {}) as Record<string, Any>;
@@ -112,29 +103,65 @@ export async function installFakeBackend(cfg: FakeConfig): Promise<void> {
         case 'get_session_status': return { ...state.status };
         case 'get_server_config': return c.server;
         case 'set_server_config': return null;
-        case 'list_accounts': return state.accounts;
+        case 'window_controls_layout': return { side: 'right', buttons: ['minimize', 'maximize', 'close'] };
 
-        // ── auth ──
-        case 'login': {
-          if (c.loginResult.status === 'twoFactorRequired' && !a.twoFactor) {
-            return c.loginResult;
-          }
-          state.status.loggedIn = true;
+        // ── app unlock ──
+        case 'configure_app_unlock':
+          state.status.appUnlockConfigured = true;
           state.status.unlocked = true;
-          state.status.email = (a.email as string) ?? state.status.email;
+          return null;
+        case 'change_app_unlock': return null;
+        case 'unlock_all': {
+          if (c.twoFactor && state.connections.length > 0) {
+            const cn = state.connections[0];
+            return [{ email: cn.email, serverLabel: cn.serverLabel, status: 'twoFactorRequired', providers: ['authenticator', 'email'] }];
+          }
+          state.status.unlocked = true;
+          state.status.liveCount = state.connections.length;
+          for (const cn of state.connections) cn.unlocked = true;
+          return outcomes();
+        }
+        case 'unlock_connection_2fa': {
+          state.status.unlocked = true;
+          state.status.liveCount = state.connections.length;
+          const cn = state.connections.find((x) => x.email === a.email);
+          if (cn) cn.unlocked = true;
+          return null;
+        }
+        case 'send_connection_email_code': return null;
+        case 'hello_unlock':
+          state.status.unlocked = true;
+          state.status.liveCount = state.connections.length;
+          for (const cn of state.connections) cn.unlocked = true;
+          return outcomes();
+
+        // ── connections ──
+        case 'list_connections': return state.connections;
+        case 'add_connection': {
+          if (c.addResult.status === 'twoFactorRequired' && !a.twoFactor) return c.addResult;
+          const email = (a.email as string) ?? `new-${seq++}@example.com`;
+          if (!state.connections.some((x) => x.email === email)) {
+            state.connections.push({ email, serverLabel: 'Bitwarden — US', server: a.server, unlocked: true });
+            state.status.connectionCount = state.connections.length;
+            state.status.liveCount = state.connections.length;
+          }
           return { status: 'success' };
         }
         case 'send_email_code': return null;
-        case 'unlock_local': state.status.unlocked = true; return null;
-        case 'hello_unlock': state.status.unlocked = true; return null;
-        case 'lock': state.status.unlocked = false; return null;
-        case 'logout':
-          state.status.loggedIn = false;
-          state.status.unlocked = false;
-          state.status.email = null;
+        case 'remove_connection': {
+          state.connections = state.connections.filter((x) => x.email !== a.email);
+          state.status.connectionCount = state.connections.length;
           return null;
-        case 'enable_local_unlock': state.status.localUnlockConfigured = true; return null;
-        case 'disable_local_unlock': state.status.localUnlockConfigured = false; return null;
+        }
+        case 'set_active_connection': return null;
+        case 'lock': state.status.unlocked = false; state.status.liveCount = 0; return null;
+        case 'logout':
+          state.status.unlocked = false;
+          state.status.appUnlockConfigured = false;
+          state.status.connectionCount = 0;
+          state.status.liveCount = 0;
+          state.connections = [];
+          return null;
 
         // ── vault reads ──
         case 'sync_vault': return null;
@@ -150,7 +177,7 @@ export async function installFakeBackend(cfg: FakeConfig): Promise<void> {
         }
         case 'item_totp': return c.totp;
 
-        // ── vault writes ──
+        // ── vault writes (all scoped by accountEmail) ──
         case 'set_favorite': {
           const it = findItem(a.id as string);
           if (it) it.favorite = !!a.favorite;
@@ -165,18 +192,12 @@ export async function installFakeBackend(cfg: FakeConfig): Promise<void> {
         }
         case 'delete_items': {
           const ids: string[] = (a.ids as string[]) ?? [];
-          if (a.permanent) {
-            state.items = state.items.filter((x) => !ids.includes(x.id));
-          } else {
-            for (const id of ids) { const it = findItem(id); if (it) it.deleted = true; }
-          }
+          if (a.permanent) state.items = state.items.filter((x) => !ids.includes(x.id));
+          else for (const id of ids) { const it = findItem(id); if (it) it.deleted = true; }
           return null;
         }
         case 'restore_items': {
-          for (const id of (a.ids as string[]) ?? []) {
-            const it = findItem(id);
-            if (it) it.deleted = false;
-          }
+          for (const id of (a.ids as string[]) ?? []) { const it = findItem(id); if (it) it.deleted = false; }
           return null;
         }
         case 'clone_item': {
@@ -196,7 +217,8 @@ export async function installFakeBackend(cfg: FakeConfig): Promise<void> {
           } else {
             const id = `new-${seq++}`;
             state.items.push({
-              id, name: input.name as string, itemType: input.itemType as string,
+              id, accountEmail: a.accountEmail ?? FIXTURE_EMAIL, accountLabel: FIXTURE_LABEL,
+              name: input.name as string, itemType: input.itemType as string,
               username: input.login?.username ?? null, hasTotp: false, favorite: !!input.favorite,
               deleted: false, folderId: (input.folderId as string | null) ?? null, organizationId: null,
             });
@@ -204,28 +226,26 @@ export async function installFakeBackend(cfg: FakeConfig): Promise<void> {
           return null;
         }
         case 'create_folder': {
-          const f = { id: `f-${seq++}`, name: a.name as string };
+          const f = { id: `f-${seq++}`, name: a.name as string, accountEmail: a.accountEmail, accountLabel: FIXTURE_LABEL };
           state.folders.push(f);
           return f;
         }
         case 'rename_folder': {
           const f = state.folders.find((x) => x.id === a.id);
           if (f) f.name = a.name as string;
-          return f ?? { id: a.id, name: a.name };
+          return f ?? { id: a.id, name: a.name, accountEmail: a.accountEmail, accountLabel: FIXTURE_LABEL };
         }
 
         // ── generators ──
         case 'generate_password': return c.generatedPassword;
         case 'generate_passphrase': return c.generatedPassphrase;
 
-        // ── security audit ──
+        // ── security / dark-web ──
         case 'audit_offline': return c.audit;
         case 'audit_exposed': return c.exposed;
-
-        // ── dark-web / breach monitor (defaults — extend per-spec via cfg) ──
         case 'set_darkweb_consent': return null;
-        case 'darkweb_scan_email': return { email: a.email ?? '', breaches: [] };
-        case 'darkweb_scan_vault': return { accounts: [], scannedAt: 0 };
+        case 'darkweb_scan_email': return { email: a.email ?? '', breaches: [], exposedData: [], riskLabel: null, riskScore: null };
+        case 'darkweb_scan_vault': return { accounts: [], totalBreaches: 0, clean: 0, skipped: 0 };
         case 'breach_directory': return [];
 
         // ── Windows Hello ──
@@ -233,27 +253,9 @@ export async function installFakeBackend(cfg: FakeConfig): Promise<void> {
         case 'hello_enable': state.status.helloConfigured = true; return null;
         case 'hello_disable': state.status.helloConfigured = false; return null;
 
-        // ── window chrome ──
-        case 'window_controls_layout':
-          return { side: 'right', buttons: ['minimize', 'maximize', 'close'] };
-
         // ── updater ──
         case 'check_update': return c.updateVersion;
         case 'run_update': return null;
-
-        // ── accounts ──
-        case 'switch_account': {
-          // Mirrors the real backend: switching clears the live session, so the
-          // app routes to the target account's unlock/login.
-          state.status.email = a.email as string;
-          state.status.unlocked = false;
-          for (const acc of state.accounts) acc.active = acc.email === a.email;
-          return null;
-        }
-        case 'remove_account': {
-          state.accounts = state.accounts.filter((x) => x.email !== a.email);
-          return null;
-        }
 
         default: return null;
       }
@@ -261,9 +263,7 @@ export async function installFakeBackend(cfg: FakeConfig): Promise<void> {
   }, cfg);
 }
 
-/** Re-derive the top-level screen from the (fake) backend without a page reload
- *  — a reload would wipe the in-page fake. Uses the gated `__agateRefreshSession`
- *  hook in session.ts. */
+/** Re-derive the top-level screen from the (fake) backend without a reload. */
 export async function refreshSessionInApp(): Promise<void> {
   await browser.execute(async () => {
     const w = window as unknown as { __agateRefreshSession?: () => Promise<void> };
@@ -272,11 +272,15 @@ export async function refreshSessionInApp(): Promise<void> {
 }
 
 // ── Navigation: land on a known screen ────────────────────────────────────────
-export async function gotoOnboarding(cfg: FakeConfig = loggedOutFake()): Promise<void> {
+export async function gotoSetup(cfg: FakeConfig = setupFake()): Promise<void> {
   await attachToApp();
   await installFakeBackend(cfg);
   await refreshSessionInApp();
-  await $('.onboarding').waitForExist({ timeout: TIMEOUT.normal });
+  await waitFor(
+    async () => (await buttonExists('Set app password')),
+    'AppUnlockSetup screen did not render',
+    TIMEOUT.normal,
+  );
 }
 
 export async function gotoUnlock(cfg: FakeConfig = lockedFake()): Promise<void> {
@@ -300,8 +304,13 @@ export async function gotoSettings(cfg: FakeConfig = unlockedFake()): Promise<vo
   await $('.settings').waitForExist({ timeout: TIMEOUT.normal });
 }
 
-/** Vault's first background sync populates the list; wait for either rows or the
- *  empty-state to settle so assertions don't race the initial load. */
+export async function gotoSecurity(cfg: FakeConfig = unlockedFake()): Promise<void> {
+  await gotoVault(cfg);
+  await clickButtonByText('Security'); // rail FilterButton
+  await $('.sec-header').waitForExist({ timeout: TIMEOUT.slow });
+}
+
+/** Vault's first background sync populates the list; wait for rows or empty-state. */
 export async function waitForVaultLoaded(): Promise<void> {
   await waitFor(
     async () => (await $$('.vault-row').length) > 0 || (await $$('.vault-empty').length) > 0,
@@ -310,30 +319,28 @@ export async function waitForVaultLoaded(): Promise<void> {
   );
 }
 
-// ── Onboarding helpers ────────────────────────────────────────────────────────
-export async function fillLogin(email: string, password: string): Promise<void> {
+// ── Auth-screen helpers ───────────────────────────────────────────────────────
+export async function setAppPassword(pw: string): Promise<void> {
+  const inputs = await $$('.onboarding input[type="password"]');
+  await inputs[0].setValue(pw);
+  await inputs[1].setValue(pw);
+  await clickButtonByText('Set app password');
+}
+
+export async function unlockAll(appPassword: string): Promise<void> {
+  await $('.unlock-field input[type="password"]').setValue(appPassword);
+  await $('.unlock .primary.full').click();
+}
+
+/** Fill + submit the add-connection (Onboarding) form. */
+export async function addConnection(email = 'new@example.com', password = 'master-pw'): Promise<void> {
   await $('.onboarding input[type="email"]').setValue(email);
   await $('.onboarding input[type="password"]').setValue(password);
-}
-
-export async function submitLogin(): Promise<void> {
-  await $('.onboarding .primary.full').click();
-}
-
-export async function loginFromOnboarding(
-  email = FIXTURE_EMAIL,
-  password = 'master-pw',
-): Promise<void> {
-  await fillLogin(email, password);
-  await submitLogin();
+  await clickButtonByText('Add connection');
 }
 
 // ── DOM helpers ───────────────────────────────────────────────────────────────
-/**
- * Click an element by its `title` via DOM `.click()`. Many buttons wrap an inline
- * lucide-solid `<svg>` that swallows WebDriver's geometric click ("element click
- * intercepted"); a DOM click bypasses hit-testing.
- */
+/** Click an element by `title` via DOM `.click()` (bypasses SVG hit-test intercepts). */
 export async function domClickByTitle(title: string): Promise<void> {
   const ok = await browser.execute((t: string) => {
     const el = document.querySelector<HTMLElement>(`[title="${t}"]`);
@@ -341,6 +348,14 @@ export async function domClickByTitle(title: string): Promise<void> {
     return false;
   }, title);
   if (!ok) throw new Error(`no element with title="${title}"`);
+}
+
+async function buttonExists(text: string): Promise<boolean> {
+  return browser.execute(
+    (t: string) =>
+      Array.from(document.querySelectorAll('button')).some((b) => (b.textContent ?? '').trim() === t),
+    text,
+  );
 }
 
 /** Click the first button whose visible text equals `text`. */
@@ -356,22 +371,38 @@ export async function clickButtonByText(text: string): Promise<void> {
 
 export async function rowNames(): Promise<string[]> {
   return browser.execute(() =>
-    Array.from(document.querySelectorAll('.vault-row .vault-row-name')).map(
-      (e) => e.textContent ?? '',
-    ),
+    Array.from(document.querySelectorAll('.vault-row .vault-row-name')).map((e) => e.textContent ?? ''),
   );
 }
 
-/** Click a vault row by its visible name. */
 export async function clickRow(name: string): Promise<void> {
   const ok = await browser.execute((n: string) => {
     for (const row of Array.from(document.querySelectorAll('.vault-row'))) {
-      const label = row.querySelector('.vault-row-name')?.textContent ?? '';
-      if (label === n) { (row as HTMLElement).click(); return true; }
+      if ((row.querySelector('.vault-row-name')?.textContent ?? '') === n) {
+        (row as HTMLElement).click(); return true;
+      }
     }
     return false;
   }, name);
   if (!ok) throw new Error(`no vault row named "${name}"`);
+}
+
+export async function checkRow(name: string): Promise<void> {
+  const ok = await browser.execute((n: string) => {
+    for (const row of Array.from(document.querySelectorAll('.vault-row'))) {
+      if ((row.querySelector('.vault-row-name')?.textContent ?? '') === n) {
+        const cb = row.querySelector<HTMLInputElement>('.vault-row-check input[type="checkbox"]');
+        if (cb) { cb.click(); return true; }
+      }
+    }
+    return false;
+  }, name);
+  if (!ok) throw new Error(`no vault row named "${name}"`);
+}
+
+/** Type into the vault search (lives in the titlebar). */
+export async function setSearch(value: string): Promise<void> {
+  await $('.titlebar-search input').setValue(value);
 }
 
 // ── Toasts ────────────────────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 /**
- * Item editor — create a new login, edit an existing item, and use the built-in
- * password generator. Saves feed back through the fake's write path into the list.
+ * Item editor — create a new login, edit an existing item, use the password
+ * generator. Saves feed back through the fake's write path into the list.
  */
 import { expect } from 'chai';
 import { $ } from '@wdio/globals';
@@ -25,22 +25,18 @@ describe('item editor', () => {
   it('creates a new login and shows it in the list', async () => {
     await gotoVault();
     await openCreateLogin();
-
     await $('.item-editor input[placeholder="Name"]').setValue('My Test Login');
-    await $('.ie-footer .primary').click(); // Save
-
+    await $('.ie-footer .primary').click();
     await waitForToast('Item saved');
-    await waitFor(async () => (await rowNames()).includes('My Test Login'), 'new item did not appear in list');
+    await waitFor(async () => (await rowNames()).includes('My Test Login'), 'new item did not appear');
   });
 
   it('generates a password into the editor field', async () => {
     await gotoVault();
     await openCreateLogin();
-
     await domClickByTitle('Generate');
     await $('.ie-gen-popover').waitForDisplayed({ timeout: TIMEOUT.normal });
     await $('.ie-gen-go').click();
-
     await waitFor(
       async () => (await $('.ie-pw-row input').getValue()).length > 0,
       'generator did not fill the password field',
@@ -52,15 +48,12 @@ describe('item editor', () => {
     await gotoVault();
     await clickRow('Fastmail');
     await $('.detail-name').waitForExist({ timeout: TIMEOUT.normal });
-
     await domClickByTitle('Edit');
     await $('.item-editor').waitForExist({ timeout: TIMEOUT.normal });
     const name = await $('.item-editor input[placeholder="Name"]');
     expect(await name.getValue()).to.equal('Fastmail');
-
     await name.setValue('Fastmail (renamed)');
     await $('.ie-footer .primary').click();
-
     await waitForToast('Item saved');
     await waitFor(async () => (await rowNames()).includes('Fastmail (renamed)'), 'rename did not reflect in list');
   });

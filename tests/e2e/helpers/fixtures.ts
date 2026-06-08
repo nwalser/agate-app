@@ -2,14 +2,16 @@
  * Fixtures for the in-page fake backend (see helpers/app.ts `installFakeBackend`).
  *
  * The agate frontend talks to Rust exclusively through the typed `invoke`
- * wrappers in `src/lib/ipc.ts`. Those route through a swappable transport that
- * the e2e seam (`window.__agateInvoke`) lets us replace, so every screen can be
- * driven through its real reactive flow without a live Bitwarden vault. This
- * file holds the JSON-serializable config that the fake router answers from —
- * everything here crosses the WebDriver boundary, so keep it plain data.
+ * wrappers in `src/lib/ipc.ts`, routed through a swappable transport the e2e
+ * seam (`window.__agateInvoke`) replaces — so every screen runs its real
+ * reactive flow without a live Bitwarden vault. Everything here crosses the
+ * WebDriver boundary, so keep it plain, JSON-serializable data.
  *
- * Shapes mirror `src/lib/types.ts`; kept as local interfaces (not imported) so
- * the e2e tsconfig stays independent of the app's bundler-resolution setup.
+ * Model (post app-unlock redesign): one app password unlocks every connection.
+ *   setup  → no app-unlock configured yet (AppUnlockSetup)
+ *   unlock → configured but locked (Unlock — "unlock all")
+ *   vault  → unlocked
+ * Vault items/folders/details are scoped to an owning connection (accountEmail).
  */
 
 export type Region = 'us' | 'eu' | 'selfHosted';
@@ -19,16 +21,25 @@ export type TwoFactorKind = 'authenticator' | 'email';
 export type LoginResult = { status: 'success' } | { status: 'twoFactorRequired'; providers: TwoFactorKind[] };
 
 export interface FakeStatus {
-  loggedIn: boolean;
+  appUnlockConfigured: boolean;
   unlocked: boolean;
-  localUnlockConfigured: boolean;
   helloConfigured: boolean;
   darkwebConsent: boolean;
-  email: string | null;
+  connectionCount: number;
+  liveCount: number;
+}
+
+export interface ConnectionSummary {
+  email: string;
+  serverLabel: string;
+  server: ServerConfig;
+  unlocked: boolean;
 }
 
 export interface VaultItem {
   id: string;
+  accountEmail: string;
+  accountLabel: string;
   name: string;
   itemType: ItemType;
   username: string | null;
@@ -42,17 +53,14 @@ export interface VaultItem {
 export interface Folder {
   id: string | null;
   name: string;
-}
-
-export interface AccountSummary {
-  email: string;
-  serverLabel: string;
-  server: ServerConfig;
-  active: boolean;
+  accountEmail: string;
+  accountLabel: string;
 }
 
 export interface ItemDetail {
   id: string;
+  accountEmail: string;
+  accountLabel: string;
   name: string;
   itemType: ItemType;
   favorite: boolean;
@@ -89,35 +97,32 @@ export interface VaultHealthReport {
 export interface FakeConfig {
   status: FakeStatus;
   server: ServerConfig;
-  accounts: AccountSummary[];
+  connections: ConnectionSummary[];
   items: VaultItem[];
   folders: Folder[];
   details: Record<string, ItemDetail>;
   totp: { code: string; period: number; remaining: number };
-  /** Result `login` returns — set to twoFactorRequired to exercise the 2FA step. */
-  loginResult: LoginResult;
+  /** When true, `unlock_all` reports the first connection as needing 2FA. */
+  twoFactor: boolean;
+  /** Result `add_connection` returns (success or twoFactorRequired). */
+  addResult: LoginResult;
   helloAvailable: boolean;
   audit: VaultHealthReport;
   exposed: { id: string; name: string; count: number }[];
   generatedPassword: string;
   generatedPassphrase: string;
   updateVersion: string | null;
-  /** Commands listed here reject with the given typed AgateError (drives the
-   *  toast pipeline) instead of returning — used by error-path specs. */
+  /** Commands listed here reject with the given typed AgateError (toast path). */
   errors: Record<string, { kind: string; message: string }>;
 }
 
-const LOGGED_OUT: FakeStatus = {
-  loggedIn: false,
-  unlocked: false,
-  localUnlockConfigured: false,
-  helloConfigured: false,
-  darkwebConsent: false,
-  email: null,
-};
+export const FIXTURE_EMAIL = 'tester@example.com';
+export const FIXTURE_LABEL = 'Bitwarden — US';
 
 function item(p: Partial<VaultItem> & { id: string; name: string }): VaultItem {
   return {
+    accountEmail: FIXTURE_EMAIL,
+    accountLabel: FIXTURE_LABEL,
     itemType: 'login',
     username: null,
     hasTotp: false,
@@ -131,6 +136,8 @@ function item(p: Partial<VaultItem> & { id: string; name: string }): VaultItem {
 
 function loginDetail(p: Partial<ItemDetail> & { id: string; name: string }): ItemDetail {
   return {
+    accountEmail: FIXTURE_EMAIL,
+    accountLabel: FIXTURE_LABEL,
     itemType: 'login',
     favorite: false,
     reprompt: false,
@@ -146,11 +153,7 @@ function loginDetail(p: Partial<ItemDetail> & { id: string; name: string }): Ite
   };
 }
 
-export const FIXTURE_EMAIL = 'tester@example.com';
-
-/** A small but representative vault: favorite TOTP login, plain login, card,
- *  note, and one trashed item — enough to exercise list / search / filters /
- *  detail / copy / TOTP / trash. */
+/** Favorite TOTP login, plain login, card, note, and one trashed item. */
 export function sampleItems(): VaultItem[] {
   return [
     item({ id: 'gh', name: 'GitHub', username: 'octocat', hasTotp: true, favorite: true }),
@@ -164,10 +167,7 @@ export function sampleItems(): VaultItem[] {
 export function sampleDetails(): Record<string, ItemDetail> {
   return {
     gh: loginDetail({
-      id: 'gh',
-      name: 'GitHub',
-      favorite: true,
-      notes: 'work account',
+      id: 'gh', name: 'GitHub', favorite: true, notes: 'work account',
       login: {
         username: 'octocat',
         password: 'correct-horse-battery-staple',
@@ -177,43 +177,45 @@ export function sampleDetails(): Record<string, ItemDetail> {
       },
     }),
     mail: loginDetail({
-      id: 'mail',
-      name: 'Fastmail',
+      id: 'mail', name: 'Fastmail',
       login: {
-        username: 'tester@fastmail.com',
-        password: 'hunter2hunter2',
-        totp: null,
-        uris: [{ uri: 'https://fastmail.com', matchType: null }],
-        hasTotp: false,
+        username: 'tester@fastmail.com', password: 'hunter2hunter2', totp: null,
+        uris: [{ uri: 'https://fastmail.com', matchType: null }], hasTotp: false,
       },
     }),
     card: loginDetail({ id: 'card', name: 'Visa ending 4242', itemType: 'card', login: null }),
     note: loginDetail({
-      id: 'note',
-      name: 'Recovery codes',
-      itemType: 'secureNote',
-      login: null,
-      notes: 'AAAA-BBBB-CCCC',
+      id: 'note', name: 'Recovery codes', itemType: 'secureNote', login: null, notes: 'AAAA-BBBB-CCCC',
     }),
     old: loginDetail({
-      id: 'old',
-      name: 'Old MySpace',
+      id: 'old', name: 'Old MySpace',
       login: { username: 'tom', password: 'pw', totp: null, uris: [], hasTotp: false },
     }),
   };
 }
 
-/** Logged-out config — the app boots straight to Onboarding from this. */
-export function loggedOutFake(over: Partial<FakeConfig> = {}): FakeConfig {
+export function sampleConnections(): ConnectionSummary[] {
+  return [{ email: FIXTURE_EMAIL, serverLabel: FIXTURE_LABEL, server: { region: 'us' }, unlocked: true }];
+}
+
+function baseConfig(over: Partial<FakeConfig>): FakeConfig {
   return {
-    status: { ...LOGGED_OUT },
+    status: {
+      appUnlockConfigured: true, unlocked: true, helloConfigured: false,
+      darkwebConsent: false, connectionCount: 1, liveCount: 1,
+    },
     server: { region: 'us' },
-    accounts: [],
+    connections: sampleConnections(),
     items: sampleItems(),
-    folders: [{ id: null, name: 'No folder' }, { id: 'f1', name: 'Personal' }, { id: 'f2', name: 'Work' }],
+    folders: [
+      { id: null, name: 'No folder', accountEmail: FIXTURE_EMAIL, accountLabel: FIXTURE_LABEL },
+      { id: 'f1', name: 'Personal', accountEmail: FIXTURE_EMAIL, accountLabel: FIXTURE_LABEL },
+      { id: 'f2', name: 'Work', accountEmail: FIXTURE_EMAIL, accountLabel: FIXTURE_LABEL },
+    ],
     details: sampleDetails(),
     totp: { code: '123456', period: 30, remaining: 25 },
-    loginResult: { status: 'success' },
+    twoFactor: false,
+    addResult: { status: 'success' },
     helloAvailable: false,
     audit: {
       score: 72, band: 'fair', totalLogins: 3, reused: 1, weak: 1, old: 0, insecure: 0, noTotp: 2, atRisk: [],
@@ -227,27 +229,32 @@ export function loggedOutFake(over: Partial<FakeConfig> = {}): FakeConfig {
   };
 }
 
-/** Config where the app boots straight into an unlocked Vault. */
-export function unlockedFake(over: Partial<FakeConfig> = {}): FakeConfig {
-  return loggedOutFake({
+/** First run — no app-unlock configured. Boots to AppUnlockSetup. */
+export function setupFake(over: Partial<FakeConfig> = {}): FakeConfig {
+  return baseConfig({
     status: {
-      loggedIn: true, unlocked: true, localUnlockConfigured: true, helloConfigured: false,
-      darkwebConsent: false, email: FIXTURE_EMAIL,
+      appUnlockConfigured: false, unlocked: false, helloConfigured: false,
+      darkwebConsent: false, connectionCount: 0, liveCount: 0,
     },
-    accounts: [
-      { email: FIXTURE_EMAIL, serverLabel: 'Bitwarden — US', server: { region: 'us' }, active: true },
-    ],
+    connections: [],
+    items: [],
     ...over,
   });
 }
 
-/** Config where the app boots into the locked Unlock screen (local unlock set). */
+/** Configured but locked. Boots to the Unlock ("unlock all") screen. */
 export function lockedFake(over: Partial<FakeConfig> = {}): FakeConfig {
-  return unlockedFake({
+  return baseConfig({
     status: {
-      loggedIn: true, unlocked: false, localUnlockConfigured: true, helloConfigured: false,
-      darkwebConsent: false, email: FIXTURE_EMAIL,
+      appUnlockConfigured: true, unlocked: false, helloConfigured: false,
+      darkwebConsent: false, connectionCount: 1, liveCount: 0,
     },
+    connections: [{ email: FIXTURE_EMAIL, serverLabel: FIXTURE_LABEL, server: { region: 'us' }, unlocked: false }],
     ...over,
   });
+}
+
+/** Unlocked — boots straight into the vault. */
+export function unlockedFake(over: Partial<FakeConfig> = {}): FakeConfig {
+  return baseConfig(over);
 }

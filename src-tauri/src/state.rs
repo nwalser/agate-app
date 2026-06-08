@@ -105,11 +105,6 @@ pub struct Session {
     pub vmk: Option<Zeroizing<[u8; 32]>>,
     /// Unlocked connections, keyed by account email.
     pub connections: HashMap<String, LiveConnection>,
-    /// Open KeePass (.kdbx) files, keyed by their synthetic source id
-    /// (`keepass:<path>`). Separate from `connections`: a KeePass file is a local
-    /// vault source, not a Bitwarden account. Holds decrypted data + the composite
-    /// key; dropped (key zeroized) on lock. See `keepass.rs`.
-    pub keepass: HashMap<String, crate::keepass::KeePassSource>,
     /// Default account for "new item" / folder context (one of `connections`).
     pub active_email: Option<String>,
 }
@@ -131,7 +126,6 @@ impl Session {
     pub fn clear_secrets(&mut self) {
         self.vmk = None; // Zeroizing zeroes the VMK on drop.
         self.connections.clear();
-        self.keepass.clear(); // drops each Database + DatabaseKey (key zeroizes on drop)
         self.active_email = None;
     }
 }

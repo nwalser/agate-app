@@ -1,6 +1,6 @@
 /**
- * Command palette — Ctrl/Cmd-K opens it, typing filters the commands, Enter runs
- * the top match, and Escape closes it. Exercises the lock and settings commands.
+ * Command palette — Ctrl/Cmd-K opens it, typing filters, Enter runs the top
+ * match, Escape closes. Exercises the lock and settings commands.
  */
 import { expect } from 'chai';
 import { $, $$, browser } from '@wdio/globals';
@@ -23,10 +23,9 @@ describe('command palette', () => {
   it('filters commands by query', async () => {
     await gotoVault();
     await openPalette();
-    await $('.cmdp-input').setValue('lock vault');
-    await waitFor(async () => (await $$('.cmdp-item').length) >= 1, 'no command matched "lock vault"');
-    const first = await $('.cmdp-item').getText();
-    expect(first.toLowerCase()).to.contain('lock');
+    await $('.cmdp-input').setValue('lock');
+    await waitFor(async () => (await $$('.cmdp-item').length) >= 1, 'no command matched "lock"');
+    expect((await $('.cmdp-item').getText()).toLowerCase()).to.contain('lock');
   });
 
   it('closes on Escape', async () => {
@@ -49,7 +48,7 @@ describe('command palette', () => {
   it('runs the Settings command', async () => {
     await gotoVault();
     await openPalette();
-    await $('.cmdp-input').setValue('open settings');
+    await $('.cmdp-input').setValue('settings');
     await waitFor(async () => (await $$('.cmdp-item').length) >= 1, 'no settings command');
     await browser.keys(['Enter']);
     await $('.settings').waitForExist({ timeout: TIMEOUT.slow });

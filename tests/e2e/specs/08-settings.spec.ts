@@ -1,6 +1,6 @@
 /**
- * Settings — account summary, the password generator, enabling local-password
- * unlock, the update check, and returning to the vault.
+ * Settings — connections list, password generator, changing the app-unlock
+ * password, and returning to the vault.
  */
 import { expect } from 'chai';
 import { $, $$ } from '@wdio/globals';
@@ -9,19 +9,16 @@ import {
   clickButtonByText,
   domClickByTitle,
   gotoSettings,
-  unlockedFake,
   waitForToast,
 } from '../helpers/app.ts';
-import { TIMEOUT, waitFor } from '../helpers/wait.ts';
+import { TIMEOUT } from '../helpers/wait.ts';
 
 describe('settings', () => {
-  it('shows the signed-in account and returns to the vault', async () => {
+  it('shows the connection + returns to the vault', async () => {
     await gotoSettings();
     expect(await $('.settings-body').getText()).to.contain(FIXTURE_EMAIL);
-
     await domClickByTitle('Back');
     await $('.vault').waitForExist({ timeout: TIMEOUT.normal });
-    expect(await $('.vault').isExisting()).to.equal(true);
   });
 
   it('generates a password', async () => {
@@ -31,32 +28,21 @@ describe('settings', () => {
     expect(await $('.gen-result code').getText()).to.equal('Xq7!vPz2@Lm9');
   });
 
-  it('enables local-password unlock', async () => {
-    await gotoSettings(
-      unlockedFake({
-        status: {
-          loggedIn: true, unlocked: true, localUnlockConfigured: false, helloConfigured: false,
-          darkwebConsent: false, email: FIXTURE_EMAIL,
-        },
-      }),
-    );
+  it('changes the app-unlock password', async () => {
+    await gotoSettings();
     const pw = await $$('.settings input[type="password"]');
-    await pw[0].setValue('local-pw');
-    await pw[1].setValue('local-pw');
-    await clickButtonByText('Enable local unlock');
-
-    await waitForToast('Local unlock enabled');
-    await $('.settings-enabled').waitForExist({ timeout: TIMEOUT.normal });
+    await pw[0].setValue('newapppassword');
+    await pw[1].setValue('newapppassword');
+    await clickButtonByText('Change app password');
+    await waitForToast('App password changed');
   });
 
-  it('reports an available update after checking', async () => {
-    await gotoSettings(unlockedFake({ updateVersion: '0.2.0' }));
-    await clickButtonByText('Check for updates');
-    await waitFor(
-      async () => (await $('.settings-update-available').isExisting()),
-      'update-available banner never showed',
-      TIMEOUT.slow,
-    );
-    expect(await $('.settings-update-available').getText()).to.contain('0.2.0');
+  it('rejects a too-short new app password', async () => {
+    await gotoSettings();
+    const pw = await $$('.settings input[type="password"]');
+    await pw[0].setValue('short');
+    await pw[1].setValue('short');
+    await clickButtonByText('Change app password');
+    await waitForToast('at least 8 characters');
   });
 });

@@ -43,13 +43,6 @@ rand = "0.8"
 zeroize = { version = "1", features = ["derive"] }
 base64 = "0.22"
 
-# KeePass (.kdbx) vault source — read KDB/KDBX3/KDBX4 + experimental KDBX4 write
-# (save_kdbx4). Composite key = password + optional keyfile. All access goes
-# through the thin wrapper in keepass.rs so a crate API break is contained to one
-# layer (same discipline as the SDK wrappers). Write is experimental upstream, so
-# keepass.rs backs up the file before every save.
-keepass = { version = "0.13", features = ["save_kdbx4"] }
-
 # Bitwarden official SDK (sdk-internal). GPLv3. Pinned by rev because the
 # password-manager SDK is explicitly unstable ("changes without warning").
 # Bumping the rev is a deliberate, reviewed action — never float `main`.
