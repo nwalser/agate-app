@@ -113,6 +113,39 @@ jobs:
           $json | ConvertTo-Json -Depth 100 | Set-Content $conf -Encoding utf8
           Write-Host "Windows Authenticode signing enabled (thumbprint $($cert.Thumbprint))."
 
+      # Optional macOS Developer ID signing + notarization (see docs/SIGNING.md).
+      # Only export the APPLE_* vars when a certificate secret is actually present:
+      # tauri-bundler treats a *defined-but-empty* APPLE_CERTIFICATE as "sign with
+      # this" and then fails importing the empty cert. Passing them unconditionally
+      # in the build step's env (the obvious way) therefore breaks every unsigned
+      # macOS build — so we gate them through $GITHUB_ENV instead.
+      - name: Set up macOS code signing
+        if: startsWith(matrix.platform, 'macos')
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "No APPLE_CERTIFICATE secret — macOS build will be unsigned."
+            exit 0
+          fi
+          {
+            echo "APPLE_CERTIFICATE<<__AGATE_EOF__"
+            echo "$APPLE_CERTIFICATE"
+            echo "__AGATE_EOF__"
+            echo "APPLE_CERTIFICATE_PASSWORD=$APPLE_CERTIFICATE_PASSWORD"
+            echo "APPLE_SIGNING_IDENTITY=$APPLE_SIGNING_IDENTITY"
+            echo "APPLE_ID=$APPLE_ID"
+            echo "APPLE_PASSWORD=$APPLE_PASSWORD"
+            echo "APPLE_TEAM_ID=$APPLE_TEAM_ID"
+          } >> "$GITHUB_ENV"
+          echo "macOS Developer ID signing enabled."
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -120,13 +153,8 @@ jobs:
           # has no .sig files and the in-app updater will reject updates.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # Optional macOS Developer ID signing + notarization (see docs/SIGNING.md).
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # macOS APPLE_* vars are injected via $GITHUB_ENV by the "Set up macOS
+          # code signing" step above — only when a cert secret exists, never empty.
         with:
           tagName: agate-v__VERSION__
           releaseName: 'Agate v__VERSION__'
