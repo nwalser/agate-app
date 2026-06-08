@@ -1,7 +1,7 @@
-import { createSignal, Show, For } from 'solid-js';
-import { ShieldCheck } from 'lucide-solid';
+import { createSignal, onMount, Show, For } from 'solid-js';
+import { Server, ShieldCheck } from 'lucide-solid';
 import { ipc } from '../lib/ipc.ts';
-import type { ServerConfig, TwoFactorKind } from '../lib/types.ts';
+import type { AccountSummary, ServerConfig, TwoFactorKind } from '../lib/types.ts';
 import { refreshSession } from '../state/session.ts';
 import { pushToast, toastError } from '../state/toast.ts';
 import './Onboarding.css';
@@ -18,6 +18,30 @@ export default function Onboarding(props: { initialEmail?: string | null }) {
   const [twoFactorProviders, setTwoFactorProviders] = createSignal<TwoFactorKind[] | null>(null);
   const [tfProvider, setTfProvider] = createSignal<TwoFactorKind>('authenticator');
   const [tfToken, setTfToken] = createSignal('');
+
+  // Saved connections (server + email) so the user never retypes a self-hosted URL.
+  const [connections, setConnections] = createSignal<AccountSummary[]>([]);
+  onMount(() => {
+    void (async () => {
+      try {
+        setConnections(await ipc.listAccounts());
+      } catch {
+        // ignore: no saved connections yet
+      }
+    })();
+  });
+
+  function useConnection(conn: AccountSummary) {
+    const s = conn.server;
+    if (s.region === 'selfHosted') {
+      setRegion('selfHosted');
+      setBaseUrl(s.baseUrl);
+    } else {
+      setRegion(s.region);
+      setBaseUrl('');
+    }
+    setEmail(conn.email);
+  }
 
   function serverConfig(): ServerConfig {
     if (region() === 'eu') return { region: 'eu' };
@@ -108,6 +132,24 @@ export default function Onboarding(props: { initialEmail?: string | null }) {
           }
         >
           <div class="onboarding-step">
+            <Show when={connections().length > 0}>
+              <div class="field">
+                <label>Saved connections</label>
+                <div class="onboarding-connections">
+                  <For each={connections()}>
+                    {(conn) => (
+                      <button type="button" class="onboarding-connection" onClick={() => useConnection(conn)}>
+                        <Server size={13} strokeWidth={1.75} />
+                        <span class="onboarding-connection-text">
+                          <span>{conn.email}</span>
+                          <span class="muted">{conn.serverLabel}</span>
+                        </span>
+                      </button>
+                    )}
+                  </For>
+                </div>
+              </div>
+            </Show>
             <div class="field">
               <label>Server</label>
               <select value={region()} onChange={(e) => setRegion(e.currentTarget.value as Region)}>

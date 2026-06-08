@@ -29,6 +29,7 @@ export interface SessionStatus {
 export interface AccountSummary {
   email: string;
   serverLabel: string;
+  server: ServerConfig;
   active: boolean;
 }
 

@@ -30,6 +30,7 @@ pub async fn list_accounts(state: &AppState) -> AgateResult<Vec<AccountSummary>>
         .map(|a| AccountSummary {
             email: a.email.clone(),
             server_label: server_label(&a.server),
+            server: a.server.clone(),
             active: active.as_deref() == Some(a.email.as_str()),
         })
         .collect())

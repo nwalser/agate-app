@@ -47,6 +47,7 @@ base64 = "0.22"
 # password-manager SDK is explicitly unstable ("changes without warning").
 # Bumping the rev is a deliberate, reviewed action — never float `main`.
 bitwarden-core = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e" }
+bitwarden-auth = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e" }
 bitwarden-pm = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e" }
 bitwarden-vault = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e" }
 bitwarden-sync = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e" }
@@ -57,6 +58,11 @@ bitwarden-state = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef
 zxcvbn = "3.1"
 sha1 = "0.10"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+# Self-hosted prelogin compatibility shim (build the SDK client with a custom
+# reqwest middleware). Versions must match the SDK's to share the trait types.
+reqwest-middleware = "0.5"
+async-trait = "0.1"
+http = "1"
 
 [target.'cfg(windows)'.dependencies]
 # Windows Hello (UserConsentVerifier) for passwordless unlock, and

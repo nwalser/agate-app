@@ -47,12 +47,14 @@ pub enum LoginResult {
     TwoFactorRequired { providers: Vec<TwoFactorKind> },
 }
 
-/// One known account for the account switcher.
+/// One known account/connection for the switcher + onboarding quick-pick.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountSummary {
     pub email: String,
     pub server_label: String,
+    /// The full server config, so onboarding can prefill it without retyping.
+    pub server: ServerConfig,
     pub active: bool,
 }
 

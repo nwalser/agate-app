@@ -45,7 +45,9 @@ fn classify_login_error(msg: &str) -> AgateError {
 async fn build_client(state: &AppState, server: &ServerConfig) -> AgateResult<PasswordManagerClient> {
     let device_id = state.config.lock().await.device_id.clone();
     let settings = server::client_settings(server, device_id)?;
-    Ok(PasswordManagerClient::new(Some(settings)))
+    // Self-hosted servers get a prelogin-path compatibility shim; the SDK does
+    // the rest of login/crypto unchanged.
+    Ok(crate::clientbuild::build_pm_client(server, settings))
 }
 
 /// Attempt a master-password login. On success the vault is unlocked and the
@@ -58,6 +60,14 @@ pub async fn login(
     password: String,
     two_factor: Option<TwoFactorInput>,
 ) -> AgateResult<LoginResult> {
+    // Remember this connection (server + email) up front, so it survives even a
+    // failed login — the user shouldn't have to retype a self-hosted URL.
+    {
+        let mut cfg = state.config.lock().await;
+        cfg.upsert_account(server.clone(), &email);
+    }
+    state.save_config().await?;
+
     let client = build_client(state, &server).await?;
 
     let request = PasswordLoginRequest {
@@ -94,10 +104,9 @@ pub async fn login(
         return Ok(LoginResult::TwoFactorRequired { providers: kinds });
     }
 
-    // Authenticated + unlocked: persist non-secret config and keep the client.
+    // Authenticated + unlocked: mark this the active account and keep the client.
     {
         let mut cfg = state.config.lock().await;
-        cfg.upsert_account(server.clone(), &email);
         cfg.server = server;
         cfg.email = Some(email);
     }

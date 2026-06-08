@@ -7,6 +7,7 @@
 mod accounts;
 mod audit;
 mod auth;
+mod clientbuild;
 mod dto;
 mod error;
 #[cfg(target_os = "windows")]
