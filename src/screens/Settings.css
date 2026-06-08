@@ -35,9 +35,38 @@
   margin-bottom: 16px;
 }
 .settings-section h3 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   margin: 0 0 12px;
   font-size: 13px;
   font-weight: 600;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12.5px;
+}
+.settings-row-disabled {
+  justify-content: flex-start;
+}
+
+.settings-update-available {
+  color: var(--success);
+  font-size: 12.5px;
+  margin: 0 0 12px;
+}
+
+.spin {
+  animation: settings-spin 0.8s linear infinite;
+}
+@keyframes settings-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .settings-help {

@@ -55,6 +55,30 @@
   margin-top: 8px;
 }
 
+.unlock-hello {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.unlock-or {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin: 14px 0;
+}
+.unlock-or::before,
+.unlock-or::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
 .unlock-logout {
   margin-top: 14px;
   color: var(--muted-foreground);

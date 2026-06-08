@@ -58,3 +58,34 @@ fn normalize_base(raw: &str) -> AgateResult<String> {
 
     Ok(trimmed.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn self_hosted_urls_get_identity_and_api_suffixes() {
+        let s = client_settings(
+            &ServerConfig::SelfHosted { base_url: "https://vault.example.com/".into() },
+            "dev-id".into(),
+        )
+        .unwrap();
+        assert_eq!(s.identity_url, "https://vault.example.com/identity");
+        assert_eq!(s.api_url, "https://vault.example.com/api");
+    }
+
+    #[test]
+    fn cloud_regions_resolve() {
+        assert!(client_settings(&ServerConfig::Us, "d".into()).unwrap().api_url.contains("api.bitwarden.com"));
+        assert!(client_settings(&ServerConfig::Eu, "d".into()).unwrap().identity_url.contains("identity.bitwarden.eu"));
+    }
+
+    #[test]
+    fn normalize_base_enforces_scheme() {
+        assert_eq!(normalize_base("https://x.test/").unwrap(), "https://x.test");
+        assert!(normalize_base("http://x.test").is_err());
+        assert!(normalize_base("http://localhost:8080").is_ok());
+        assert!(normalize_base("http://127.0.0.1").is_ok());
+        assert!(normalize_base("   ").is_err());
+    }
+}

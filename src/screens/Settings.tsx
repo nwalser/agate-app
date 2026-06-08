@@ -1,5 +1,5 @@
-import { createSignal, Show } from 'solid-js';
-import { ArrowLeft, Copy, RefreshCw } from 'lucide-solid';
+import { createSignal, onMount, Show } from 'solid-js';
+import { ArrowLeft, Copy, DownloadCloud, Fingerprint, RefreshCw } from 'lucide-solid';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { ipc } from '../lib/ipc.ts';
 import type { PasswordGenOptions, ServerConfig } from '../lib/types.ts';
@@ -26,6 +26,72 @@ export default function Settings(props: { onBack: () => void }) {
     special: true,
   });
   const [generated, setGenerated] = createSignal('');
+
+  // ---- Windows Hello ----
+  const [helloAvailable, setHelloAvailable] = createSignal(false);
+  const [helloBusy, setHelloBusy] = createSignal(false);
+
+  onMount(() => {
+    void (async () => {
+      try {
+        setHelloAvailable(await ipc.helloAvailable());
+      } catch (err) {
+        toastError(err);
+      }
+    })();
+  });
+
+  async function toggleHello() {
+    setHelloBusy(true);
+    try {
+      if (status().helloConfigured) {
+        await ipc.helloDisable();
+        await refreshSession();
+        pushToast('success', 'Windows Hello unlock disabled.');
+      } else {
+        await ipc.helloEnable();
+        await refreshSession();
+        pushToast('success', 'Windows Hello unlock enabled.');
+      }
+    } catch (err) {
+      toastError(err);
+    } finally {
+      setHelloBusy(false);
+    }
+  }
+
+  // ---- Updates ----
+  const [updateBusy, setUpdateBusy] = createSignal(false);
+  const [installing, setInstalling] = createSignal(false);
+  // null = not checked; '' = up to date; otherwise the available version.
+  const [availableVersion, setAvailableVersion] = createSignal<string | null>(null);
+
+  async function checkUpdate() {
+    setUpdateBusy(true);
+    try {
+      const version = await ipc.checkUpdate();
+      if (version) {
+        setAvailableVersion(version);
+      } else {
+        setAvailableVersion('');
+        pushToast('success', "You're on the latest version.");
+      }
+    } catch (err) {
+      toastError(err);
+    } finally {
+      setUpdateBusy(false);
+    }
+  }
+
+  async function installUpdate() {
+    setInstalling(true);
+    try {
+      await ipc.runUpdate();
+    } catch (err) {
+      toastError(err);
+      setInstalling(false);
+    }
+  }
 
   async function enableLocal() {
     if (localPw().length < 4) {
@@ -128,6 +194,63 @@ export default function Settings(props: { onBack: () => void }) {
             <button class="danger" disabled={busy()} onClick={() => void disableLocal()}>
               Disable local unlock
             </button>
+          </Show>
+        </section>
+
+        <section class="settings-section">
+          <h3>
+            <Fingerprint size={14} strokeWidth={1.75} /> Windows Hello
+          </h3>
+          <p class="muted settings-help">
+            Unlock your vault with Windows Hello (face, fingerprint, or PIN) instead of typing a
+            password.
+          </p>
+          <Show
+            when={helloAvailable()}
+            fallback={
+              <div class="settings-row settings-row-disabled">
+                <span class="muted">Windows Hello is not available on this device.</span>
+              </div>
+            }
+          >
+            <div class="settings-row">
+              <span>{status().helloConfigured ? 'Enabled' : 'Disabled'}</span>
+              <button
+                classList={{ primary: !status().helloConfigured, danger: status().helloConfigured }}
+                disabled={helloBusy()}
+                onClick={() => void toggleHello()}
+              >
+                {status().helloConfigured ? 'Disable' : 'Enable'}
+              </button>
+            </div>
+          </Show>
+        </section>
+
+        <section class="settings-section">
+          <h3>
+            <DownloadCloud size={14} strokeWidth={1.75} /> Updates
+          </h3>
+          <Show
+            when={availableVersion()}
+            fallback={
+              <>
+                <p class="muted settings-help">Check whether a newer version of Agate is available.</p>
+                <button class="primary gen-btn" disabled={updateBusy()} onClick={() => void checkUpdate()}>
+                  <RefreshCw size={14} strokeWidth={1.75} class={updateBusy() ? 'spin' : ''} />
+                  {updateBusy() ? 'Checking…' : 'Check for updates'}
+                </button>
+              </>
+            }
+          >
+            {(version) => (
+              <>
+                <p class="settings-update-available">Version {version()} is available.</p>
+                <button class="primary gen-btn" disabled={installing()} onClick={() => void installUpdate()}>
+                  <DownloadCloud size={14} strokeWidth={1.75} />
+                  {installing() ? 'Installing…' : 'Install & restart'}
+                </button>
+              </>
+            )}
           </Show>
         </section>
 

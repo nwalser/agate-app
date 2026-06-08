@@ -250,3 +250,33 @@ pub async fn audit_exposed(state: &AppState) -> AgateResult<Vec<ExposedResult>> 
     }
     Ok(results)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sha1_hex_is_uppercase_and_correct() {
+        // Known SHA-1 of "password" — also the value HIBP keys its corpus by.
+        let h = uppercase_sha1_hex(b"password");
+        assert_eq!(h, "5BAA61E4C9B93F3F0682250B6CF8331B7EE68FD8");
+        assert_eq!(h.len(), 40);
+        assert!(h.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()));
+        // The HIBP range query sends only the first 5 chars.
+        assert_eq!(&h[..5], "5BAA6");
+    }
+
+    #[test]
+    fn band_thresholds_map_correctly() {
+        assert!(matches!(band_for(0), HealthBand::Critical));
+        assert!(matches!(band_for(39), HealthBand::Critical));
+        assert!(matches!(band_for(40), HealthBand::Poor));
+        assert!(matches!(band_for(59), HealthBand::Poor));
+        assert!(matches!(band_for(60), HealthBand::Fair));
+        assert!(matches!(band_for(79), HealthBand::Fair));
+        assert!(matches!(band_for(80), HealthBand::Good));
+        assert!(matches!(band_for(94), HealthBand::Good));
+        assert!(matches!(band_for(95), HealthBand::Excellent));
+        assert!(matches!(band_for(100), HealthBand::Excellent));
+    }
+}

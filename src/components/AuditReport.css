@@ -1,0 +1,213 @@
+.audit {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.audit-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.audit-header svg {
+  color: var(--primary);
+}
+.audit-header h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.audit-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px 22px;
+  max-width: 560px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.audit-loading {
+  font-size: 12.5px;
+  padding: 4px 0;
+}
+
+.audit-section {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  margin-bottom: 16px;
+}
+.audit-section h3 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 12px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.audit-section h3 svg {
+  color: var(--muted-foreground);
+}
+
+.audit-score-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 24px 18px;
+}
+
+.audit-score {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.audit-score-value {
+  font-size: 52px;
+  font-weight: 700;
+  line-height: 1;
+}
+.audit-score-max {
+  font-size: 16px;
+  font-weight: 600;
+  opacity: 0.6;
+}
+
+.audit-band {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 3px 12px;
+  border: 1px solid;
+  border-radius: 999px;
+}
+
+.audit-summary {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.audit-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.audit-stat-num {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+.audit-stat-label {
+  font-size: 11px;
+}
+
+.audit-empty {
+  font-size: 12.5px;
+  margin: 0;
+}
+
+.audit-risk-list,
+.audit-exposed-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.audit-risk-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 9px 11px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.audit-risk-row:hover {
+  background: var(--card-hover);
+  border-color: var(--border-strong);
+}
+
+.audit-risk-name {
+  flex: 1;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.audit-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: flex-end;
+}
+.audit-chip {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 2px 7px;
+  border-radius: 999px;
+  color: var(--warning);
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.32);
+  white-space: nowrap;
+}
+
+.audit-help {
+  font-size: 12px;
+  margin: 0 0 14px;
+}
+
+.audit-run-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.audit-clean {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  color: var(--success);
+  margin: 14px 0 0;
+}
+
+.audit-exposed-list {
+  margin-top: 14px;
+}
+.audit-exposed-icon {
+  color: var(--destructive);
+  flex-shrink: 0;
+}
+.audit-breach-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--destructive);
+  white-space: nowrap;
+}
+
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

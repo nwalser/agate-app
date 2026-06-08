@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { filterItems, matchesQuery } from './search.ts';
+import { filterItems, fuzzyContains, matchesQuery, passesFilter } from './search.ts';
 import type { VaultItem } from './types.ts';
 
 function item(partial: Partial<VaultItem>): VaultItem {
@@ -16,18 +16,62 @@ function item(partial: Partial<VaultItem>): VaultItem {
   };
 }
 
+describe('fuzzyContains', () => {
+  it('matches everything on empty query', () => {
+    expect(fuzzyContains('GitHub', '')).toBe(true);
+  });
+
+  it('matches an ordered subsequence, case-insensitively', () => {
+    expect(fuzzyContains('GitHub', 'gh')).toBe(true);
+    expect(fuzzyContains('GitHub', 'git')).toBe(true);
+    expect(fuzzyContains('GitHub', 'hub')).toBe(true);
+  });
+
+  it('rejects out-of-order or absent characters', () => {
+    expect(fuzzyContains('GitHub', 'hg')).toBe(false);
+    expect(fuzzyContains('GitHub', 'lab')).toBe(false);
+  });
+});
+
 describe('matchesQuery', () => {
   it('matches everything on empty query', () => {
     expect(matchesQuery(item({ name: 'GitHub' }), '   ')).toBe(true);
   });
 
-  it('matches on name, case-insensitively', () => {
+  it('matches on name, case-insensitively (subsequence)', () => {
     expect(matchesQuery(item({ name: 'GitHub' }), 'git')).toBe(true);
+    expect(matchesQuery(item({ name: 'GitHub' }), 'gh')).toBe(true);
     expect(matchesQuery(item({ name: 'GitHub' }), 'lab')).toBe(false);
   });
 
   it('matches on username', () => {
     expect(matchesQuery(item({ name: 'x', username: 'alice@example.com' }), 'alice')).toBe(true);
+  });
+});
+
+describe('passesFilter', () => {
+  it('all hides trashed items', () => {
+    expect(passesFilter(item({ deleted: false }), { kind: 'all' })).toBe(true);
+    expect(passesFilter(item({ deleted: true }), { kind: 'all' })).toBe(false);
+  });
+
+  it('favorites shows only non-trashed favorites', () => {
+    expect(passesFilter(item({ favorite: true }), { kind: 'favorites' })).toBe(true);
+    expect(passesFilter(item({ favorite: false }), { kind: 'favorites' })).toBe(false);
+    expect(passesFilter(item({ favorite: true, deleted: true }), { kind: 'favorites' })).toBe(false);
+  });
+
+  it('trash shows only trashed items', () => {
+    expect(passesFilter(item({ deleted: true }), { kind: 'trash' })).toBe(true);
+    expect(passesFilter(item({ deleted: false }), { kind: 'trash' })).toBe(false);
+  });
+
+  it('type matches the given item type and hides trash', () => {
+    expect(passesFilter(item({ itemType: 'card' }), { kind: 'type', itemType: 'card' })).toBe(true);
+    expect(passesFilter(item({ itemType: 'login' }), { kind: 'type', itemType: 'card' })).toBe(false);
+    expect(
+      passesFilter(item({ itemType: 'card', deleted: true }), { kind: 'type', itemType: 'card' }),
+    ).toBe(false);
   });
 });
 
@@ -45,5 +89,15 @@ describe('filterItems', () => {
   it('filters by query before sorting', () => {
     const items = [item({ name: 'GitHub' }), item({ name: 'GitLab' }), item({ name: 'Email' })];
     expect(filterItems(items, 'git').map((i) => i.name)).toEqual(['GitHub', 'GitLab']);
+  });
+
+  it('hides trashed items under the default filter', () => {
+    const items = [item({ name: 'Live' }), item({ name: 'Gone', deleted: true })];
+    expect(filterItems(items, '').map((i) => i.name)).toEqual(['Live']);
+  });
+
+  it('shows only trashed items under the trash filter', () => {
+    const items = [item({ name: 'Live' }), item({ name: 'Gone', deleted: true })];
+    expect(filterItems(items, '', { kind: 'trash' }).map((i) => i.name)).toEqual(['Gone']);
   });
 });

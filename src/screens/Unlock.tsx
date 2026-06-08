@@ -1,5 +1,5 @@
 import { createSignal, Show } from 'solid-js';
-import { Lock } from 'lucide-solid';
+import { Fingerprint, Lock } from 'lucide-solid';
 import { ipc } from '../lib/ipc.ts';
 import { refreshSession, status } from '../state/session.ts';
 import { toastError } from '../state/toast.ts';
@@ -10,12 +10,25 @@ export default function Unlock(props: { onUseMasterPassword: () => void }) {
   const [busy, setBusy] = createSignal(false);
 
   const hasLocal = () => status().localUnlockConfigured;
+  const hasHello = () => status().helloConfigured;
 
   async function unlock() {
     if (!localPassword()) return;
     setBusy(true);
     try {
       await ipc.unlockLocal(localPassword());
+      await refreshSession();
+    } catch (err) {
+      toastError(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function unlockHello() {
+    setBusy(true);
+    try {
+      await ipc.helloUnlock();
       await refreshSession();
     } catch (err) {
       toastError(err);
@@ -42,6 +55,13 @@ export default function Unlock(props: { onUseMasterPassword: () => void }) {
         <h2 class="unlock-title">Vault locked</h2>
         <Show when={status().email}>
           {(email) => <p class="muted unlock-email">{email()}</p>}
+        </Show>
+
+        <Show when={hasHello()}>
+          <button class="primary full unlock-hello" disabled={busy()} onClick={() => void unlockHello()}>
+            <Fingerprint size={16} strokeWidth={1.75} /> Unlock with Windows Hello
+          </button>
+          <div class="unlock-or muted">or</div>
         </Show>
 
         <Show
