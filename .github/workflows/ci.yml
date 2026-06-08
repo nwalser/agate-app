@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # Tauri 2 links webkit2gtk-4.1 — required even to compile/clippy the crate.
       - name: Install Linux build dependencies
