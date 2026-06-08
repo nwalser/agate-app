@@ -72,6 +72,7 @@ export interface VaultItem {
   username: string | null;
   hasTotp: boolean;
   favorite: boolean;
+  deleted: boolean;
   folderId: string | null;
   organizationId: string | null;
 }

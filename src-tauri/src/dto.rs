@@ -85,6 +85,7 @@ pub struct VaultItem {
     pub username: Option<String>,
     pub has_totp: bool,
     pub favorite: bool,
+    pub deleted: bool,
     pub folder_id: Option<String>,
     pub organization_id: Option<String>,
 }

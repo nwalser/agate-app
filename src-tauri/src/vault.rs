@@ -123,6 +123,7 @@ fn view_to_list_item(view: &CipherView) -> VaultItem {
         username,
         has_totp,
         favorite: view.favorite,
+        deleted: view.deleted_date.is_some(),
         folder_id: view.folder_id.map(|i| i.to_string()),
         organization_id: view.organization_id.map(|i| i.to_string()),
     }
@@ -217,9 +218,19 @@ pub(crate) async fn decrypt_one(state: &AppState, id: &str) -> AgateResult<Ciphe
         .map_err(|e| AgateError::new(ErrorKind::Crypto, format!("decrypt failed: {e}")))
 }
 
-/// List folders from the last sync (empty in v0.1 — see module note).
+/// List decrypted folders. Reads from the SDK FoldersClient (best-effort).
 pub async fn list_folders(state: &AppState) -> AgateResult<Vec<Folder>> {
-    Ok(state.session.lock().await.folders.clone())
+    let client = client(state).await?;
+    match client.vault().folders().list().await {
+        Ok(views) => Ok(views
+            .into_iter()
+            .map(|v| Folder { id: v.id.map(|i| i.to_string()), name: v.name })
+            .collect()),
+        Err(e) => {
+            log::warn!("folder list failed: {e}");
+            Ok(Vec::new())
+        }
+    }
 }
 
 /// Generate a password with the given options (no unlocked vault required).

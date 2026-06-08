@@ -10,6 +10,7 @@ function item(partial: Partial<VaultItem>): VaultItem {
     username: partial.username ?? null,
     hasTotp: partial.hasTotp ?? false,
     favorite: partial.favorite ?? false,
+    deleted: partial.deleted ?? false,
     folderId: partial.folderId ?? null,
     organizationId: partial.organizationId ?? null,
   };
