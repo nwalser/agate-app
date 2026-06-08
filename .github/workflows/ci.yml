@@ -1,0 +1,54 @@
+name: CI
+
+# Fast PR/branch gate: typecheck + lint + unit tests (JS) and clippy + cargo test
+# (Rust) on a single Linux runner. The cross-platform release build lives in
+# release.yml and only runs on tags.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # Tauri 2 links webkit2gtk-4.1 — required even to compile/clippy the crate.
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - run: npm ci
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      # Caches ~/.cargo (incl. the large Bitwarden sdk-internal git checkout) and
+      # src-tauri/target so the long first SDK compile is reused on warm runs.
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+          cache-on-failure: true
+
+      - name: JS gate (typecheck + eslint + vitest)
+        run: npm run check
+
+      - name: Rust lint (clippy, warnings = errors)
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml

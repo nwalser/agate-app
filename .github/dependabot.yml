@@ -1,0 +1,18 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /src-tauri
+    schedule:
+      interval: weekly
+    # The Bitwarden SDK is a pinned git dependency and is bumped manually after
+    # review — ignore it here so Dependabot doesn't churn the unstable API.
+    ignore:
+      - dependency-name: bitwarden-*
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

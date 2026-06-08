@@ -25,10 +25,9 @@ use dto::{
     PasswordGenOptions, ServerConfig, SessionStatus, TotpCode, TwoFactorInput, VaultHealthReport,
     VaultItem,
 };
-#[cfg(not(target_os = "windows"))]
-use error::{AgateError, ErrorKind};
-use error::AgateResult;
+use error::{AgateError, AgateResult, ErrorKind};
 use state::AppState;
+use tauri_plugin_updater::UpdaterExt;
 
 type State<'a> = tauri::State<'a, AppState>;
 
@@ -231,6 +230,40 @@ async fn hello_unlock(state: State<'_>, window: tauri::WebviewWindow) -> AgateRe
     }
 }
 
+// ---- auto-updater ----
+
+/// Returns the available update version, or null if up to date.
+#[tauri::command]
+async fn check_update(app: tauri::AppHandle) -> AgateResult<Option<String>> {
+    let updater = app.updater().map_err(|e| AgateError::internal(format!("updater: {e}")))?;
+    match updater.check().await {
+        Ok(Some(update)) => Ok(Some(update.version)),
+        Ok(None) => Ok(None),
+        Err(e) => Err(AgateError::new(ErrorKind::Network, format!("Update check failed: {e}"))),
+    }
+}
+
+/// Download + install the available update, locking the vault first (Windows
+/// force-exits to run the installer), then relaunch.
+#[tauri::command]
+async fn run_update(app: tauri::AppHandle, state: State<'_>) -> AgateResult<()> {
+    // Lock the vault and drop all secret material before the installer runs.
+    state.session.lock().await.clear_secrets();
+    let updater = app.updater().map_err(|e| AgateError::internal(format!("updater: {e}")))?;
+    let Some(update) = updater
+        .check()
+        .await
+        .map_err(|e| AgateError::new(ErrorKind::Network, format!("Update check failed: {e}")))?
+    else {
+        return Ok(());
+    };
+    update
+        .download_and_install(|_chunk, _total| {}, || {})
+        .await
+        .map_err(|e| AgateError::new(ErrorKind::Network, format!("Update install failed: {e}")))?;
+    app.restart();
+}
+
 #[tauri::command]
 async fn create_folder(state: State<'_>, name: String) -> AgateResult<Folder> {
     mutate::create_folder(&state, name).await
@@ -272,6 +305,8 @@ pub fn run() {
         .plugin(tauri_plugin_log::Builder::new().build())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let config_dir = app
                 .path()
@@ -312,6 +347,8 @@ pub fn run() {
             hello_enable,
             hello_disable,
             hello_unlock,
+            check_update,
+            run_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Agate");

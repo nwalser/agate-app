@@ -102,4 +102,10 @@ export const ipc = {
   helloDisable: (): Promise<void> => invoke('hello_disable'),
 
   helloUnlock: (): Promise<void> => invoke('hello_unlock'),
+
+  // ---- auto-updater ----
+
+  checkUpdate: (): Promise<string | null> => invoke('check_update'),
+
+  runUpdate: (): Promise<void> => invoke('run_update'),
 };

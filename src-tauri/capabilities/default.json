@@ -9,6 +9,8 @@
     "log:default",
     "clipboard-manager:allow-write-text",
     "clipboard-manager:allow-read-text",
-    "opener:allow-open-url"
+    "opener:allow-open-url",
+    "updater:default",
+    "process:allow-restart"
   ]
 }
