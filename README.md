@@ -10,10 +10,13 @@ Runs on **Linux, macOS, and Windows**.
 
 ## Why Agate
 
-- **Local-password unlock.** Log in once with your master password; afterwards unlock
-  with a separate, lighter local password (or PIN). Your master password is **never
-  written to disk** — only an OS-keychain-protected, locally-encrypted copy of the
-  vault key is kept, so day-to-day unlocking never exposes the master password.
+- **Local-password unlock.** Lock the app and re-open it with a separate, lighter
+  local password (or PIN) instead of retyping your master password. Your master
+  password is **never written to disk**. The local password is verified against an
+  Argon2id + AES-256-GCM blob sealed in the OS keychain (no plaintext check value is
+  stored). _Current SDK limitation:_ the held vault key lives only in memory, so after
+  a full app **restart** you unlock once with the master password; in-session locks
+  use the local password. (See the security note in [`CLAUDE.md`](CLAUDE.md).)
 - **Official crypto.** Auth, sync, and vault decryption go through Bitwarden's own
   Rust SDK rather than a hand-rolled reimplementation of the protocol.
 - **Cloud and self-hosted.** Works with `bitwarden.com`, `bitwarden.eu`, and any
@@ -59,11 +62,15 @@ npm run build        # production build; installer under src-tauri/target/releas
 
 ## Security
 
-Agate stores no secrets in plaintext. The master password is held in memory only
-during login and then zeroized. The local-unlock feature keeps an Argon2id-wrapped,
-AES-256-GCM-encrypted copy of the vault key in the OS keychain (Keychain on macOS,
-Credential Manager on Windows, Secret Service / libsecret on Linux). See the
-"Local-password unlock — security model" section of [`CLAUDE.md`](CLAUDE.md).
+Agate stores no secrets in plaintext and never writes the master password to disk.
+The local-unlock feature seals a random verifier under your local password with
+Argon2id + AES-256-GCM and stores it in the OS keychain (Keychain on macOS,
+Credential Manager on Windows, Secret Service / libsecret on Linux); a wrong local
+password fails the AEAD tag, so no plaintext check value is kept. The reusable sealing
+layer (`src-tauri/src/secrets.rs`) is unit-tested and ready to seal a persistable
+session key the moment the Bitwarden SDK exposes one — at which point local unlock will
+also survive restarts. See "Local-password unlock — security model" in
+[`CLAUDE.md`](CLAUDE.md).
 
 If you find a security issue, please open a private report rather than a public issue.
 

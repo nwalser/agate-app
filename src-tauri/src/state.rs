@@ -44,11 +44,16 @@ impl PersistedConfig {
     }
 }
 
-/// The live session. Secret material (`client`, `ciphers`) is cleared on lock.
+/// The live session. Secret material is cleared on full lock / logout.
 #[derive(Default)]
 pub struct Session {
-    /// SDK client; `Some` once logged in (locked or unlocked).
+    /// Active (unlocked) SDK client; `Some` while the vault is unlocked.
     pub client: Option<PasswordManagerClient>,
+    /// Soft-locked client held in memory behind the local password. When local
+    /// unlock is configured, locking moves `client` here instead of dropping it,
+    /// so the user can re-unlock with the local password (no master password).
+    /// Lost on full logout and on process exit — see `unlock.rs`.
+    pub locked_client: Option<PasswordManagerClient>,
     /// Encrypted domain ciphers from the last sync, kept so the detail pane can
     /// decrypt a single item on demand. Cleared on lock.
     pub ciphers: Vec<Cipher>,
@@ -57,9 +62,31 @@ pub struct Session {
 }
 
 impl Session {
-    /// Drop all in-memory secret material (lock).
+    /// A fresh handle to the active client (the inner SDK `Client` is cheap to
+    /// clone — it's `Arc`-backed and shares the unlocked key store).
+    pub fn cloned_client(&self) -> Option<PasswordManagerClient> {
+        self.client.as_ref().map(|pm| PasswordManagerClient(pm.0.clone()))
+    }
+
+    /// True if there is a session at all (unlocked or soft-locked).
+    pub fn has_session(&self) -> bool {
+        self.client.is_some() || self.locked_client.is_some()
+    }
+
+    /// Soft lock: keep the client in memory behind the local password, but clear
+    /// the decrypted item cache so a locked window exposes nothing.
+    pub fn soft_lock(&mut self) {
+        if let Some(client) = self.client.take() {
+            self.locked_client = Some(client);
+        }
+        self.ciphers.clear();
+        self.folders.clear();
+    }
+
+    /// Drop all in-memory secret material (full lock / logout).
     pub fn clear_secrets(&mut self) {
         self.client = None;
+        self.locked_client = None;
         self.ciphers.clear();
         self.folders.clear();
     }

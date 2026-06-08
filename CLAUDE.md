@@ -69,24 +69,28 @@ src-tauri/
 ```
 
 ## Local-password unlock — security model (the headline feature)
-Goal: don't force the master password on every unlock, AND reduce the blast radius
-of a compromise by never persisting the master password.
+Goal: don't force the master password on every unlock, AND never persist the master
+password. Implemented in `secrets.rs` (the crypto envelope) + `unlock.rs` (the flow).
 
-- **First login** uses email + master password. The SDK derives the master key and
-  unlocks the **user key** (the symmetric key that decrypts the vault). The master
-  password is used in-memory only and then dropped (`zeroize`) — never written to disk.
-- **Enabling local unlock**: the user sets a separate local password (or PIN). We
-  derive a local wrapping key from it with **Argon2id** (random per-user salt), then
-  use the SDK to export the user key and wrap (AES-256-GCM) it under the local key.
-  The wrapped blob + salt + KDF params are stored in the **OS keychain** via `keyring`.
-- **Subsequent unlock**: local password → Argon2id → unwrap user key → initialize the
-  SDK client directly from the user key (no master password, no network round-trip to
-  re-auth). A wrong local password fails the GCM auth tag — we never store a plaintext
-  verifier.
-- **Lock** drops all key material from memory; **logout** additionally deletes the
-  keychain entries and the persisted session token.
-- Prefer the SDK's own unlock primitives (`bitwarden-crypto` / unlock helpers) over
-  hand-rolled crypto wherever they cover the case.
+- **First login** uses email + master password; the SDK unlocks the vault in memory.
+  The master password is never written to disk.
+- **Enabling local unlock** (`unlock::enable`): the user sets a separate local password.
+  We derive a key from it with **Argon2id** (random per-user salt) and seal a random
+  verifier token with **AES-256-GCM**, storing the blob in the **OS keychain**
+  (`keyring`). No plaintext check value is stored — opening the blob *is* the check.
+- **Lock** (`auth::lock`): when local unlock is configured, the app *soft-locks* — the
+  SDK client is moved to `Session.locked_client` (kept in memory) and the decrypted
+  item cache is cleared. Otherwise it hard-clears all key material.
+- **Unlock** (`unlock::unlock_local`): the local password must open the keychain blob
+  (GCM tag = the check), then the held client is reactivated — no master password.
+- **Current SDK limitation:** at the pinned `sdk-internal` rev, `SessionKey` has no
+  public serialization, so we cannot seal a *persistable* vault key to the keychain
+  yet. The held client therefore lives only in memory and does not survive a process
+  restart (after relaunch, unlock once with the master password). `secrets.rs` already
+  seals/opens arbitrary bytes, so when the SDK exposes a serializable unlock key,
+  `enable`/`unlock_local` seal/restore *that* instead of a verifier and local unlock
+  survives restarts. `unlock.rs` is the single integration point for that upgrade.
+- **Logout** clears the session and deletes the keychain blob.
 
 ## Engineering Principles — READ BEFORE IMPLEMENTING
 Non-negotiables for new/changed code (this is a password manager — correctness and

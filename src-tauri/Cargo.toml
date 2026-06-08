@@ -46,12 +46,4 @@ bitwarden-pm = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e
 bitwarden-vault = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e" }
 bitwarden-sync = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e" }
 bitwarden-generators = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e" }
-bitwarden-unlock = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e", features = ["cli"] }
-bitwarden-crypto = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e" }
 bitwarden-api-api = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e" }
-
-[features]
-# Real SDK calls require network + a Bitwarden account to exercise. The code
-# path is always compiled; this flag only gates SDK behaviors that need the
-# on-disk state registry (cross-restart local unlock).
-persisted-unlock = []

@@ -6,22 +6,17 @@
 use serde::{Deserialize, Serialize};
 
 /// Which Bitwarden server to talk to.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(tag = "region", rename_all = "camelCase")]
 pub enum ServerConfig {
     /// Bitwarden US cloud (bitwarden.com).
+    #[default]
     Us,
     /// Bitwarden EU cloud (bitwarden.eu).
     Eu,
     /// Self-hosted Bitwarden or Vaultwarden at an arbitrary base URL.
     #[serde(rename_all = "camelCase")]
     SelfHosted { base_url: String },
-}
-
-impl Default for ServerConfig {
-    fn default() -> Self {
-        ServerConfig::Us
-    }
 }
 
 /// Second-factor input from the unlock/login screen.

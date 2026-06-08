@@ -9,7 +9,7 @@
 //! a plaintext verifier — the AEAD *is* the verifier.
 
 use aes_gcm::aead::{Aead, KeyInit};
-use aes_gcm::{Aes256Gcm, Key, Nonce};
+use aes_gcm::{Aes256Gcm, Nonce};
 use argon2::{Algorithm, Argon2, Params, Version};
 use base64::Engine;
 use rand::RngCore;
@@ -62,12 +62,13 @@ pub fn seal(secret: &[u8], local_password: &str) -> AgateResult<LocalUnlockBlob>
     rng.fill_bytes(&mut nonce_bytes);
 
     let mut key = derive_key(local_password, &salt, ARGON_M_COST, ARGON_T_COST, ARGON_P_COST)?;
-    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&key));
-    let nonce = Nonce::from_slice(&nonce_bytes);
-    let ciphertext = cipher
-        .encrypt(nonce, secret)
-        .map_err(|_| AgateError::new(ErrorKind::Crypto, "seal failed"))?;
+    let cipher = Aes256Gcm::new_from_slice(&key)
+        .map_err(|_| AgateError::new(ErrorKind::Crypto, "bad key length"))?;
     key.zeroize();
+    let nonce = Nonce::from(nonce_bytes);
+    let ciphertext = cipher
+        .encrypt(&nonce, secret)
+        .map_err(|_| AgateError::new(ErrorKind::Crypto, "seal failed"))?;
 
     Ok(LocalUnlockBlob {
         version: BLOB_VERSION,
@@ -88,22 +89,26 @@ pub fn open(blob: &LocalUnlockBlob, local_password: &str) -> AgateResult<Vec<u8>
     let salt = b64()
         .decode(&blob.kdf_salt)
         .map_err(|_| AgateError::new(ErrorKind::LocalUnlock, "corrupt salt"))?;
-    let nonce_bytes = b64()
+    let nonce_vec = b64()
         .decode(&blob.nonce)
+        .map_err(|_| AgateError::new(ErrorKind::LocalUnlock, "corrupt nonce"))?;
+    let nonce_bytes: [u8; 12] = nonce_vec
+        .as_slice()
+        .try_into()
         .map_err(|_| AgateError::new(ErrorKind::LocalUnlock, "corrupt nonce"))?;
     let ciphertext = b64()
         .decode(&blob.ciphertext)
         .map_err(|_| AgateError::new(ErrorKind::LocalUnlock, "corrupt ciphertext"))?;
 
     let mut key = derive_key(local_password, &salt, blob.m_cost, blob.t_cost, blob.p_cost)?;
-    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&key));
-    let nonce = Nonce::from_slice(&nonce_bytes);
-    let plaintext = cipher
-        .decrypt(nonce, ciphertext.as_ref())
-        // GCM tag failure == wrong local password (or tampered blob).
-        .map_err(|_| AgateError::new(ErrorKind::LocalUnlock, "Incorrect local password."));
+    let cipher = Aes256Gcm::new_from_slice(&key)
+        .map_err(|_| AgateError::new(ErrorKind::Crypto, "bad key length"))?;
     key.zeroize();
-    plaintext
+    let nonce = Nonce::from(nonce_bytes);
+    // GCM tag failure == wrong local password (or tampered blob).
+    cipher
+        .decrypt(&nonce, ciphertext.as_ref())
+        .map_err(|_| AgateError::new(ErrorKind::LocalUnlock, "Incorrect local password."))
 }
 
 fn entry(account: &str) -> AgateResult<keyring::Entry> {

@@ -122,10 +122,17 @@ pub async fn send_email_code(
         .map_err(|e| AgateError::new(ErrorKind::Network, format!("Could not send email code: {e}")))
 }
 
-/// Lock the vault: drop all in-memory secret material. The session/config and
-/// any configured local unlock survive, so the user can re-unlock locally.
+/// Lock the vault. When local unlock is configured the client is soft-locked
+/// (kept in memory behind the local password); otherwise all secret material is
+/// dropped and the master password is required to unlock again.
 pub async fn lock(state: &AppState) -> AgateResult<()> {
-    state.session.lock().await.clear_secrets();
+    let soft = state.config.lock().await.local_unlock_configured;
+    let mut session = state.session.lock().await;
+    if soft {
+        session.soft_lock();
+    } else {
+        session.clear_secrets();
+    }
     Ok(())
 }
 

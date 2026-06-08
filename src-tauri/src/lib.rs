@@ -29,7 +29,7 @@ type State<'a> = tauri::State<'a, AppState>;
 async fn get_session_status(state: State<'_>) -> AgateResult<SessionStatus> {
     let (logged_in, unlocked) = {
         let session = state.session.lock().await;
-        let logged_in = session.client.is_some();
+        let logged_in = session.has_session();
         let unlocked = session.client.as_ref().map(|c| c.is_unlocked()).unwrap_or(false);
         (logged_in, unlocked)
     };

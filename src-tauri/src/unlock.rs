@@ -1,46 +1,32 @@
 //! Local-password unlock — the headline feature.
 //!
-//! Flow:
-//!   1. After a master-password login (vault unlocked), `enable()` mints a
-//!      Bitwarden **session key** via the SDK, seals it under the user's *local*
-//!      password (Argon2id + AES-256-GCM, see `secrets.rs`), and stores the
-//!      sealed blob in the OS keychain. The master password is never stored.
-//!   2. `unlock_local()` opens the sealed blob with the local password and asks
-//!      the SDK to unlock the vault from the session key — no master password,
-//!      no re-auth round-trip.
-//!   3. `disable()` deletes the keychain blob and invalidates the session key.
+//! Goal: don't retype the master password every time, and never store the master
+//! password on disk.
 //!
-//! ⚠️ SDK maturity: minting/consuming the session key uses the SDK's `unlock`
-//! client (`generate_session_key` / `unlock`). Cross-process-restart unlock also
-//! depends on the SDK persisting its key envelope to disk, which is not yet
-//! stable in `sdk-internal`. When that backend is missing, `unlock_local()`
-//! surfaces a clear `LocalUnlock` error telling the user to use the master
-//! password — it never fakes success. This module is the single integration
-//! point to revisit when SDK state persistence lands.
+//! How it works at this SDK revision: after a master-password login the vault is
+//! unlocked in memory. `enable()` registers a *local* password by sealing a
+//! random verifier token under it (Argon2id + AES-256-GCM, see `secrets.rs`) and
+//! storing the sealed blob in the OS keychain. Locking the app then *soft-locks*
+//! — the SDK client is kept in memory behind the local password and the
+//! decrypted item cache is cleared — and `unlock_local()` re-opens it after the
+//! local password verifies against the keychain blob. The master password is
+//! never written anywhere.
+//!
+//! Limitation (honest): the public `sdk-internal` API at the pinned rev does not
+//! expose a serializable session key, so the held client cannot survive a full
+//! process restart yet. After relaunching Agate you unlock with the master
+//! password once; thereafter the local password works for in-session locks. When
+//! the SDK exposes a persistable unlock key, `secrets.rs` already provides the
+//! sealing — `enable()`/`unlock_local()` then seal/restore that key instead of a
+//! verifier token, and local unlock survives restarts. This module is the single
+//! integration point for that change.
 
-use bitwarden_crypto::SymmetricCryptoKey;
-use bitwarden_pm::PasswordManagerClient;
-use bitwarden_unlock::{SessionKey, UnlockMethod};
+use rand::RngCore;
 
 use crate::dto::ServerConfig;
 use crate::error::{AgateError, AgateResult, ErrorKind};
 use crate::secrets;
-use crate::server;
 use crate::state::AppState;
-
-/// Serialize a session key to bytes for sealing (base64 of the symmetric key).
-fn session_key_to_bytes(key: &SessionKey) -> Vec<u8> {
-    key.0.to_base64().to_string().into_bytes()
-}
-
-/// Reconstruct a session key from sealed bytes.
-fn session_key_from_bytes(bytes: &[u8]) -> AgateResult<SessionKey> {
-    let s = std::str::from_utf8(bytes)
-        .map_err(|_| AgateError::new(ErrorKind::LocalUnlock, "corrupt session key"))?;
-    let key = SymmetricCryptoKey::try_from(s.to_string())
-        .map_err(|_| AgateError::new(ErrorKind::LocalUnlock, "invalid session key"))?;
-    Ok(SessionKey(key))
-}
 
 async fn account_email(state: &AppState) -> AgateResult<String> {
     state
@@ -59,23 +45,19 @@ pub async fn enable(state: &AppState, local_password: String) -> AgateResult<()>
     }
     let email = account_email(state).await?;
 
-    let client = {
+    {
         let session = state.session.lock().await;
         let client = session.client.as_ref().ok_or_else(AgateError::not_authenticated)?;
         if !client.is_unlocked() {
             return Err(AgateError::locked());
         }
-        client.clone()
-    };
+    }
 
-    let session_key = client
-        .unlock()
-        .generate_session_key()
-        .await
-        .map_err(|e| AgateError::new(ErrorKind::Crypto, format!("could not mint session key: {e}")))?;
-
-    let bytes = session_key_to_bytes(&session_key);
-    let blob = secrets::seal(&bytes, &local_password)?;
+    // Seal a random verifier under the local password. Opening it later proves
+    // the local password without storing a plaintext check value.
+    let mut token = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut token);
+    let blob = secrets::seal(&token, &local_password)?;
     secrets::store_blob(&email, &blob)?;
 
     {
@@ -86,7 +68,8 @@ pub async fn enable(state: &AppState, local_password: String) -> AgateResult<()>
     Ok(())
 }
 
-/// Unlock the vault using the local password (no master password).
+/// Unlock the vault using the local password (no master password). Re-activates
+/// the soft-locked client after the local password verifies.
 pub async fn unlock_local(state: &AppState, local_password: String) -> AgateResult<()> {
     let email = account_email(state).await?;
 
@@ -94,54 +77,31 @@ pub async fn unlock_local(state: &AppState, local_password: String) -> AgateResu
         .ok_or_else(|| AgateError::new(ErrorKind::LocalUnlock, "Local unlock is not configured."))?;
 
     // Wrong local password fails here (GCM tag) with ErrorKind::LocalUnlock.
-    let bytes = secrets::open(&blob, &local_password)?;
-    let session_key = session_key_from_bytes(&bytes)?;
+    let _verifier = secrets::open(&blob, &local_password)?;
 
-    let (server, device_id) = {
-        let cfg = state.config.lock().await;
-        (cfg.server.clone(), cfg.device_id.clone())
-    };
-    let settings = server::client_settings(&server, device_id)?;
-    let client = PasswordManagerClient::new(Some(settings));
-
-    client
-        .unlock()
-        .unlock(UnlockMethod::SessionKey(session_key))
-        .await
-        .map_err(|_| {
-            AgateError::new(
-                ErrorKind::LocalUnlock,
-                "Could not unlock from the local password on this device. \
-                 Unlock with your master password instead.",
-            )
-        })?;
-
-    state.session.lock().await.client = Some(client);
-    Ok(())
+    let mut session = state.session.lock().await;
+    match session.locked_client.take() {
+        Some(client) => {
+            session.client = Some(client);
+            Ok(())
+        }
+        None => Err(AgateError::new(
+            ErrorKind::LocalUnlock,
+            "This session expired (the app was restarted). Unlock with your master password.",
+        )),
+    }
 }
 
-/// Turn off local unlock: forget the sealed blob and invalidate the session key.
+/// Turn off local unlock: forget the sealed blob for this account.
 pub async fn disable(state: &AppState) -> AgateResult<()> {
     let email = account_email(state).await?;
     secrets::delete_blob(&email)?;
-
-    if let Some(client) = state.session.lock().await.client.as_ref() {
-        // Best-effort: invalidating the SDK-side session key. Ignore failure —
-        // the authoritative off-switch is deleting the keychain blob above.
-        let _ = client.unlock().invalidate_session_key().await;
-    }
-
     {
         let mut cfg = state.config.lock().await;
         cfg.local_unlock_configured = false;
     }
     state.save_config().await?;
     Ok(())
-}
-
-/// Whether a local-unlock blob exists for the active account.
-pub async fn is_configured(state: &AppState) -> bool {
-    state.config.lock().await.local_unlock_configured
 }
 
 /// Apply a `ServerConfig` chosen on the onboarding screen to persisted config.

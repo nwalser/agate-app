@@ -8,10 +8,11 @@
 //! NOTE (unstable SDK): `sync()` returns the raw `SyncResponseModel`; the SDK
 //! does not yet materialize ciphers into a repository on its own (its own `bw`
 //! CLI leaves `list` as `todo!()`). We convert the API models to domain
-//! `Cipher`s here. If a pinned-rev bump breaks the conversion or the view shape,
-//! this module is the blast radius.
+//! `Cipher`s here. Folder *names* are encrypted and their decryption path is in
+//! flux upstream, so v0.1 lists items without folder grouping (see `list_folders`).
 
 use bitwarden_generators::PasswordGeneratorRequest;
+use bitwarden_pm::PasswordManagerClient;
 use bitwarden_sync::SyncRequest;
 use bitwarden_vault::{generate_totp, Cipher, CipherType, CipherView};
 use chrono::Utc;
@@ -21,7 +22,7 @@ use crate::dto::{
     VaultItem,
 };
 use crate::error::{AgateError, AgateResult, ErrorKind};
-use crate::state::{AppState, Session};
+use crate::state::AppState;
 
 fn cipher_type_to_dto(t: CipherType) -> ItemType {
     match t {
@@ -30,22 +31,26 @@ fn cipher_type_to_dto(t: CipherType) -> ItemType {
         CipherType::Card => ItemType::Card,
         CipherType::Identity => ItemType::Identity,
         CipherType::SshKey => ItemType::SshKey,
+        // Newer item types we don't render specially yet.
+        CipherType::BankAccount | CipherType::DriversLicense | CipherType::Passport => {
+            ItemType::Unknown
+        }
     }
 }
 
-/// Borrow the unlocked client out of the session, or fail with a typed error.
-fn require_client<'a>(session: &'a Session) -> AgateResult<&'a bitwarden_pm::PasswordManagerClient> {
-    session.client.as_ref().ok_or_else(AgateError::not_authenticated)
+/// A fresh handle to the unlocked client, or a typed error if locked.
+async fn client(state: &AppState) -> AgateResult<PasswordManagerClient> {
+    state
+        .session
+        .lock()
+        .await
+        .cloned_client()
+        .ok_or_else(AgateError::not_authenticated)
 }
 
 /// Sync the vault from the server and cache the encrypted ciphers in memory.
 pub async fn sync(state: &AppState, force: bool) -> AgateResult<()> {
-    // Run the network sync without holding the session lock across .await on the
-    // client we then mutate — clone the client handle (cheap, Arc-backed).
-    let client = {
-        let session = state.session.lock().await;
-        require_client(&session)?.clone()
-    };
+    let client = client(state).await?;
 
     let response = client
         .sync()
@@ -63,41 +68,19 @@ pub async fn sync(state: &AppState, force: bool) -> AgateResult<()> {
         }
     }
 
-    // Folder names need decryption; treat folders as best-effort (non-critical
-    // for browsing). On any error, log and continue with no folder names.
-    let folders = decrypt_folders(&client, response.folders.unwrap_or_default()).await;
-
     let mut session = state.session.lock().await;
     session.ciphers = ciphers;
-    session.folders = folders;
+    // Folder-name decryption is deferred (see module note); browse without it.
+    session.folders = Vec::new();
     Ok(())
-}
-
-async fn decrypt_folders(
-    client: &bitwarden_pm::PasswordManagerClient,
-    models: Vec<bitwarden_api_api::models::FolderResponseModel>,
-) -> Vec<Folder> {
-    let domain: Vec<bitwarden_vault::Folder> = models
-        .into_iter()
-        .filter_map(|m| bitwarden_vault::Folder::try_from(m).ok())
-        .collect();
-    match client.vault().folders().decrypt_list(domain).await {
-        Ok(views) => views
-            .into_iter()
-            .map(|v| Folder { id: v.id.map(|i| i.to_string()), name: v.name })
-            .collect(),
-        Err(e) => {
-            log::warn!("folder decryption failed, hiding folder names: {e}");
-            Vec::new()
-        }
-    }
 }
 
 /// Decrypt the cached ciphers into list rows.
 pub async fn list_items(state: &AppState) -> AgateResult<Vec<VaultItem>> {
     let (client, ciphers) = {
         let session = state.session.lock().await;
-        (require_client(&session)?.clone(), session.ciphers.clone())
+        let client = session.cloned_client().ok_or_else(AgateError::not_authenticated)?;
+        (client, session.ciphers.clone())
     };
 
     let ciphers_client = client.vault().ciphers();
@@ -197,7 +180,7 @@ pub async fn item_totp(state: &AppState, id: &str) -> AgateResult<TotpCode> {
 async fn decrypt_one(state: &AppState, id: &str) -> AgateResult<CipherView> {
     let (client, cipher) = {
         let session = state.session.lock().await;
-        let client = require_client(&session)?.clone();
+        let client = session.cloned_client().ok_or_else(AgateError::not_authenticated)?;
         let cipher = session
             .ciphers
             .iter()
@@ -214,27 +197,22 @@ async fn decrypt_one(state: &AppState, id: &str) -> AgateResult<CipherView> {
         .map_err(|e| AgateError::new(ErrorKind::Crypto, format!("decrypt failed: {e}")))
 }
 
-/// List decrypted folder names from the last sync.
+/// List folders from the last sync (empty in v0.1 — see module note).
 pub async fn list_folders(state: &AppState) -> AgateResult<Vec<Folder>> {
     Ok(state.session.lock().await.folders.clone())
 }
 
-/// Generate a password with the given options (no session required).
+/// Generate a password with the given options (no unlocked vault required).
 pub async fn generate_password(state: &AppState, opts: PasswordGenOptions) -> AgateResult<String> {
     if !(opts.uppercase || opts.lowercase || opts.numbers || opts.special) {
         return Err(AgateError::bad_request("Select at least one character set."));
     }
     let length = opts.length.clamp(5, 128);
 
-    let client = {
-        let session = state.session.lock().await;
-        // The generator doesn't need an unlocked vault, but reuse the session
-        // client when present to avoid constructing a throwaway one.
-        session.client.clone()
-    };
-    let client = match client {
+    // Reuse the session client when present; otherwise a throwaway one suffices.
+    let client = match state.session.lock().await.cloned_client() {
         Some(c) => c,
-        None => bitwarden_pm::PasswordManagerClient::new(None),
+        None => PasswordManagerClient::new(None),
     };
 
     let request = PasswordGeneratorRequest {
@@ -248,6 +226,5 @@ pub async fn generate_password(state: &AppState, opts: PasswordGenOptions) -> Ag
     client
         .generator()
         .password(request)
-        .await
         .map_err(|e| AgateError::new(ErrorKind::Internal, format!("generate failed: {e}")))
 }
