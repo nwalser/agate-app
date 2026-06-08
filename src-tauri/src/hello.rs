@@ -7,11 +7,13 @@
 //! window. The WinRT calls run on a `spawn_blocking` thread initialized MTA so
 //! `IAsyncOperation::get()` doesn't deadlock the main STA thread's message pump.
 //!
-//! Design (consistent with `unlock.rs`): Hello is an in-process authorization
-//! gate. On a successful Hello check we reactivate the soft-locked SDK client.
-//! The OS does not cryptographically bind anything to the Hello result here, and
-//! (like local-password unlock) the held client does not survive a process
-//! restart at this SDK revision — the master password remains the fallback.
+//! Design: Hello is a *consent gate*, not a key-binding (KeyCredentialManager
+//! signatures are non-deterministic, so the OS can't derive a stable key from a
+//! Hello result). Enabling stores the Vault Master Key in the OS keychain
+//! (Credential Manager, which is DPAPI-protected under the logged-in user); a
+//! successful Hello check releases it and unlocks every connection via
+//! `appunlock::finish_unlock`. Future hardening: an explicit DPAPI entropy wrap on
+//! top of the keychain entry.
 
 use tauri::WebviewWindow;
 use windows::core::{factory, HSTRING};
@@ -23,7 +25,9 @@ use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
 use windows::Win32::System::WinRT::IUserConsentVerifierInterop;
 use windows::Win32::UI::WindowsAndMessaging::{SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE};
+use zeroize::Zeroizing;
 
+use crate::dto::UnlockOutcome;
 use crate::error::{AgateError, AgateResult, ErrorKind};
 use crate::state::AppState;
 
@@ -69,7 +73,8 @@ fn verify_blocking(hwnd_isize: isize, message: &str) -> windows::core::Result<bo
     Ok(op.get()? == UserConsentVerificationResult::Verified)
 }
 
-/// Enable Hello unlock for the active (unlocked) account.
+/// Enable Hello unlock: store the (unlocked) VMK in the keychain so a later Hello
+/// check can release it. Requires the app to be unlocked.
 pub async fn enable(state: &AppState) -> AgateResult<()> {
     if !available().await {
         return Err(AgateError::new(
@@ -77,19 +82,14 @@ pub async fn enable(state: &AppState) -> AgateResult<()> {
             "Windows Hello is not set up on this device.",
         ));
     }
-    {
-        let session = state.session.lock().await;
-        let client = session.client.as_ref().ok_or_else(AgateError::not_authenticated)?;
-        if !client.is_unlocked() {
-            return Err(AgateError::locked());
-        }
-    }
+    let vmk = crate::appunlock::current_vmk(state).await?;
+    crate::secrets::store_hello_blob(&*vmk)?;
     state.config.lock().await.hello_configured = true;
     state.save_config().await
 }
 
-/// Unlock the soft-locked vault after a successful Windows Hello check.
-pub async fn unlock(state: &AppState, window: &WebviewWindow) -> AgateResult<()> {
+/// Unlock every connection after a successful Windows Hello check.
+pub async fn unlock_all(state: &AppState, window: &WebviewWindow) -> AgateResult<Vec<UnlockOutcome>> {
     if !state.config.lock().await.hello_configured {
         return Err(AgateError::new(ErrorKind::LocalUnlock, "Windows Hello is not enabled."));
     }
@@ -109,15 +109,12 @@ pub async fn unlock(state: &AppState, window: &WebviewWindow) -> AgateResult<()>
         ));
     }
 
-    let mut session = state.session.lock().await;
-    match session.locked_client.take() {
-        Some(client) => {
-            session.client = Some(client);
-            Ok(())
-        }
-        None => Err(AgateError::new(
-            ErrorKind::LocalUnlock,
-            "This session expired (the app was restarted). Unlock with your master password.",
-        )),
-    }
+    let bytes = crate::secrets::load_hello_blob()?
+        .ok_or_else(|| AgateError::new(ErrorKind::LocalUnlock, "Windows Hello data is missing; re-enable it."))?;
+    let arr: [u8; 32] = bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| AgateError::new(ErrorKind::Crypto, "corrupt Hello key"))?;
+    let vmk = Zeroizing::new(arr);
+    crate::appunlock::finish_unlock(state, vmk).await
 }

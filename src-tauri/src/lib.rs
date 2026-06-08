@@ -1,12 +1,13 @@
 //! Agate Tauri backend: command registration + managed state.
 //!
-//! Commands are thin: they validate input, delegate to a module (`auth`,
-//! `vault`, `unlock`), and return a typed `AgateResult`. No business logic or
-//! SDK calls live here, and no command panics.
+//! Commands are thin: they validate input, delegate to a module (`appunlock`,
+//! `connections`, `vault`, …), and return a typed `AgateResult`. No business logic
+//! or SDK calls live here, and no command panics.
 
-mod accounts;
+mod appunlock;
 mod audit;
 mod auth;
+mod connections;
 mod darkweb;
 mod dto;
 mod error;
@@ -17,16 +18,17 @@ mod proxy;
 mod secrets;
 mod server;
 mod state;
-mod unlock;
 mod vault;
+mod window;
 
 use bitwarden_core::{init_host_platform_info, DeviceType, HostPlatformInfo};
 use tauri::Manager;
+use zeroize::Zeroizing;
 
 use dto::{
-    AccountBreaches, AccountSummary, BreachRecord, DarkWebReport, ExposedResult, Folder, ItemDetail,
-    ItemInput, LoginResult, PassphraseGenOptions, PasswordGenOptions, ServerConfig, SessionStatus,
-    TotpCode, TwoFactorInput, VaultHealthReport, VaultItem,
+    AccountBreaches, BreachRecord, ConnectionSummary, DarkWebReport, ExposedResult, Folder,
+    ItemDetail, ItemInput, LoginResult, PassphraseGenOptions, PasswordGenOptions, ServerConfig,
+    SessionStatus, TotpCode, TwoFactorInput, UnlockOutcome, VaultHealthReport, VaultItem,
 };
 use error::{AgateError, AgateResult, ErrorKind};
 use state::AppState;
@@ -36,20 +38,18 @@ type State<'a> = tauri::State<'a, AppState>;
 
 #[tauri::command]
 async fn get_session_status(state: State<'_>) -> AgateResult<SessionStatus> {
-    let (logged_in, unlocked) = {
+    let (unlocked, live_count) = {
         let session = state.session.lock().await;
-        let logged_in = session.has_session();
-        let unlocked = session.client.as_ref().map(|c| c.is_unlocked()).unwrap_or(false);
-        (logged_in, unlocked)
+        (session.vmk.is_some(), session.connection_count())
     };
     let cfg = state.config.lock().await;
     Ok(SessionStatus {
-        logged_in,
+        app_unlock_configured: cfg.app_unlock_configured,
         unlocked,
-        local_unlock_configured: cfg.local_unlock_configured,
         hello_configured: cfg.hello_configured,
         darkweb_consent: cfg.darkweb_consent,
-        email: cfg.email.clone(),
+        connection_count: cfg.accounts.len(),
+        live_count,
     })
 }
 
@@ -60,18 +60,56 @@ async fn get_server_config(state: State<'_>) -> AgateResult<ServerConfig> {
 
 #[tauri::command]
 async fn set_server_config(state: State<'_>, server: ServerConfig) -> AgateResult<()> {
-    unlock::set_server(&state, server).await
+    connections::set_server(&state, server).await
+}
+
+// ---- app unlock (appunlock.rs) ----
+
+#[tauri::command]
+async fn configure_app_unlock(state: State<'_>, app_password: String) -> AgateResult<()> {
+    appunlock::configure(&state, Zeroizing::new(app_password)).await
 }
 
 #[tauri::command]
-async fn login(
+async fn change_app_unlock(state: State<'_>, new_password: String) -> AgateResult<()> {
+    appunlock::change(&state, Zeroizing::new(new_password)).await
+}
+
+#[tauri::command]
+async fn unlock_all(state: State<'_>, app_password: String) -> AgateResult<Vec<UnlockOutcome>> {
+    appunlock::unlock_all(&state, Zeroizing::new(app_password)).await
+}
+
+#[tauri::command]
+async fn unlock_connection_2fa(
+    state: State<'_>,
+    email: String,
+    two_factor: TwoFactorInput,
+) -> AgateResult<()> {
+    appunlock::unlock_connection_2fa(&state, email, two_factor).await
+}
+
+#[tauri::command]
+async fn send_connection_email_code(state: State<'_>, email: String) -> AgateResult<()> {
+    appunlock::send_connection_email_code(&state, email).await
+}
+
+// ---- connections (connections.rs) ----
+
+#[tauri::command]
+async fn list_connections(state: State<'_>) -> AgateResult<Vec<ConnectionSummary>> {
+    connections::list_connections(&state).await
+}
+
+#[tauri::command]
+async fn add_connection(
     state: State<'_>,
     server: ServerConfig,
     email: String,
     password: String,
     two_factor: Option<TwoFactorInput>,
 ) -> AgateResult<LoginResult> {
-    auth::login(&state, server, email, password, two_factor).await
+    connections::add_connection(&state, server, email, Zeroizing::new(password), two_factor).await
 }
 
 #[tauri::command]
@@ -81,33 +119,30 @@ async fn send_email_code(
     email: String,
     password: String,
 ) -> AgateResult<()> {
-    auth::send_email_code(&state, server, email, password).await
+    connections::send_add_email_code(&state, server, email, Zeroizing::new(password)).await
+}
+
+#[tauri::command]
+async fn remove_connection(state: State<'_>, email: String) -> AgateResult<()> {
+    connections::remove_connection(&state, email).await
+}
+
+#[tauri::command]
+async fn set_active_connection(state: State<'_>, email: String) -> AgateResult<()> {
+    connections::set_active(&state, email).await
 }
 
 #[tauri::command]
 async fn lock(state: State<'_>) -> AgateResult<()> {
-    auth::lock(&state).await
+    connections::lock(&state).await
 }
 
 #[tauri::command]
 async fn logout(state: State<'_>) -> AgateResult<()> {
-    auth::logout(&state).await
+    connections::logout(&state).await
 }
 
-#[tauri::command]
-async fn enable_local_unlock(state: State<'_>, local_password: String) -> AgateResult<()> {
-    unlock::enable(&state, local_password).await
-}
-
-#[tauri::command]
-async fn unlock_local(state: State<'_>, local_password: String) -> AgateResult<()> {
-    unlock::unlock_local(&state, local_password).await
-}
-
-#[tauri::command]
-async fn disable_local_unlock(state: State<'_>) -> AgateResult<()> {
-    unlock::disable(&state).await
-}
+// ---- vault read (vault.rs) ----
 
 #[tauri::command]
 async fn sync_vault(state: State<'_>, force: bool) -> AgateResult<()> {
@@ -125,13 +160,13 @@ async fn list_folders(state: State<'_>) -> AgateResult<Vec<Folder>> {
 }
 
 #[tauri::command]
-async fn item_detail(state: State<'_>, id: String) -> AgateResult<ItemDetail> {
-    vault::item_detail(&state, &id).await
+async fn item_detail(state: State<'_>, account_email: String, id: String) -> AgateResult<ItemDetail> {
+    vault::item_detail(&state, &account_email, &id).await
 }
 
 #[tauri::command]
-async fn item_totp(state: State<'_>, id: String) -> AgateResult<TotpCode> {
-    vault::item_totp(&state, &id).await
+async fn item_totp(state: State<'_>, account_email: String, id: String) -> AgateResult<TotpCode> {
+    vault::item_totp(&state, &account_email, &id).await
 }
 
 #[tauri::command]
@@ -147,50 +182,53 @@ async fn generate_passphrase(state: State<'_>, options: PassphraseGenOptions) ->
 // ---- vault write operations (mutate.rs) ----
 
 #[tauri::command]
-async fn save_item(state: State<'_>, input: ItemInput) -> AgateResult<()> {
-    mutate::save_item(&state, input).await
+async fn save_item(state: State<'_>, account_email: String, input: ItemInput) -> AgateResult<()> {
+    mutate::save_item(&state, &account_email, input).await
 }
 
 #[tauri::command]
-async fn clone_item(state: State<'_>, id: String) -> AgateResult<()> {
-    mutate::clone_item(&state, &id).await
+async fn clone_item(state: State<'_>, account_email: String, id: String) -> AgateResult<()> {
+    mutate::clone_item(&state, &account_email, &id).await
 }
 
 #[tauri::command]
-async fn set_favorite(state: State<'_>, id: String, favorite: bool) -> AgateResult<()> {
-    mutate::set_favorite(&state, &id, favorite).await
+async fn set_favorite(state: State<'_>, account_email: String, id: String, favorite: bool) -> AgateResult<()> {
+    mutate::set_favorite(&state, &account_email, &id, favorite).await
 }
 
 #[tauri::command]
-async fn move_items(state: State<'_>, ids: Vec<String>, folder_id: Option<String>) -> AgateResult<()> {
-    mutate::move_items(&state, ids, folder_id).await
+async fn move_items(
+    state: State<'_>,
+    account_email: String,
+    ids: Vec<String>,
+    folder_id: Option<String>,
+) -> AgateResult<()> {
+    mutate::move_items(&state, &account_email, ids, folder_id).await
 }
 
 #[tauri::command]
-async fn delete_items(state: State<'_>, ids: Vec<String>, permanent: bool) -> AgateResult<()> {
-    mutate::delete_items(&state, ids, permanent).await
+async fn delete_items(
+    state: State<'_>,
+    account_email: String,
+    ids: Vec<String>,
+    permanent: bool,
+) -> AgateResult<()> {
+    mutate::delete_items(&state, &account_email, ids, permanent).await
 }
 
 #[tauri::command]
-async fn restore_items(state: State<'_>, ids: Vec<String>) -> AgateResult<()> {
-    mutate::restore_items(&state, ids).await
-}
-
-// ---- multiple accounts (accounts.rs) ----
-
-#[tauri::command]
-async fn list_accounts(state: State<'_>) -> AgateResult<Vec<AccountSummary>> {
-    accounts::list_accounts(&state).await
+async fn restore_items(state: State<'_>, account_email: String, ids: Vec<String>) -> AgateResult<()> {
+    mutate::restore_items(&state, &account_email, ids).await
 }
 
 #[tauri::command]
-async fn switch_account(state: State<'_>, email: String) -> AgateResult<()> {
-    accounts::switch_account(&state, email).await
+async fn create_folder(state: State<'_>, account_email: String, name: String) -> AgateResult<Folder> {
+    mutate::create_folder(&state, &account_email, name).await
 }
 
 #[tauri::command]
-async fn remove_account(state: State<'_>, email: String) -> AgateResult<()> {
-    accounts::remove_account(&state, email).await
+async fn rename_folder(state: State<'_>, account_email: String, id: String, name: String) -> AgateResult<Folder> {
+    mutate::rename_folder(&state, &account_email, &id, name).await
 }
 
 // ---- security audit (audit.rs) ----
@@ -256,15 +294,17 @@ async fn hello_enable(state: State<'_>) -> AgateResult<()> {
 
 #[tauri::command]
 async fn hello_disable(state: State<'_>) -> AgateResult<()> {
+    // Cross-platform: forget the stored VMK + clear the flag (no Hello API needed).
+    secrets::delete_hello_blob()?;
     state.config.lock().await.hello_configured = false;
     state.save_config().await
 }
 
 #[tauri::command]
-async fn hello_unlock(state: State<'_>, window: tauri::WebviewWindow) -> AgateResult<()> {
+async fn hello_unlock(state: State<'_>, window: tauri::WebviewWindow) -> AgateResult<Vec<UnlockOutcome>> {
     #[cfg(target_os = "windows")]
     {
-        hello::unlock(&state, &window).await
+        hello::unlock_all(&state, &window).await
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -290,7 +330,8 @@ async fn check_update(app: tauri::AppHandle) -> AgateResult<Option<String>> {
 /// force-exits to run the installer), then relaunch.
 #[tauri::command]
 async fn run_update(app: tauri::AppHandle, state: State<'_>) -> AgateResult<()> {
-    // Lock the vault and drop all secret material before the installer runs.
+    // Lock the vault and drop all secret material (incl. the VMK) before the
+    // installer runs.
     state.session.lock().await.clear_secrets();
     let updater = app.updater().map_err(|e| AgateError::internal(format!("updater: {e}")))?;
     let Some(update) = updater
@@ -307,14 +348,12 @@ async fn run_update(app: tauri::AppHandle, state: State<'_>) -> AgateResult<()> 
     app.restart();
 }
 
+/// The titlebar's window-control layout for this platform (Linux reads the
+/// desktop's `button-layout`; others use a fixed default). Pure host query — no
+/// state, never fails.
 #[tauri::command]
-async fn create_folder(state: State<'_>, name: String) -> AgateResult<Folder> {
-    mutate::create_folder(&state, name).await
-}
-
-#[tauri::command]
-async fn rename_folder(state: State<'_>, id: String, name: String) -> AgateResult<Folder> {
-    mutate::rename_folder(&state, &id, name).await
+fn window_controls_layout() -> dto::WindowControlsLayout {
+    window::controls_layout()
 }
 
 fn device_type() -> DeviceType {
@@ -363,14 +402,11 @@ pub fn run() {
                 #[cfg(target_os = "windows")]
                 hello::protect_window(&window);
 
-                // Native window chrome per platform. Windows/Linux run
-                // borderless so the custom titlebar (components/Titlebar.tsx)
-                // owns the top strip with its own min/maximize/close controls.
-                // macOS keeps its real title bar with the overlay style
-                // (tauri.conf.json `titleBarStyle`), so the traffic-light
-                // buttons stay native and top-left and the frontend only draws
-                // beside them. Best-effort: a failure here leaves the default
-                // (decorated) chrome rather than crashing setup.
+                // Native window chrome per platform. Windows/Linux run borderless
+                // so the custom titlebar (components/Titlebar.tsx) owns the top
+                // strip with its own min/maximize/close controls. macOS keeps its
+                // real title bar with the overlay style (tauri.conf.json
+                // `titleBarStyle`). Best-effort: a failure leaves default chrome.
                 #[cfg(not(target_os = "macos"))]
                 let _ = window.set_decorations(false);
 
@@ -384,13 +420,18 @@ pub fn run() {
             get_session_status,
             get_server_config,
             set_server_config,
-            login,
+            configure_app_unlock,
+            change_app_unlock,
+            unlock_all,
+            unlock_connection_2fa,
+            send_connection_email_code,
+            list_connections,
+            add_connection,
             send_email_code,
+            remove_connection,
+            set_active_connection,
             lock,
             logout,
-            enable_local_unlock,
-            unlock_local,
-            disable_local_unlock,
             sync_vault,
             list_items,
             list_folders,
@@ -406,6 +447,7 @@ pub fn run() {
             restore_items,
             create_folder,
             rename_folder,
+            window_controls_layout,
             audit_offline,
             audit_exposed,
             set_darkweb_consent,
@@ -418,9 +460,6 @@ pub fn run() {
             hello_unlock,
             check_update,
             run_update,
-            list_accounts,
-            switch_account,
-            remove_account,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Agate");

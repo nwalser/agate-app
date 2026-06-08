@@ -1,0 +1,54 @@
+/* Table shell. Reuses .vault-head / .vault-row / .vault-list-scroll / .vault-row-*
+   from Vault.css (loaded globally); only list-table-specific bits live here. The
+   grid template (--vault-cols) is set inline per the visible column set. */
+
+.vault-table {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.vault-name-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.favicon-img {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.vault-cell {
+  font-size: 13px;
+  min-width: 0;
+}
+.vault-cell.muted {
+  color: var(--muted-foreground);
+}
+.vault-secret {
+  color: var(--subtle-foreground);
+  letter-spacing: 1px;
+}
+.vault-type-badge {
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+
+.vault-row-end {
+  justify-self: end;
+}
+
+.vault-head-gear {
+  justify-self: end;
+  display: flex;
+  align-items: center;
+}
+.vault-gear-btn {
+  padding: 5px;
+}

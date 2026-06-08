@@ -23,7 +23,7 @@
 
 use std::time::Duration;
 
-use bitwarden_vault::{CipherType, CipherView};
+use bitwarden_vault::{Cipher, CipherType, CipherView};
 use serde::Deserialize;
 
 use crate::dto::{AccountBreaches, BreachRecord, DarkWebReport, IdentityInput};
@@ -74,14 +74,24 @@ fn normalize_email(s: &str) -> String {
 /// Deduplicated, lowercased, validated. Returns `Locked`/`NotAuthenticated` if
 /// the vault isn't open.
 async fn collect_account_emails(state: &AppState) -> AgateResult<Vec<String>> {
-    let (client, ciphers) = {
+    // Snapshot every unlocked connection's email + a client handle + its ciphers.
+    // Under the unified-connection model the vault is a set of live connections;
+    // each connection's own login email is one of the user's own accounts, and we
+    // also harvest emails from that connection's login/identity items.
+    let conns: Vec<(String, bitwarden_pm::PasswordManagerClient, Vec<Cipher>)> = {
         let session = state.session.lock().await;
-        let client = session.client.as_ref().ok_or_else(AgateError::not_authenticated)?;
-        (bitwarden_pm::PasswordManagerClient(client.0.clone()), session.ciphers.clone())
+        if session.connections.is_empty() {
+            return Err(AgateError::not_authenticated());
+        }
+        session
+            .connections
+            .iter()
+            .map(|(email, c)| {
+                (email.clone(), bitwarden_pm::PasswordManagerClient(c.client.0.clone()), c.ciphers.clone())
+            })
+            .collect()
     };
-    let account_email = state.config.lock().await.email.clone();
 
-    let ciphers_client = client.vault().ciphers();
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
     let push = |raw: &str, out: &mut Vec<String>, seen: &mut std::collections::HashSet<String>| {
@@ -93,41 +103,41 @@ async fn collect_account_emails(state: &AppState) -> AgateResult<Vec<String>> {
         }
     };
 
-    if let Some(email) = account_email.as_deref() {
-        push(email, &mut out, &mut seen);
-    }
-
-    for cipher in ciphers {
-        let view: CipherView = match ciphers_client.decrypt(cipher).await {
-            Ok(v) => v,
-            Err(e) => {
-                log::warn!("darkweb: skipping undecryptable cipher: {e}");
+    for (conn_email, client, ciphers) in conns {
+        push(&conn_email, &mut out, &mut seen);
+        let ciphers_client = client.vault().ciphers();
+        for cipher in ciphers {
+            let view: CipherView = match ciphers_client.decrypt(cipher).await {
+                Ok(v) => v,
+                Err(e) => {
+                    log::warn!("darkweb: skipping undecryptable cipher: {e}");
+                    continue;
+                }
+            };
+            if view.deleted_date.is_some() {
                 continue;
             }
-        };
-        if view.deleted_date.is_some() {
-            continue;
-        }
-        match view.r#type {
-            CipherType::Login => {
-                if let Some(username) = view.login.as_ref().and_then(|l| l.username.clone()) {
-                    push(&username, &mut out, &mut seen);
+            match view.r#type {
+                CipherType::Login => {
+                    if let Some(username) = view.login.as_ref().and_then(|l| l.username.clone()) {
+                        push(&username, &mut out, &mut seen);
+                    }
                 }
-            }
-            CipherType::Identity => {
-                // Round-trip through our own IdentityInput (the proven, SDK-version-
-                // tolerant path used in vault.rs) to read the email field.
-                let email = view
-                    .identity
-                    .as_ref()
-                    .and_then(|i| serde_json::to_value(i).ok())
-                    .and_then(|v| serde_json::from_value::<IdentityInput>(v).ok())
-                    .and_then(|i| i.email);
-                if let Some(email) = email {
-                    push(&email, &mut out, &mut seen);
+                CipherType::Identity => {
+                    // Round-trip through our own IdentityInput (the proven, SDK-version-
+                    // tolerant path used in vault.rs) to read the email field.
+                    let email = view
+                        .identity
+                        .as_ref()
+                        .and_then(|i| serde_json::to_value(i).ok())
+                        .and_then(|v| serde_json::from_value::<IdentityInput>(v).ok())
+                        .and_then(|i| i.email);
+                    if let Some(email) = email {
+                        push(&email, &mut out, &mut seen);
+                    }
                 }
+                _ => {}
             }
-            _ => {}
         }
     }
     Ok(out)

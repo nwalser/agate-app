@@ -6,30 +6,30 @@ import { ipc } from '../lib/ipc.ts';
 import type { ServerConfig, SessionStatus } from '../lib/types.ts';
 
 const DEFAULT_STATUS: SessionStatus = {
-  loggedIn: false,
+  appUnlockConfigured: false,
   unlocked: false,
-  localUnlockConfigured: false,
   helloConfigured: false,
   darkwebConsent: false,
-  email: null,
+  connectionCount: 0,
+  liveCount: 0,
 };
 
 const [status, setStatus] = createSignal<SessionStatus>(DEFAULT_STATUS);
 const [server, setServer] = createSignal<ServerConfig>({ region: 'us' });
 const [ready, setReady] = createSignal(false);
-// When true, App shows a blank Onboarding so the user can log into a NEW account
-// while their other accounts remain remembered.
-const [addingAccount, setAddingAccount] = createSignal(false);
+// When true, App shows the connection-add flow (over the unlocked vault) so the
+// user can add another Bitwarden account without locking the others.
+const [addingConnection, setAddingConnection] = createSignal(false);
 
-export { status, server, ready, addingAccount, setAddingAccount };
+export { status, server, ready, addingConnection, setAddingConnection };
 
 /** Refresh status + server config from the backend. */
 export async function refreshSession(): Promise<void> {
   const [s, srv] = await Promise.all([ipc.getSessionStatus(), ipc.getServerConfig()]);
   setStatus(s);
   setServer(srv);
-  // A completed refresh ends any add-account flow (login/switch resolved it).
-  setAddingAccount(false);
+  // A completed refresh ends any add-connection flow.
+  setAddingConnection(false);
   setReady(true);
 }
 
@@ -38,11 +38,10 @@ export function setServerConfig(srv: ServerConfig): void {
 }
 
 /** Which top-level screen the session implies. */
-export function screenForStatus(s: SessionStatus): 'onboarding' | 'unlock' | 'vault' {
-  if (s.unlocked) return 'vault';
-  if (s.localUnlockConfigured && s.email) return 'unlock';
-  if (s.loggedIn) return 'unlock';
-  return 'onboarding';
+export function screenForStatus(s: SessionStatus): 'setup' | 'unlock' | 'vault' {
+  if (!s.appUnlockConfigured) return 'setup';
+  if (!s.unlocked) return 'unlock';
+  return 'vault';
 }
 
 // Test-only hook (webdriver e2e): re-derive the screen after a spec swaps the

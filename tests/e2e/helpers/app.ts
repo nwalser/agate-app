@@ -219,6 +219,10 @@ export async function installFakeBackend(cfg: FakeConfig): Promise<void> {
         case 'hello_enable': state.status.helloConfigured = true; return null;
         case 'hello_disable': state.status.helloConfigured = false; return null;
 
+        // ── window chrome ──
+        case 'window_controls_layout':
+          return { side: 'right', buttons: ['minimize', 'maximize', 'close'] };
+
         // ── updater ──
         case 'check_update': return c.updateVersion;
         case 'run_update': return null;

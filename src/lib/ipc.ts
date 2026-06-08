@@ -4,8 +4,8 @@
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import type {
   AccountBreaches,
-  AccountSummary,
   BreachRecord,
+  ConnectionSummary,
   DarkWebReport,
   ExposedResult,
   Folder,
@@ -18,8 +18,10 @@ import type {
   SessionStatus,
   TotpCode,
   TwoFactorInput,
+  UnlockOutcome,
   VaultHealthReport,
   VaultItem,
+  WindowControlsLayout,
 } from './types.ts';
 
 // ── Test-only IPC seam (webdriver e2e) ───────────────────────────────────────
@@ -67,28 +69,46 @@ export const ipc = {
   setServerConfig: (server: ServerConfig): Promise<void> =>
     invoke('set_server_config', { server }),
 
-  login: (
+  // ---- app unlock (one secret unlocks every connection) ----
+
+  configureAppUnlock: (appPassword: string): Promise<void> =>
+    invoke('configure_app_unlock', { appPassword }),
+
+  changeAppUnlock: (newPassword: string): Promise<void> =>
+    invoke('change_app_unlock', { newPassword }),
+
+  unlockAll: (appPassword: string): Promise<UnlockOutcome[]> =>
+    invoke('unlock_all', { appPassword }),
+
+  unlockConnection2fa: (email: string, twoFactor: TwoFactorInput): Promise<void> =>
+    invoke('unlock_connection_2fa', { email, twoFactor }),
+
+  sendConnectionEmailCode: (email: string): Promise<void> =>
+    invoke('send_connection_email_code', { email }),
+
+  // ---- connections ----
+
+  listConnections: (): Promise<ConnectionSummary[]> => invoke('list_connections'),
+
+  addConnection: (
     server: ServerConfig,
     email: string,
     password: string,
     twoFactor?: TwoFactorInput,
   ): Promise<LoginResult> =>
-    invoke('login', { server, email, password, twoFactor: twoFactor ?? null }),
+    invoke('add_connection', { server, email, password, twoFactor: twoFactor ?? null }),
 
   sendEmailCode: (server: ServerConfig, email: string, password: string): Promise<void> =>
     invoke('send_email_code', { server, email, password }),
 
+  removeConnection: (email: string): Promise<void> => invoke('remove_connection', { email }),
+
+  setActiveConnection: (email: string): Promise<void> =>
+    invoke('set_active_connection', { email }),
+
   lock: (): Promise<void> => invoke('lock'),
 
   logout: (): Promise<void> => invoke('logout'),
-
-  enableLocalUnlock: (localPassword: string): Promise<void> =>
-    invoke('enable_local_unlock', { localPassword }),
-
-  unlockLocal: (localPassword: string): Promise<void> =>
-    invoke('unlock_local', { localPassword }),
-
-  disableLocalUnlock: (): Promise<void> => invoke('disable_local_unlock'),
 
   syncVault: (force: boolean): Promise<void> => invoke('sync_vault', { force }),
 
@@ -96,9 +116,11 @@ export const ipc = {
 
   listFolders: (): Promise<Folder[]> => invoke('list_folders'),
 
-  itemDetail: (id: string): Promise<ItemDetail> => invoke('item_detail', { id }),
+  itemDetail: (accountEmail: string, id: string): Promise<ItemDetail> =>
+    invoke('item_detail', { accountEmail, id }),
 
-  itemTotp: (id: string): Promise<TotpCode> => invoke('item_totp', { id }),
+  itemTotp: (accountEmail: string, id: string): Promise<TotpCode> =>
+    invoke('item_totp', { accountEmail, id }),
 
   generatePassword: (options: PasswordGenOptions): Promise<string> =>
     invoke('generate_password', { options }),
@@ -108,25 +130,33 @@ export const ipc = {
 
   // ---- vault write operations ----
 
-  saveItem: (input: ItemInput): Promise<void> => invoke('save_item', { input }),
+  saveItem: (accountEmail: string, input: ItemInput): Promise<void> =>
+    invoke('save_item', { accountEmail, input }),
 
-  cloneItem: (id: string): Promise<void> => invoke('clone_item', { id }),
+  cloneItem: (accountEmail: string, id: string): Promise<void> =>
+    invoke('clone_item', { accountEmail, id }),
 
-  setFavorite: (id: string, favorite: boolean): Promise<void> =>
-    invoke('set_favorite', { id, favorite }),
+  setFavorite: (accountEmail: string, id: string, favorite: boolean): Promise<void> =>
+    invoke('set_favorite', { accountEmail, id, favorite }),
 
-  moveItems: (ids: string[], folderId: string | null): Promise<void> =>
-    invoke('move_items', { ids, folderId }),
+  moveItems: (accountEmail: string, ids: string[], folderId: string | null): Promise<void> =>
+    invoke('move_items', { accountEmail, ids, folderId }),
 
-  deleteItems: (ids: string[], permanent: boolean): Promise<void> =>
-    invoke('delete_items', { ids, permanent }),
+  deleteItems: (accountEmail: string, ids: string[], permanent: boolean): Promise<void> =>
+    invoke('delete_items', { accountEmail, ids, permanent }),
 
-  restoreItems: (ids: string[]): Promise<void> => invoke('restore_items', { ids }),
+  restoreItems: (accountEmail: string, ids: string[]): Promise<void> =>
+    invoke('restore_items', { accountEmail, ids }),
 
-  createFolder: (name: string): Promise<Folder> => invoke('create_folder', { name }),
+  createFolder: (accountEmail: string, name: string): Promise<Folder> =>
+    invoke('create_folder', { accountEmail, name }),
 
-  renameFolder: (id: string, name: string): Promise<Folder> =>
-    invoke('rename_folder', { id, name }),
+  renameFolder: (accountEmail: string, id: string, name: string): Promise<Folder> =>
+    invoke('rename_folder', { accountEmail, id, name }),
+
+  // ---- window chrome ----
+
+  windowControlsLayout: (): Promise<WindowControlsLayout> => invoke('window_controls_layout'),
 
   // ---- security audit ----
 
@@ -154,19 +184,11 @@ export const ipc = {
 
   helloDisable: (): Promise<void> => invoke('hello_disable'),
 
-  helloUnlock: (): Promise<void> => invoke('hello_unlock'),
+  helloUnlock: (): Promise<UnlockOutcome[]> => invoke('hello_unlock'),
 
   // ---- auto-updater ----
 
   checkUpdate: (): Promise<string | null> => invoke('check_update'),
 
   runUpdate: (): Promise<void> => invoke('run_update'),
-
-  // ---- multiple accounts ----
-
-  listAccounts: (): Promise<AccountSummary[]> => invoke('list_accounts'),
-
-  switchAccount: (email: string): Promise<void> => invoke('switch_account', { email }),
-
-  removeAccount: (email: string): Promise<void> => invoke('remove_account', { email }),
 };

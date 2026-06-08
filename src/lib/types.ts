@@ -8,6 +8,17 @@ export type ServerConfig =
 
 export type TwoFactorKind = 'authenticator' | 'email';
 
+// Custom-titlebar window controls. `side` mirrors the host (Linux reads the
+// desktop button-layout; Windows/fallback = right). `buttons` is the order to
+// render, restricted to the controls the host exposes.
+export type ControlsSide = 'left' | 'right';
+export type WindowControl = 'minimize' | 'maximize' | 'close';
+
+export interface WindowControlsLayout {
+  side: ControlsSide;
+  buttons: WindowControl[];
+}
+
 export interface TwoFactorInput {
   provider: TwoFactorKind;
   token: string;
@@ -19,20 +30,32 @@ export type LoginResult =
   | { status: 'twoFactorRequired'; providers: TwoFactorKind[] };
 
 export interface SessionStatus {
-  loggedIn: boolean;
+  /** An app-unlock password has been configured (the unified unlock secret). */
+  appUnlockConfigured: boolean;
+  /** The app is unlocked (the VMK is held; the vault is visible). */
   unlocked: boolean;
-  localUnlockConfigured: boolean;
   helloConfigured: boolean;
   darkwebConsent: boolean;
-  email: string | null;
+  /** Number of configured connections (whether or not currently unlocked). */
+  connectionCount: number;
+  /** Number of connections currently unlocked this session. */
+  liveCount: number;
 }
 
-export interface AccountSummary {
+/** One configured connection (server + email), for the unlock screen + settings. */
+export interface ConnectionSummary {
   email: string;
   serverLabel: string;
   server: ServerConfig;
-  active: boolean;
+  unlocked: boolean;
 }
+
+/** Per-connection result of an `unlockAll`. */
+export type UnlockOutcome = { email: string; serverLabel: string } & (
+  | { status: 'unlocked' }
+  | { status: 'twoFactorRequired'; providers: TwoFactorKind[] }
+  | { status: 'failed'; message: string }
+);
 
 export type HealthBand = 'critical' | 'poor' | 'fair' | 'good' | 'excellent';
 
@@ -107,6 +130,10 @@ export type ItemType =
 
 export interface VaultItem {
   id: string;
+  /** Owning connection (account email) — routes per-item ops in the unified list. */
+  accountEmail: string;
+  /** Label for the owning connection's server (list badge). */
+  accountLabel: string;
   name: string;
   itemType: ItemType;
   username: string | null;
@@ -138,6 +165,8 @@ export interface CustomField {
 
 export interface ItemDetail {
   id: string;
+  accountEmail: string;
+  accountLabel: string;
   name: string;
   itemType: ItemType;
   favorite: boolean;
@@ -161,6 +190,9 @@ export interface TotpCode {
 export interface Folder {
   id: string | null;
   name: string;
+  /** Owning connection; folders are per-account in the unified view. */
+  accountEmail: string;
+  accountLabel: string;
 }
 
 export interface PasswordGenOptions {

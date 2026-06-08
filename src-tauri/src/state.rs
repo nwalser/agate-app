@@ -116,27 +116,15 @@ impl Session {
         self.connections.get(email).map(|c| PasswordManagerClient(c.client.0.clone()))
     }
 
-    /// True if any connection is currently unlocked.
-    pub fn any_unlocked(&self) -> bool {
-        self.connections.values().any(|c| c.client.is_unlocked())
-    }
-
     /// Number of live connections.
     pub fn connection_count(&self) -> usize {
         self.connections.len()
     }
 
-    /// Sorted list of live connection emails (stable order for the UI).
-    pub fn emails(&self) -> Vec<String> {
-        let mut v: Vec<String> = self.connections.keys().cloned().collect();
-        v.sort();
-        v
-    }
-
     /// Drop all in-memory secret material (lock / logout): every client, the
     /// decrypted caches, and the AUK (zeroized on drop).
     pub fn clear_secrets(&mut self) {
-        self.auk = None; // Zeroizing zeroes the AUK on drop.
+        self.vmk = None; // Zeroizing zeroes the VMK on drop.
         self.connections.clear();
         self.active_email = None;
     }

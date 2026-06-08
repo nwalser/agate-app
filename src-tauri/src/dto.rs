@@ -468,3 +468,28 @@ pub struct ItemInput {
     #[serde(default)]
     pub fields: Vec<FieldInput>,
 }
+
+/// Where the custom titlebar's window-control buttons sit and in what order, so
+/// a borderless window (Windows/Linux) matches the host. On Linux this is read
+/// from the desktop's `button-layout`; elsewhere it's a fixed platform default.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowControlsLayout {
+    pub side: ControlsSide,
+    pub buttons: Vec<WindowControl>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ControlsSide {
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum WindowControl {
+    Minimize,
+    Maximize,
+    Close,
+}

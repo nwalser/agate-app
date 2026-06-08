@@ -1,15 +1,18 @@
-//! Vault operations: sync, list, item detail, TOTP, password generation.
+//! Vault operations across all unlocked connections: sync, the unified item list,
+//! item detail, TOTP, and password generation.
 //!
-//! All SDK calls are isolated here. The read path decrypts each cipher to a
-//! full `CipherView` (a stable, well-understood SDK type) rather than relying on
-//! the more volatile `CipherListView` shape — slightly less efficient, far less
-//! likely to break across SDK revs.
+//! In the unified model every read aggregates across every unlocked connection and
+//! stamps each row/detail with its owning account (`account_email` + a label), and
+//! every per-item operation routes by `(account_email, id)` to the right client.
 //!
-//! NOTE (unstable SDK): `sync()` returns the raw `SyncResponseModel`; the SDK
-//! does not yet materialize ciphers into a repository on its own (its own `bw`
-//! CLI leaves `list` as `todo!()`). We convert the API models to domain
-//! `Cipher`s here. Folder *names* are encrypted and their decryption path is in
-//! flux upstream, so v0.1 lists items without folder grouping (see `list_folders`).
+//! All SDK calls are isolated here. The read path decrypts each cipher to a full
+//! `CipherView` (a stable SDK type) rather than the more volatile `CipherListView`.
+//!
+//! NOTE (unstable SDK): `sync()` returns the raw `SyncResponseModel`; the SDK does
+//! not materialize ciphers into a repository on its own. We convert the API models
+//! to domain `Cipher`s here.
+
+use std::collections::HashMap;
 
 use bitwarden_generators::{PassphraseGeneratorRequest, PasswordGeneratorRequest};
 use bitwarden_pm::PasswordManagerClient;
@@ -22,6 +25,7 @@ use crate::dto::{
     VaultItem,
 };
 use crate::error::{AgateError, AgateResult, ErrorKind};
+use crate::server;
 use crate::state::AppState;
 
 fn cipher_type_to_dto(t: CipherType) -> ItemType {
@@ -31,35 +35,105 @@ fn cipher_type_to_dto(t: CipherType) -> ItemType {
         CipherType::Card => ItemType::Card,
         CipherType::Identity => ItemType::Identity,
         CipherType::SshKey => ItemType::SshKey,
-        // Newer item types we don't render specially yet.
         CipherType::BankAccount | CipherType::DriversLicense | CipherType::Passport => {
             ItemType::Unknown
         }
     }
 }
 
-/// A fresh handle to the unlocked client, or a typed error if locked.
-pub(crate) async fn client(state: &AppState) -> AgateResult<PasswordManagerClient> {
+/// A fresh handle to one connection's unlocked client, or a typed error.
+pub(crate) async fn client_for(state: &AppState, account_email: &str) -> AgateResult<PasswordManagerClient> {
     state
         .session
         .lock()
         .await
-        .cloned_client()
+        .client_for(account_email)
         .ok_or_else(AgateError::not_authenticated)
 }
 
-/// Sync the vault from the server and cache the encrypted ciphers in memory.
-pub async fn sync(state: &AppState, force: bool) -> AgateResult<()> {
-    let client = client(state).await?;
+/// Any unlocked client (for account-agnostic ops like generation), or a throwaway.
+async fn any_or_throwaway(state: &AppState) -> PasswordManagerClient {
+    match state.session.lock().await.connections.values().next() {
+        Some(c) => PasswordManagerClient(c.client.0.clone()),
+        None => PasswordManagerClient::new(None),
+    }
+}
 
+/// Snapshot of email → server label for the currently configured connections.
+async fn label_map(state: &AppState) -> HashMap<String, String> {
+    state
+        .config
+        .lock()
+        .await
+        .accounts
+        .iter()
+        .map(|a| (a.email.clone(), server::server_label(&a.server)))
+        .collect()
+}
+
+fn label_for(labels: &HashMap<String, String>, email: &str) -> String {
+    labels.get(email).cloned().unwrap_or_else(|| email.to_string())
+}
+
+/// Sync every unlocked connection from the server, caching encrypted ciphers per
+/// connection. Partial failures are logged; the whole sync only errors if *no*
+/// connection synced.
+pub async fn sync(state: &AppState, force: bool) -> AgateResult<()> {
+    let clients: Vec<(String, PasswordManagerClient)> = {
+        let session = state.session.lock().await;
+        session
+            .connections
+            .iter()
+            .map(|(email, c)| (email.clone(), PasswordManagerClient(c.client.0.clone())))
+            .collect()
+    };
+    if clients.is_empty() {
+        return Err(AgateError::not_authenticated());
+    }
+
+    let mut results: Vec<(String, Vec<Cipher>)> = Vec::new();
+    let mut first_err: Option<AgateError> = None;
+    let mut any_ok = false;
+    for (email, client) in clients {
+        match sync_one(&client, force).await {
+            Ok(ciphers) => {
+                any_ok = true;
+                results.push((email, ciphers));
+            }
+            Err(e) => {
+                log::warn!("sync failed for a connection: {}", e.message);
+                if first_err.is_none() {
+                    first_err = Some(e);
+                }
+            }
+        }
+    }
+
+    {
+        let mut session = state.session.lock().await;
+        for (email, ciphers) in results {
+            if let Some(conn) = session.connections.get_mut(&email) {
+                conn.ciphers = ciphers;
+                conn.folders = Vec::new();
+            }
+        }
+    }
+
+    if !any_ok {
+        if let Some(e) = first_err {
+            return Err(e);
+        }
+    }
+    Ok(())
+}
+
+async fn sync_one(client: &PasswordManagerClient, force: bool) -> AgateResult<Vec<Cipher>> {
     let response = client
         .sync()
         .sync(SyncRequest { force, exclude_subdomains: None })
         .await
         .map_err(|e| {
             let mut msg = format!("Sync failed: {e}");
-            // Append the (types-only, value-free) response shape captured by the
-            // self-hosted proxy, to pinpoint server/SDK schema mismatches.
             if let Some(shape) = crate::proxy::last_sync_shape() {
                 let shape = &shape[..shape.len().min(1800)];
                 msg.push_str(&format!(" | response shape: {shape}"));
@@ -67,8 +141,6 @@ pub async fn sync(state: &AppState, force: bool) -> AgateResult<()> {
             AgateError::new(ErrorKind::Network, msg)
         })?;
 
-    // Convert raw API cipher models → domain ciphers. Undecodable ones are
-    // skipped loudly rather than failing the whole sync.
     let mut ciphers: Vec<Cipher> = Vec::new();
     for model in response.ciphers.unwrap_or_default() {
         match Cipher::try_from(model) {
@@ -78,8 +150,7 @@ pub async fn sync(state: &AppState, force: bool) -> AgateResult<()> {
     }
 
     // Populate the SDK's local cipher repository so repository-backed write ops
-    // work (notably `edit`, which reads the original to build password history).
-    // Best-effort: if no Cipher repository is registered, skip and log.
+    // (notably `edit`) can read the original. Best-effort.
     match client.0.platform().state().get::<Cipher>() {
         Ok(repo) => {
             for c in &ciphers {
@@ -93,46 +164,46 @@ pub async fn sync(state: &AppState, force: bool) -> AgateResult<()> {
         Err(e) => log::warn!("no cipher repository registered; edits may be limited: {e}"),
     }
 
-    let mut session = state.session.lock().await;
-    session.ciphers = ciphers;
-    // Folder-name decryption is deferred (see module note); browse without it.
-    session.folders = Vec::new();
-    Ok(())
+    Ok(ciphers)
 }
 
-/// Decrypt the cached ciphers into list rows.
-///
-/// Uses the key store's synchronous `decrypt` in a tight loop rather than the
-/// async `CiphersClient::decrypt` per item — the latter does an async
-/// feature-flag fetch on every call, which is hundreds of awaits for a large
-/// vault. This is the same `CipherView` output without that per-item overhead.
+/// Decrypt every unlocked connection's cached ciphers into one unified list,
+/// stamping each row with its owning account.
 pub async fn list_items(state: &AppState) -> AgateResult<Vec<VaultItem>> {
-    let (client, ciphers) = {
+    let labels = label_map(state).await;
+    let snapshot: Vec<(String, PasswordManagerClient, Vec<Cipher>)> = {
         let session = state.session.lock().await;
-        let client = session.cloned_client().ok_or_else(AgateError::not_authenticated)?;
-        (client, session.ciphers.clone())
+        session
+            .connections
+            .iter()
+            .map(|(email, c)| (email.clone(), PasswordManagerClient(c.client.0.clone()), c.ciphers.clone()))
+            .collect()
     };
 
-    let key_store = client.0.internal.get_key_store();
-    let mut items = Vec::with_capacity(ciphers.len());
-    for cipher in &ciphers {
-        let decrypted: Result<CipherView, _> = key_store.decrypt(cipher);
-        match decrypted {
-            Ok(view) => items.push(view_to_list_item(&view)),
-            // A single undecryptable item shouldn't blank the whole list.
-            Err(e) => log::warn!("skipping item that failed to decrypt: {e}"),
+    let mut items = Vec::new();
+    for (email, client, ciphers) in snapshot {
+        let label = label_for(&labels, &email);
+        let key_store = client.0.internal.get_key_store();
+        for cipher in &ciphers {
+            let decrypted: Result<CipherView, _> = key_store.decrypt(cipher);
+            match decrypted {
+                Ok(view) => items.push(view_to_list_item(&view, &email, &label)),
+                Err(e) => log::warn!("skipping item that failed to decrypt: {e}"),
+            }
         }
     }
     Ok(items)
 }
 
-fn view_to_list_item(view: &CipherView) -> VaultItem {
+fn view_to_list_item(view: &CipherView, account_email: &str, account_label: &str) -> VaultItem {
     let (username, has_totp) = match &view.login {
         Some(login) => (login.username.clone(), login.totp.is_some()),
         None => (None, false),
     };
     VaultItem {
         id: view.id.map(|i| i.to_string()).unwrap_or_default(),
+        account_email: account_email.to_string(),
+        account_label: account_label.to_string(),
         name: view.name.clone(),
         item_type: cipher_type_to_dto(view.r#type),
         username,
@@ -144,14 +215,15 @@ fn view_to_list_item(view: &CipherView) -> VaultItem {
     }
 }
 
-/// Find and decrypt one cipher into full detail.
-pub async fn item_detail(state: &AppState, id: &str) -> AgateResult<ItemDetail> {
-    let view = decrypt_one(state, id).await?;
-    Ok(view_to_detail(&view))
+/// Find and decrypt one cipher (in `account_email`'s vault) into full detail.
+pub async fn item_detail(state: &AppState, account_email: &str, id: &str) -> AgateResult<ItemDetail> {
+    let view = decrypt_one(state, account_email, id).await?;
+    let label = label_for(&label_map(state).await, account_email);
+    Ok(view_to_detail(&view, account_email, &label))
 }
 
 /// Map a decrypted `CipherView` into the frontend `ItemDetail` DTO.
-pub fn view_to_detail(view: &CipherView) -> ItemDetail {
+pub fn view_to_detail(view: &CipherView, account_email: &str, account_label: &str) -> ItemDetail {
     let login = view.login.as_ref().map(|l| LoginDetail {
         username: l.username.clone(),
         password: l.password.clone(),
@@ -168,9 +240,6 @@ pub fn view_to_detail(view: &CipherView) -> ItemDetail {
         has_totp: l.totp.as_ref().map(|t| !t.is_empty()).unwrap_or(false),
     });
 
-    // Type-specific sub-views round-tripped through serde so the editor can
-    // prefill every field (preventing edit-time data loss). Infallible: on a
-    // shape mismatch we fall back to None rather than panic.
     let card = view
         .card
         .as_ref()
@@ -204,6 +273,8 @@ pub fn view_to_detail(view: &CipherView) -> ItemDetail {
 
     ItemDetail {
         id: view.id.map(|i| i.to_string()).unwrap_or_default(),
+        account_email: account_email.to_string(),
+        account_label: account_label.to_string(),
         name: view.name.clone(),
         item_type: cipher_type_to_dto(view.r#type),
         favorite: view.favorite,
@@ -220,8 +291,8 @@ pub fn view_to_detail(view: &CipherView) -> ItemDetail {
 }
 
 /// Generate the current TOTP code for an item that has one.
-pub async fn item_totp(state: &AppState, id: &str) -> AgateResult<TotpCode> {
-    let view = decrypt_one(state, id).await?;
+pub async fn item_totp(state: &AppState, account_email: &str, id: &str) -> AgateResult<TotpCode> {
+    let view = decrypt_one(state, account_email, id).await?;
     let secret = view
         .login
         .as_ref()
@@ -233,19 +304,23 @@ pub async fn item_totp(state: &AppState, id: &str) -> AgateResult<TotpCode> {
         .map_err(|e| AgateError::new(ErrorKind::Crypto, format!("TOTP failed: {e}")))?;
 
     let period = response.period;
-    let remaining = if period == 0 {
-        0
-    } else {
-        period - (now.timestamp() as u32 % period)
-    };
+    let remaining = if period == 0 { 0 } else { period - (now.timestamp() as u32 % period) };
     Ok(TotpCode { code: response.code, period, remaining })
 }
 
-pub(crate) async fn decrypt_one(state: &AppState, id: &str) -> AgateResult<CipherView> {
+pub(crate) async fn decrypt_one(
+    state: &AppState,
+    account_email: &str,
+    id: &str,
+) -> AgateResult<CipherView> {
     let (client, cipher) = {
         let session = state.session.lock().await;
-        let client = session.cloned_client().ok_or_else(AgateError::not_authenticated)?;
-        let cipher = session
+        let conn = session
+            .connections
+            .get(account_email)
+            .ok_or_else(AgateError::not_authenticated)?;
+        let client = PasswordManagerClient(conn.client.0.clone());
+        let cipher = conn
             .ciphers
             .iter()
             .find(|c| c.id.map(|i| i.to_string()).as_deref() == Some(id))
@@ -261,19 +336,36 @@ pub(crate) async fn decrypt_one(state: &AppState, id: &str) -> AgateResult<Ciphe
         .map_err(|e| AgateError::new(ErrorKind::Crypto, format!("decrypt failed: {e}")))
 }
 
-/// List decrypted folders. Reads from the SDK FoldersClient (best-effort).
+/// List decrypted folders across every unlocked connection, stamped by account.
 pub async fn list_folders(state: &AppState) -> AgateResult<Vec<Folder>> {
-    let client = client(state).await?;
-    match client.vault().folders().list().await {
-        Ok(views) => Ok(views
-            .into_iter()
-            .map(|v| Folder { id: v.id.map(|i| i.to_string()), name: v.name })
-            .collect()),
-        Err(e) => {
-            log::warn!("folder list failed: {e}");
-            Ok(Vec::new())
+    let labels = label_map(state).await;
+    let clients: Vec<(String, PasswordManagerClient)> = {
+        let session = state.session.lock().await;
+        session
+            .connections
+            .iter()
+            .map(|(email, c)| (email.clone(), PasswordManagerClient(c.client.0.clone())))
+            .collect()
+    };
+
+    let mut out = Vec::new();
+    for (email, client) in clients {
+        let label = label_for(&labels, &email);
+        match client.vault().folders().list().await {
+            Ok(views) => {
+                for v in views {
+                    out.push(Folder {
+                        id: v.id.map(|i| i.to_string()),
+                        name: v.name,
+                        account_email: email.clone(),
+                        account_label: label.clone(),
+                    });
+                }
+            }
+            Err(e) => log::warn!("folder list failed for a connection: {e}"),
         }
     }
+    Ok(out)
 }
 
 /// Generate a password with the given options (no unlocked vault required).
@@ -282,12 +374,7 @@ pub async fn generate_password(state: &AppState, opts: PasswordGenOptions) -> Ag
         return Err(AgateError::bad_request("Select at least one character set."));
     }
     let length = opts.length.clamp(5, 128);
-
-    // Reuse the session client when present; otherwise a throwaway one suffices.
-    let client = match state.session.lock().await.cloned_client() {
-        Some(c) => c,
-        None => PasswordManagerClient::new(None),
-    };
+    let client = any_or_throwaway(state).await;
 
     let request = PasswordGeneratorRequest {
         lowercase: opts.lowercase,
@@ -312,10 +399,7 @@ pub async fn generate_passphrase(
     opts: crate::dto::PassphraseGenOptions,
 ) -> AgateResult<String> {
     let num_words = opts.num_words.clamp(3, 20);
-    let client = match state.session.lock().await.cloned_client() {
-        Some(c) => c,
-        None => PasswordManagerClient::new(None),
-    };
+    let client = any_or_throwaway(state).await;
     let request = PassphraseGeneratorRequest {
         num_words,
         word_separator: if opts.word_separator.is_empty() { "-".into() } else { opts.word_separator },

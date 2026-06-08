@@ -30,12 +30,13 @@ export function matchesQuery(item: VaultItem, query: string): boolean {
   return false;
 }
 
-/** Closed set of left-rail filters. */
+/** Closed set of left-rail filters. `folderId: null` = items with no folder. */
 export type VaultFilter =
   | { kind: 'all' }
   | { kind: 'favorites' }
   | { kind: 'trash' }
-  | { kind: 'type'; itemType: ItemType };
+  | { kind: 'type'; itemType: ItemType }
+  | { kind: 'folder'; folderId: string | null };
 
 /** Whether a single item passes the active filter (independent of search). */
 export function passesFilter(item: VaultItem, filter: VaultFilter): boolean {
@@ -46,6 +47,8 @@ export function passesFilter(item: VaultItem, filter: VaultFilter): boolean {
       return !item.deleted && item.favorite;
     case 'type':
       return !item.deleted && item.itemType === filter.itemType;
+    case 'folder':
+      return !item.deleted && (item.folderId ?? null) === filter.folderId;
     case 'all':
       return !item.deleted;
   }

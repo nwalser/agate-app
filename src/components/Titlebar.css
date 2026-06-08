@@ -71,6 +71,11 @@
   align-items: stretch;
   flex-shrink: 0;
 }
+/* Linux desktops that place window buttons left-of-title (e.g. some GNOME
+   layouts): move the cluster ahead of the brand. */
+.titlebar-controls.left {
+  order: -1;
+}
 .titlebar-btn {
   display: flex;
   align-items: center;

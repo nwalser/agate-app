@@ -1,17 +1,17 @@
 //! Vault write operations: create / edit / delete / restore / move / favorite /
-//! clone items, and folder create / rename.
+//! clone items, and folder create / rename. Every operation routes to a specific
+//! connection by `account_email` (the unified list mixes accounts, so the caller
+//! always says which vault an item lives in / a new item goes into).
 //!
 //! The SDK's typed `CipherCreateRequest`/`CipherEditRequest` live in private
 //! modules and aren't nameable from outside the crate, so we reproduce the
 //! create/edit flow the way `cipher_client::{create,edit}` do internally, using
 //! only public APIs: build a `CipherView`, `key_store.encrypt` it to a `Cipher`,
 //! convert to the public `CipherRequestModel`, and POST/PUT via `ciphers_api()`.
-//! The id-only ops (delete/soft-delete/restore/move) use the public typed
-//! `CiphersClient` methods directly. After a write the frontend re-syncs.
 //!
-//! Type-specific views are built via `serde_json` (missing optional fields
-//! default to `None`); edit round-trips the decrypted `CipherView` through JSON
-//! so fields we don't enumerate (key, password_history, dates…) are preserved.
+//! Type-specific views are built via `serde_json` (missing optional fields default
+//! to `None`); edit round-trips the decrypted `CipherView` through JSON so fields
+//! we don't enumerate (key, password_history, dates…) are preserved.
 
 use bitwarden_api_api::models::CipherRequestModel;
 use bitwarden_pm::PasswordManagerClient;
@@ -21,8 +21,9 @@ use serde_json::{json, Value};
 
 use crate::dto::{CardInput, Folder, IdentityInput, ItemInput, ItemType, LoginInput, SshKeyInput};
 use crate::error::{AgateError, AgateResult, ErrorKind};
+use crate::server;
 use crate::state::AppState;
-use crate::vault::{client, decrypt_one};
+use crate::vault::{client_for, decrypt_one};
 
 fn op_err(kind: ErrorKind, what: &str, e: impl std::fmt::Display) -> AgateError {
     AgateError::new(kind, format!("{what}: {e}"))
@@ -30,6 +31,14 @@ fn op_err(kind: ErrorKind, what: &str, e: impl std::fmt::Display) -> AgateError 
 
 fn build_err(e: impl std::fmt::Display) -> AgateError {
     AgateError::new(ErrorKind::BadRequest, format!("invalid item data: {e}"))
+}
+
+/// Server label for one connection (for stamping returned folders).
+async fn account_label(state: &AppState, email: &str) -> String {
+    let cfg = state.config.lock().await;
+    cfg.server_for(email)
+        .map(|s| server::server_label(&s))
+        .unwrap_or_else(|| email.to_string())
 }
 
 /// Parse a string id into a typed SDK id via serde (CipherId/FolderId/OrganizationId).
@@ -107,8 +116,7 @@ fn cipher_type_int(t: ItemType) -> AgateResult<i64> {
     })
 }
 
-/// Build a fresh `CipherView` (as JSON) for a create, mirroring the SDK's
-/// `convert_request_to_cipher_view`.
+/// Build a fresh `CipherView` (as JSON) for a create.
 fn create_view_json(input: &ItemInput) -> AgateResult<Value> {
     let mut v = json!({
         "id": null,
@@ -205,13 +213,13 @@ async fn encrypt_and_push(
     Ok(())
 }
 
-/// Create a new item or edit an existing one (edit when `input.id` is present).
-/// Returns `()` — the frontend re-syncs and reloads after a successful write.
-pub async fn save_item(state: &AppState, input: ItemInput) -> AgateResult<()> {
+/// Create a new item or edit an existing one (edit when `input.id` is present), in
+/// `account_email`'s vault. The frontend re-syncs after a successful write.
+pub async fn save_item(state: &AppState, account_email: &str, input: ItemInput) -> AgateResult<()> {
     if input.name.trim().is_empty() {
         return Err(AgateError::bad_request("Name is required."));
     }
-    let client = client(state).await?;
+    let client = client_for(state, account_email).await?;
 
     match &input.id {
         None => {
@@ -219,11 +227,8 @@ pub async fn save_item(state: &AppState, input: ItemInput) -> AgateResult<()> {
             encrypt_and_push(&client, view, None).await
         }
         Some(id) => {
-            // Round-trip the decrypted view so unenumerated fields survive.
-            let existing = decrypt_one(state, id).await?;
+            let existing = decrypt_one(state, account_email, id).await?;
             let mut v = serde_json::to_value(&existing).map_err(build_err)?;
-            // The original login sub-view, captured before we overwrite it, so we
-            // can preserve fields the editor form does not carry.
             let prev_login = v.get("login").cloned();
             v["name"] = json!(input.name);
             v["notes"] = json!(input.notes);
@@ -233,10 +238,8 @@ pub async fn save_item(state: &AppState, input: ItemInput) -> AgateResult<()> {
             v["fields"] = json!(build_fields(&input));
             set_type_payload(&mut v, &input)?;
 
-            // set_type_payload rebuilds the login sub-view from the form, which
-            // omits passkeys / password-revision date / autofill flag and would
-            // clear the TOTP secret when the editor couldn't show it. Restore
-            // those from the original so an edit never destroys hidden secrets.
+            // Restore login fields the editor form can't carry (passkeys, password
+            // revision date, autofill flag, and a TOTP the editor couldn't show).
             if matches!(input.item_type, ItemType::Login) {
                 if let (Some(prev), Some(new_login)) = (prev_login.as_ref(), v.get_mut("login")) {
                     for k in ["fido2Credentials", "passwordRevisionDate", "autofillOnPageLoad"] {
@@ -261,9 +264,9 @@ pub async fn save_item(state: &AppState, input: ItemInput) -> AgateResult<()> {
 }
 
 /// Duplicate an item into a new personal cipher named "… - Clone".
-pub async fn clone_item(state: &AppState, id: &str) -> AgateResult<()> {
-    let client = client(state).await?;
-    let existing = decrypt_one(state, id).await?;
+pub async fn clone_item(state: &AppState, account_email: &str, id: &str) -> AgateResult<()> {
+    let client = client_for(state, account_email).await?;
+    let existing = decrypt_one(state, account_email, id).await?;
 
     let mut v = serde_json::to_value(&existing).map_err(build_err)?;
     v["id"] = Value::Null;
@@ -277,18 +280,23 @@ pub async fn clone_item(state: &AppState, id: &str) -> AgateResult<()> {
 }
 
 /// Toggle favorite on one item (full edit so it works without edit-permission tricks).
-pub async fn set_favorite(state: &AppState, id: &str, favorite: bool) -> AgateResult<()> {
-    let client = client(state).await?;
-    let existing = decrypt_one(state, id).await?;
+pub async fn set_favorite(state: &AppState, account_email: &str, id: &str, favorite: bool) -> AgateResult<()> {
+    let client = client_for(state, account_email).await?;
+    let existing = decrypt_one(state, account_email, id).await?;
     let mut v = serde_json::to_value(&existing).map_err(build_err)?;
     v["favorite"] = json!(favorite);
     let view: CipherView = serde_json::from_value(v).map_err(build_err)?;
     encrypt_and_push(&client, view, Some(parse_id::<CipherId>(id)?)).await
 }
 
-/// Move items to a folder (None clears the folder).
-pub async fn move_items(state: &AppState, ids: Vec<String>, folder_id: Option<String>) -> AgateResult<()> {
-    let client = client(state).await?;
+/// Move items to a folder within one account (None clears the folder).
+pub async fn move_items(
+    state: &AppState,
+    account_email: &str,
+    ids: Vec<String>,
+    folder_id: Option<String>,
+) -> AgateResult<()> {
+    let client = client_for(state, account_email).await?;
     let cipher_ids: Vec<CipherId> = ids.iter().map(|s| parse_id(s)).collect::<AgateResult<_>>()?;
     let folder = parse_opt_id::<FolderId>(&folder_id)?;
     client
@@ -300,9 +308,14 @@ pub async fn move_items(state: &AppState, ids: Vec<String>, folder_id: Option<St
     Ok(())
 }
 
-/// Delete items. `permanent` skips trash (hard delete); otherwise soft-delete.
-pub async fn delete_items(state: &AppState, ids: Vec<String>, permanent: bool) -> AgateResult<()> {
-    let client = client(state).await?;
+/// Delete items in one account. `permanent` skips trash (hard delete).
+pub async fn delete_items(
+    state: &AppState,
+    account_email: &str,
+    ids: Vec<String>,
+    permanent: bool,
+) -> AgateResult<()> {
+    let client = client_for(state, account_email).await?;
     let cipher_ids: Vec<CipherId> = ids.iter().map(|s| parse_id(s)).collect::<AgateResult<_>>()?;
     let ciphers = client.vault().ciphers();
     if permanent {
@@ -313,9 +326,9 @@ pub async fn delete_items(state: &AppState, ids: Vec<String>, permanent: bool) -
     Ok(())
 }
 
-/// Restore soft-deleted items from trash.
-pub async fn restore_items(state: &AppState, ids: Vec<String>) -> AgateResult<()> {
-    let client = client(state).await?;
+/// Restore soft-deleted items from trash in one account.
+pub async fn restore_items(state: &AppState, account_email: &str, ids: Vec<String>) -> AgateResult<()> {
+    let client = client_for(state, account_email).await?;
     let cipher_ids: Vec<CipherId> = ids.iter().map(|s| parse_id(s)).collect::<AgateResult<_>>()?;
     client
         .vault()
@@ -326,32 +339,42 @@ pub async fn restore_items(state: &AppState, ids: Vec<String>) -> AgateResult<()
     Ok(())
 }
 
-/// Create a personal folder.
-pub async fn create_folder(state: &AppState, name: String) -> AgateResult<Folder> {
+/// Create a personal folder in one account.
+pub async fn create_folder(state: &AppState, account_email: &str, name: String) -> AgateResult<Folder> {
     if name.trim().is_empty() {
         return Err(AgateError::bad_request("Folder name is required."));
     }
-    let client = client(state).await?;
+    let client = client_for(state, account_email).await?;
     let view = client
         .vault()
         .folders()
         .create(FolderAddEditRequest { name })
         .await
         .map_err(|e| op_err(ErrorKind::Network, "Create folder failed", e))?;
-    Ok(Folder { id: view.id.map(|i| i.to_string()), name: view.name })
+    Ok(Folder {
+        id: view.id.map(|i| i.to_string()),
+        name: view.name,
+        account_email: account_email.to_string(),
+        account_label: account_label(state, account_email).await,
+    })
 }
 
-/// Rename an existing folder.
-pub async fn rename_folder(state: &AppState, id: &str, name: String) -> AgateResult<Folder> {
+/// Rename an existing folder in one account.
+pub async fn rename_folder(state: &AppState, account_email: &str, id: &str, name: String) -> AgateResult<Folder> {
     if name.trim().is_empty() {
         return Err(AgateError::bad_request("Folder name is required."));
     }
-    let client = client(state).await?;
+    let client = client_for(state, account_email).await?;
     let view = client
         .vault()
         .folders()
         .edit(parse_id::<FolderId>(id)?, FolderAddEditRequest { name })
         .await
         .map_err(|e| op_err(ErrorKind::Network, "Rename folder failed", e))?;
-    Ok(Folder { id: view.id.map(|i| i.to_string()), name: view.name })
+    Ok(Folder {
+        id: view.id.map(|i| i.to_string()),
+        name: view.name,
+        account_email: account_email.to_string(),
+        account_label: account_label(state, account_email).await,
+    })
 }

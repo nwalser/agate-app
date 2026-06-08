@@ -13,7 +13,7 @@
 
 use std::collections::HashMap;
 
-use bitwarden_vault::{CipherType, CipherView};
+use bitwarden_vault::{Cipher, CipherType, CipherView};
 use chrono::Utc;
 use sha1::{Digest, Sha1};
 use zeroize::Zeroizing;
@@ -47,53 +47,61 @@ fn uppercase_sha1_hex(input: &[u8]) -> String {
     out
 }
 
-/// Decrypt all cached ciphers and extract the login audit rows.
+/// Decrypt every unlocked connection's cached ciphers and extract login audit
+/// rows. The report is over the UNION of all vaults, so e.g. a password reused
+/// between a personal and a work account is correctly flagged.
 async fn collect_logins(state: &AppState) -> AgateResult<Vec<LoginAudit>> {
-    let (client, ciphers) = {
+    let snapshot: Vec<(bitwarden_pm::PasswordManagerClient, Vec<Cipher>)> = {
         let session = state.session.lock().await;
-        let client = session.client.as_ref().ok_or_else(AgateError::not_authenticated)?;
-        (
-            bitwarden_pm::PasswordManagerClient(client.0.clone()),
-            session.ciphers.clone(),
-        )
+        if session.connections.is_empty() {
+            return Err(AgateError::not_authenticated());
+        }
+        session
+            .connections
+            .values()
+            .map(|c| (bitwarden_pm::PasswordManagerClient(c.client.0.clone()), c.ciphers.clone()))
+            .collect()
     };
-    // Synchronous key-store decrypt in a loop — avoids the async per-item
-    // feature-flag fetch that CiphersClient::decrypt does (hundreds of awaits).
-    let key_store = client.0.internal.get_key_store();
+
     let now = Utc::now();
     let mut out = Vec::new();
-    for cipher in &ciphers {
-        let view: CipherView = match key_store.decrypt(cipher) {
-            Ok(v) => v,
-            Err(e) => {
-                log::warn!("audit: skipping undecryptable cipher: {e}");
+    for (client, ciphers) in snapshot {
+        // Synchronous key-store decrypt in a loop — avoids the async per-item
+        // feature-flag fetch that CiphersClient::decrypt does (hundreds of awaits).
+        let key_store = client.0.internal.get_key_store();
+        for cipher in &ciphers {
+            let view: CipherView = match key_store.decrypt(cipher) {
+                Ok(v) => v,
+                Err(e) => {
+                    log::warn!("audit: skipping undecryptable cipher: {e}");
+                    continue;
+                }
+            };
+            if view.r#type != CipherType::Login || view.deleted_date.is_some() {
                 continue;
             }
-        };
-        if view.r#type != CipherType::Login || view.deleted_date.is_some() {
-            continue;
+            let Some(login) = &view.login else { continue };
+            let Some(password) = login.password.clone() else { continue };
+            if password.is_empty() {
+                continue;
+            }
+            let uris = login
+                .uris
+                .as_ref()
+                .map(|us| us.iter().filter_map(|u| u.uri.clone()).collect())
+                .unwrap_or_default();
+            let revision = login.password_revision_date.unwrap_or(view.revision_date);
+            let old = (now - revision).num_days() > OLD_PASSWORD_DAYS;
+            out.push(LoginAudit {
+                id: view.id.map(|i| i.to_string()).unwrap_or_default(),
+                name: view.name.clone(),
+                password: Zeroizing::new(password),
+                username: login.username.clone(),
+                uris,
+                has_totp: login.totp.as_ref().map(|t| !t.is_empty()).unwrap_or(false),
+                old,
+            });
         }
-        let Some(login) = &view.login else { continue };
-        let Some(password) = login.password.clone() else { continue };
-        if password.is_empty() {
-            continue;
-        }
-        let uris = login
-            .uris
-            .as_ref()
-            .map(|us| us.iter().filter_map(|u| u.uri.clone()).collect())
-            .unwrap_or_default();
-        let revision = login.password_revision_date.unwrap_or(view.revision_date);
-        let old = (now - revision).num_days() > OLD_PASSWORD_DAYS;
-        out.push(LoginAudit {
-            id: view.id.map(|i| i.to_string()).unwrap_or_default(),
-            name: view.name.clone(),
-            password: Zeroizing::new(password),
-            username: login.username.clone(),
-            uris,
-            has_totp: login.totp.as_ref().map(|t| !t.is_empty()).unwrap_or(false),
-            old,
-        });
     }
     Ok(out)
 }

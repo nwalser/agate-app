@@ -1,0 +1,50 @@
+.folder-tree-label {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--subtle-foreground);
+  padding: 4px 9px 2px;
+}
+
+.folder-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  padding: 6px 9px;
+  color: var(--muted-foreground);
+  font-size: 12.5px;
+}
+.folder-row:hover {
+  background: var(--card-hover);
+  color: var(--foreground);
+}
+.folder-row.active {
+  background: var(--card-hover);
+  color: var(--foreground);
+  font-weight: 600;
+}
+.folder-row svg {
+  flex-shrink: 0;
+}
+
+.folder-twist {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  flex-shrink: 0;
+  color: var(--subtle-foreground);
+}
+
+.folder-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

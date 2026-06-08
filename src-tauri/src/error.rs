@@ -51,10 +51,6 @@ impl AgateError {
         Self::new(ErrorKind::NotAuthenticated, "Not logged in.")
     }
 
-    pub fn locked() -> Self {
-        Self::new(ErrorKind::Locked, "Vault is locked.")
-    }
-
     pub fn bad_request(message: impl Into<String>) -> Self {
         Self::new(ErrorKind::BadRequest, message)
     }
