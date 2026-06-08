@@ -4,6 +4,7 @@
 // favicons are fetched. Validated at the storage boundary (no `any`).
 
 import { createSignal } from 'solid-js';
+import type { ItemType } from '../lib/types.ts';
 
 /** Built-in columns the list knows how to render without configuration. */
 export type BuiltinColumnId = 'username' | 'website' | 'folder' | 'type' | 'totp' | 'password';
@@ -34,6 +35,16 @@ export const ALL_BUILTINS: BuiltinColumnId[] = [
   'totp',
   'password',
 ];
+
+/** Display labels for item types (Type column + type filter input). */
+export const TYPE_LABELS: Record<ItemType, string> = {
+  login: 'Login',
+  secureNote: 'Secure note',
+  card: 'Card',
+  identity: 'Identity',
+  sshKey: 'SSH key',
+  unknown: 'Item',
+};
 
 interface ColumnMeta {
   label: string;
@@ -78,6 +89,12 @@ export function sortKeyOf(c: ColumnSpec): SortKey | null {
   if (c.id === 'folder') return 'folder';
   if (c.id === 'type') return 'type';
   return null;
+}
+
+/** Whether a column can be filtered (its value is available without item detail). */
+export function isFilterable(c: ColumnSpec): boolean {
+  if (c.kind !== 'builtin') return false;
+  return c.id === 'username' || c.id === 'website' || c.id === 'folder' || c.id === 'type';
 }
 
 const STORAGE_KEY = 'agate.columns';

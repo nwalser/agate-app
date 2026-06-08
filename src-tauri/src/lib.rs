@@ -461,6 +461,22 @@ pub fn run() {
             hello_unlock,
             check_update,
             run_update,
+            // KeePass (.kdbx) local vault source — own command surface (keepass.rs),
+            // routed by the synthetic `keepass:<path>` source id.
+            keepass::open_keepass,
+            keepass::close_keepass,
+            keepass::list_keepass_sources,
+            keepass::keepass_list_items,
+            keepass::keepass_list_folders,
+            keepass::keepass_item_detail,
+            keepass::keepass_item_totp,
+            keepass::keepass_save_item,
+            keepass::keepass_set_favorite,
+            keepass::keepass_move_items,
+            keepass::keepass_delete_items,
+            keepass::keepass_restore_items,
+            keepass::keepass_create_folder,
+            keepass::keepass_rename_folder,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Agate");

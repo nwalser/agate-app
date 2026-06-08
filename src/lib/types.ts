@@ -137,6 +137,8 @@ export interface VaultItem {
   name: string;
   itemType: ItemType;
   username: string | null;
+  /** First login URI (not secret) — website column + favicon host. */
+  uri: string | null;
   hasTotp: boolean;
   favorite: boolean;
   deleted: boolean;

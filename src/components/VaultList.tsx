@@ -23,12 +23,14 @@ import {
   ChevronUp,
   CreditCard,
   File,
+  Filter,
   KeyRound,
   SlidersHorizontal,
   Star,
   StickyNote,
   Terminal,
   UserRound,
+  X,
 } from 'lucide-solid';
 import { ipc } from '../lib/ipc.ts';
 import type { Folder, ItemDetail, ItemType, TotpCode, VaultItem } from '../lib/types.ts';
@@ -36,24 +38,26 @@ import {
   builtinMeta,
   columnKey,
   columns,
+  isFilterable,
   isRevealed,
   sortKeyOf,
+  TYPE_LABELS,
   type ColumnSpec,
   type SortDir,
   type SortKey,
 } from '../state/columns.ts';
+import {
+  clearColumnFilters,
+  columnFilter,
+  filtersVisible,
+  hasActiveFilters,
+  NAME_FILTER_KEY,
+  setColumnFilter,
+  toggleFiltersVisible,
+} from '../state/columnFilters.ts';
 import Favicon from './Favicon.tsx';
 import ColumnMenu from './ColumnMenu.tsx';
 import './VaultList.css';
-
-const TYPE_LABELS: Record<ItemType, string> = {
-  login: 'Login',
-  secureNote: 'Secure note',
-  card: 'Card',
-  identity: 'Identity',
-  sshKey: 'SSH key',
-  unknown: 'Item',
-};
 
 function typeIcon(t: ItemType) {
   switch (t) {
@@ -197,39 +201,37 @@ export default function VaultList(props: VaultListProps) {
     return k !== null && isRevealed(k);
   };
 
-  function rowNeedsDetail(item: VaultItem): boolean {
-    const c = columns();
-    if (c.favicons && item.itemType === 'login') return true;
-    for (const col of c.columns) {
+  // Whether any visible column needs decrypted detail (a custom field, or a
+  // revealed secret). Website + favicon come from the list's `uri` now, so they
+  // no longer force a per-row detail fetch.
+  const detailNeeded = createMemo(() => {
+    for (const col of columns().columns) {
       if (col.kind === 'custom') return true;
-      if (col.id === 'website') return true;
       if (builtinMeta(col.id).secret && isRevealed(columnKey(col))) return true;
     }
     return false;
-  }
+  });
 
   // Kick off the lazy fetches whenever the visible set or the config changes.
   createEffect(() => {
     const its = props.items;
-    columns(); // track config changes
+    const need = detailNeeded();
     const wantTotp = totpRevealed();
     for (const it of its) {
-      if (rowNeedsDetail(it)) ensureDetail(it.accountEmail, it.id);
+      if (need) ensureDetail(it.accountEmail, it.id);
       if (wantTotp && it.hasTotp) ensureTotp(it.accountEmail, it.id);
     }
   });
 
   const gridTemplate = createMemo(() => {
     const mid = columns().columns.map(colWidth).join(' ');
-    return `22px minmax(0, 1.6fr)${mid ? ` ${mid}` : ''} 46px`;
+    return `22px minmax(0, 1.6fr)${mid ? ` ${mid}` : ''} 76px`;
   });
 
   const folderName = (id: string | null): string => {
     if (!id) return '';
     return props.folders.find((f) => f.id === id)?.name ?? '';
   };
-  const uriOf = (item: VaultItem): string | null =>
-    detailCache().get(item.id)?.login?.uris.find((u) => u.uri)?.uri ?? null;
 
   // ---- cell content per column ----
   function cell(item: VaultItem, col: ColumnSpec): JSX.Element {
@@ -238,7 +240,7 @@ export default function VaultList(props: VaultListProps) {
       case 'username':
         return <span class="vault-cell truncate">{item.username ?? ''}</span>;
       case 'website':
-        return <span class="vault-cell truncate muted">{uriOf(item) ?? ''}</span>;
+        return <span class="vault-cell truncate muted">{item.uri ?? ''}</span>;
       case 'folder':
         return <span class="vault-cell truncate muted">{folderName(item.folderId)}</span>;
       case 'type':
@@ -314,6 +316,14 @@ export default function VaultList(props: VaultListProps) {
             }}
           </For>
           <div class="vault-head-cell vault-head-gear">
+            <button
+              class="ghost icon-btn vault-gear-btn"
+              classList={{ 'filter-on': filtersVisible() || hasActiveFilters() }}
+              title="Filter by column"
+              onClick={() => toggleFiltersVisible()}
+            >
+              <Filter size={14} strokeWidth={1.75} />
+            </button>
             <div class="column-menu-anchor">
               <button
                 class="ghost icon-btn vault-gear-btn"
@@ -328,6 +338,43 @@ export default function VaultList(props: VaultListProps) {
             </div>
           </div>
         </div>
+
+        <Show when={filtersVisible()}>
+          <div class="vault-filter-row">
+            <span />
+            <input
+              class="vault-filter-input"
+              placeholder="Filter name…"
+              value={columnFilter(NAME_FILTER_KEY)}
+              onInput={(e) => setColumnFilter(NAME_FILTER_KEY, e.currentTarget.value)}
+            />
+            <For each={columns().columns}>
+              {(col) =>
+                isFilterable(col) ? (
+                  <input
+                    class="vault-filter-input"
+                    placeholder="Filter…"
+                    value={columnFilter(columnKey(col))}
+                    onInput={(e) => setColumnFilter(columnKey(col), e.currentTarget.value)}
+                  />
+                ) : (
+                  <span />
+                )
+              }
+            </For>
+            <span class="vault-filter-clear">
+              <Show when={hasActiveFilters()}>
+                <button
+                  class="ghost icon-btn vault-gear-btn"
+                  title="Clear filters"
+                  onClick={() => clearColumnFilters()}
+                >
+                  <X size={13} strokeWidth={1.75} />
+                </button>
+              </Show>
+            </span>
+          </div>
+        </Show>
 
         <div class="vault-list-scroll">
           <For each={props.items}>
@@ -355,7 +402,7 @@ export default function VaultList(props: VaultListProps) {
                   </label>
                   <span class="vault-name-cell">
                     <Show when={columns().favicons} fallback={typeFallback}>
-                      <Favicon uri={uriOf(item)} fallback={typeFallback} />
+                      <Favicon uri={item.uri} fallback={typeFallback} />
                     </Show>
                     <span class="vault-row-name truncate">{item.name}</span>
                   </span>

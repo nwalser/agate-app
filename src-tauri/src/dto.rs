@@ -130,6 +130,9 @@ pub struct VaultItem {
     pub name: String,
     pub item_type: ItemType,
     pub username: Option<String>,
+    /// First login URI (decrypted; URIs are not secret). Powers the list's
+    /// website column and favicon host. None for non-logins / no URI.
+    pub uri: Option<String>,
     pub has_totp: bool,
     pub favorite: bool,
     pub deleted: bool,

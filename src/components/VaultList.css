@@ -48,7 +48,31 @@
   justify-self: end;
   display: flex;
   align-items: center;
+  gap: 2px;
 }
 .vault-gear-btn {
   padding: 5px;
+}
+.vault-gear-btn.filter-on {
+  color: var(--primary);
+}
+
+/* Per-column filter row (pinned under the header). Shares --vault-cols. */
+.vault-filter-row {
+  display: grid;
+  grid-template-columns: var(--vault-cols);
+  align-items: center;
+  gap: 10px;
+  padding: 4px 10px 6px;
+  border-bottom: 1px solid var(--border);
+}
+.vault-filter-input {
+  font-size: 12px;
+  padding: 4px 8px;
+  min-width: 0;
+}
+.vault-filter-clear {
+  justify-self: end;
+  display: flex;
+  align-items: center;
 }

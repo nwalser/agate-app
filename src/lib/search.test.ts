@@ -10,6 +10,7 @@ function item(partial: Partial<VaultItem>): VaultItem {
     name: partial.name ?? 'name',
     itemType: partial.itemType ?? 'login',
     username: partial.username ?? null,
+    uri: partial.uri ?? null,
     hasTotp: partial.hasTotp ?? false,
     favorite: partial.favorite ?? false,
     deleted: partial.deleted ?? false,
@@ -74,6 +75,19 @@ describe('passesFilter', () => {
     expect(
       passesFilter(item({ itemType: 'card', deleted: true }), { kind: 'type', itemType: 'card' }),
     ).toBe(false);
+  });
+
+  it('folder matches by folderId and hides trash', () => {
+    expect(passesFilter(item({ folderId: 'f1' }), { kind: 'folder', folderId: 'f1' })).toBe(true);
+    expect(passesFilter(item({ folderId: 'f2' }), { kind: 'folder', folderId: 'f1' })).toBe(false);
+    expect(
+      passesFilter(item({ folderId: 'f1', deleted: true }), { kind: 'folder', folderId: 'f1' }),
+    ).toBe(false);
+  });
+
+  it('folder with null id matches items with no folder', () => {
+    expect(passesFilter(item({ folderId: null }), { kind: 'folder', folderId: null })).toBe(true);
+    expect(passesFilter(item({ folderId: 'f1' }), { kind: 'folder', folderId: null })).toBe(false);
   });
 });
 

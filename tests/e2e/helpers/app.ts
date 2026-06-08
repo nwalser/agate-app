@@ -29,6 +29,15 @@ export type { FakeConfig };
  * exposes an `about:blank` context; we pick the real app URL (tauri.localhost or
  * the dev-server localhost) and confirm the `#app` mount root is present.
  */
+// The built (frozen-dist) app serves from http://tauri.localhost/; the dev binary
+// from the vite dev server. tauri-driver often hands us the app's WebView already
+// attached but parked at about:blank, so we force-navigate to the app URL.
+const APP_URLS = ['http://tauri.localhost/', 'http://localhost:5173/'];
+
+async function mountedHere(): Promise<boolean> {
+  return browser.execute(() => !!document.getElementById('app')).catch(() => false);
+}
+
 export async function attachToApp(): Promise<void> {
   const isAppUrl = (u: string) => !!u && u !== 'about:blank' && !u.startsWith('data:');
   const deadline = Date.now() + TIMEOUT.crawl;
@@ -40,13 +49,18 @@ export async function attachToApp(): Promise<void> {
       try { await browser.switchToWindow(h); } catch { continue; }
       const url = await browser.getUrl().catch(() => '');
       seen[h] = url;
-      if (!isAppUrl(url)) continue;
-      const mounted = await browser
-        .execute(() => !!document.getElementById('app'))
-        .catch(() => false);
-      if (mounted) return;
+      if (isAppUrl(url) && (await mountedHere())) return;
     }
-    await browser.pause(150);
+    // tauri-driver commonly attaches to the app's WebView while it's still at
+    // about:blank. Force-navigate the current context to the app URL and check.
+    for (const target of APP_URLS) {
+      try {
+        await browser.url(target);
+        await browser.waitUntil(mountedHere, { timeout: 2_000 });
+        return;
+      } catch { /* try next URL / poll again */ }
+    }
+    await browser.pause(200);
   }
   throw new Error(`No agate app window after ${TIMEOUT.crawl}ms. Seen: ${JSON.stringify(seen)}`);
 }

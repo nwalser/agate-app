@@ -196,9 +196,13 @@ pub async fn list_items(state: &AppState) -> AgateResult<Vec<VaultItem>> {
 }
 
 fn view_to_list_item(view: &CipherView, account_email: &str, account_label: &str) -> VaultItem {
-    let (username, has_totp) = match &view.login {
-        Some(login) => (login.username.clone(), login.totp.is_some()),
-        None => (None, false),
+    let (username, has_totp, uri) = match &view.login {
+        Some(login) => (
+            login.username.clone(),
+            login.totp.is_some(),
+            login.uris.as_ref().and_then(|uris| uris.iter().find_map(|u| u.uri.clone())),
+        ),
+        None => (None, false, None),
     };
     VaultItem {
         id: view.id.map(|i| i.to_string()).unwrap_or_default(),
@@ -207,6 +211,7 @@ fn view_to_list_item(view: &CipherView, account_email: &str, account_label: &str
         name: view.name.clone(),
         item_type: cipher_type_to_dto(view.r#type),
         username,
+        uri,
         has_totp,
         favorite: view.favorite,
         deleted: view.deleted_date.is_some(),

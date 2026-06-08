@@ -51,7 +51,8 @@ import SyncStatus, { SyncIcon, type SyncState } from '../components/SyncStatus.t
 import CommandPalette, { type Command } from '../components/CommandPalette.tsx';
 import VaultList from '../components/VaultList.tsx';
 import FolderTree from '../components/FolderTree.tsx';
-import type { SortDir, SortKey } from '../state/columns.ts';
+import { columnKey, columns, isFilterable, TYPE_LABELS, type SortDir, type SortKey } from '../state/columns.ts';
+import { filters, NAME_FILTER_KEY } from '../state/columnFilters.ts';
 import './Vault.css';
 
 function typeIcon(t: ItemType) {
@@ -161,9 +162,31 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
   );
 
   const inTrash = createMemo(() => filter().kind === 'trash');
-  const filtered = createMemo(() => filterItems(items(), query(), filter()));
   const folderNameOf = (id: string | null): string =>
     id ? folders().find((f) => f.id === id)?.name ?? '' : '';
+  const filtered = createMemo(() => {
+    const base = filterItems(items(), query(), filter());
+    const active = filters();
+    if (Object.keys(active).length === 0) return base;
+    // Per-column filters. Build extractors only for the Name column and the
+    // currently-visible filterable columns, so a stale filter on a hidden
+    // column can't silently hide rows with no visible input to clear it.
+    const extractors = new Map<string, (it: VaultItem) => string>();
+    extractors.set(NAME_FILTER_KEY, (it) => it.name);
+    for (const col of columns().columns) {
+      if (col.kind !== 'builtin' || !isFilterable(col)) continue;
+      const k = columnKey(col);
+      if (col.id === 'username') extractors.set(k, (it) => it.username ?? '');
+      else if (col.id === 'website') extractors.set(k, (it) => it.uri ?? '');
+      else if (col.id === 'folder') extractors.set(k, (it) => folderNameOf(it.folderId));
+      else if (col.id === 'type') extractors.set(k, (it) => TYPE_LABELS[it.itemType]);
+    }
+    const applicable = Object.keys(active)
+      .filter((k) => extractors.has(k) && active[k])
+      .map((k) => ({ needle: active[k].toLowerCase(), get: extractors.get(k)! }));
+    if (applicable.length === 0) return base;
+    return base.filter((it) => applicable.every((f) => f.get(it).toLowerCase().includes(f.needle)));
+  });
   const displayed = createMemo(() => {
     const dir = sortDir() === 'asc' ? 1 : -1;
     const key = sortKey();

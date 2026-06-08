@@ -20,17 +20,22 @@
 //! string (e.g. `keepass:<path>`) carried in the same `account_email` slot the
 //! Bitwarden side uses; it routes every per-item op back to the right open file.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use bitwarden_vault::generate_totp;
+use chrono::Utc;
 use keepass::db::{fields, DatabaseOpenError, DatabaseSaveError, EntryId, GroupId, GroupRef};
 use keepass::{Database, DatabaseKey};
+use serde::Serialize;
+use tauri::State;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::dto::{
-    CustomField, Folder, ItemDetail, ItemInput, ItemType, LoginDetail, LoginUri, VaultItem,
+    CustomField, Folder, ItemDetail, ItemInput, ItemType, LoginDetail, LoginUri, TotpCode, VaultItem,
 };
 use crate::error::{AgateError, AgateResult, ErrorKind};
+use crate::state::AppState;
 
 /// The tag Agate uses to mark a KeePass entry as a favorite (KDBX has no native
 /// favorite flag, so we round-trip it as a tag the user can also see in KeePassXC).
@@ -54,17 +59,14 @@ fn is_standard_field(key: &str) -> bool {
 // Open
 // ---------------------------------------------------------------------------
 
-/// Open a `.kdbx` file with a master password and/or a key file. Either component
-/// may be absent, but at least one must be present (the crate enforces this).
-///
-/// The returned `Database` holds decrypted secrets in memory; the caller keeps it
-/// in the session and drops it on lock. The supplied `password` is secret and is
-/// only forwarded into the crate's `DatabaseKey` (itself zeroize-on-drop).
-pub(crate) fn open(
-    path: &Path,
+/// Build the composite `DatabaseKey` from a master password and/or a key file.
+/// Either component may be absent, but at least one must be present (the crate
+/// enforces this when the key is used). The returned key is zeroize-on-drop and is
+/// kept in the session so in-session saves don't re-prompt.
+pub(crate) fn build_key(
     password: Option<&Zeroizing<String>>,
     keyfile: Option<&Path>,
-) -> AgateResult<Database> {
+) -> AgateResult<DatabaseKey> {
     let mut key = DatabaseKey::new();
     if let Some(pw) = password {
         key = key.with_password(pw.as_str());
@@ -76,11 +78,16 @@ pub(crate) fn open(
             .with_keyfile(&mut bytes.as_slice())
             .map_err(|e| AgateError::new(ErrorKind::BadRequest, format!("Invalid key file: {e}")))?;
     }
+    Ok(key)
+}
 
+/// Open a `.kdbx` file at `path` with a prepared composite `key`. The returned
+/// `Database` holds decrypted secrets in memory; the caller keeps it in the session
+/// and drops it on lock.
+pub(crate) fn open(path: &Path, key: &DatabaseKey) -> AgateResult<Database> {
     let data = std::fs::read(path)
         .map_err(|e| AgateError::new(ErrorKind::BadRequest, format!("Could not read KeePass file: {e}")))?;
-
-    Database::parse(&data, key).map_err(map_open_err)
+    Database::parse(&data, key.clone()).map_err(map_open_err)
 }
 
 /// Map the crate's open error to a typed `AgateError`, distinguishing "wrong
@@ -219,6 +226,7 @@ fn collect_items(
             name: entry.get_title().unwrap_or("").to_string(),
             item_type: entry_item_type(&entry),
             username,
+            uri: entry.get_url().map(str::to_string),
             has_totp,
             favorite: entry_is_favorite(&entry),
             deleted: in_trash,
@@ -650,6 +658,244 @@ fn ensure_recycle_bin(db: &mut Database) -> GroupId {
     id
 }
 
+// ---------------------------------------------------------------------------
+// Session-held source + Tauri commands. KeePass sources live in their own map on
+// the session (`Session.keepass`), separate from the Bitwarden connections, and
+// have their own command surface so the Bitwarden vault/mutate paths are untouched.
+// Each command is `keepass_*` and routes by the synthetic source id `keepass:<path>`.
+// ---------------------------------------------------------------------------
+
+/// One open KeePass file held in memory while unlocked. The decrypted `db` and the
+/// composite `key` are secret; both are dropped (the key zeroizes on drop) when the
+/// session is cleared on lock/logout.
+pub(crate) struct KeePassSource {
+    pub db: Database,
+    pub key: DatabaseKey,
+    pub path: PathBuf,
+    pub label: String,
+}
+
+/// Non-secret summary of an open KeePass file for the UI.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeePassSummary {
+    pub id: String,
+    pub label: String,
+    pub path: String,
+}
+
+/// Stable synthetic account id for a KeePass file (mirrors the `account_email`
+/// slot the Bitwarden side uses, so items route back to the right open file).
+fn source_id(path: &Path) -> String {
+    format!("keepass:{}", path.to_string_lossy())
+}
+
+/// Display label for a KeePass file: its file stem.
+fn source_label(path: &Path) -> String {
+    path.file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "KeePass".to_string())
+}
+
+fn not_open() -> AgateError {
+    AgateError::new(ErrorKind::NotAuthenticated, "That KeePass file is not open.")
+}
+
+/// Run `f` against an open source's database + label (read-only).
+async fn with_source<F, R>(state: &AppState, account_id: &str, f: F) -> AgateResult<R>
+where
+    F: FnOnce(&Database, &str) -> AgateResult<R>,
+{
+    let session = state.session.lock().await;
+    let source = session.keepass.get(account_id).ok_or_else(not_open)?;
+    f(&source.db, &source.label)
+}
+
+/// Mutate an open source's database, then persist it. The mutation runs on a CLONE
+/// and is only committed back into the session after a successful save, so a failed
+/// write never leaves the in-memory vault ahead of what's on disk.
+async fn mutate_and_save<F, R>(state: &AppState, account_id: &str, f: F) -> AgateResult<R>
+where
+    F: FnOnce(&mut Database, &str) -> AgateResult<R>,
+{
+    let (mut db, key, path, label) = {
+        let session = state.session.lock().await;
+        let s = session.keepass.get(account_id).ok_or_else(not_open)?;
+        (s.db.clone(), s.key.clone(), s.path.clone(), s.label.clone())
+    };
+    let result = f(&mut db, &label)?;
+
+    // Save is CPU-bound (Argon2 KDF) — run off the async runtime.
+    let to_save = db.clone();
+    tokio::task::spawn_blocking(move || save(&to_save, &path, &key))
+        .await
+        .map_err(|_| AgateError::internal("KeePass save was interrupted."))??;
+
+    // Commit only on success.
+    if let Some(s) = state.session.lock().await.keepass.get_mut(account_id) {
+        s.db = db;
+    }
+    Ok(result)
+}
+
+/// Open a `.kdbx` file and hold it in the session. Returns its synthetic account id.
+#[tauri::command]
+pub async fn open_keepass(
+    state: State<'_, AppState>,
+    path: String,
+    password: Option<String>,
+    keyfile: Option<String>,
+) -> AgateResult<String> {
+    let path_buf = PathBuf::from(&path);
+    let pw = password.map(Zeroizing::new);
+    let kf = keyfile.map(PathBuf::from);
+    let open_path = path_buf.clone();
+
+    // Opening runs Argon2 — do it off the async runtime.
+    let (db, key) = tokio::task::spawn_blocking(move || -> AgateResult<(Database, DatabaseKey)> {
+        let key = build_key(pw.as_ref(), kf.as_deref())?;
+        let db = open(&open_path, &key)?;
+        Ok((db, key))
+    })
+    .await
+    .map_err(|_| AgateError::internal("KeePass open was interrupted."))??;
+
+    let id = source_id(&path_buf);
+    let label = source_label(&path_buf);
+    state
+        .session
+        .lock()
+        .await
+        .keepass
+        .insert(id.clone(), KeePassSource { db, key, path: path_buf, label });
+    Ok(id)
+}
+
+/// Close an open KeePass file, dropping its in-memory secrets.
+#[tauri::command]
+pub async fn close_keepass(state: State<'_, AppState>, account_id: String) -> AgateResult<()> {
+    state.session.lock().await.keepass.remove(&account_id);
+    Ok(())
+}
+
+/// List the currently-open KeePass files.
+#[tauri::command]
+pub async fn list_keepass_sources(state: State<'_, AppState>) -> AgateResult<Vec<KeePassSummary>> {
+    let session = state.session.lock().await;
+    let mut out: Vec<KeePassSummary> = session
+        .keepass
+        .values()
+        .map(|s| KeePassSummary {
+            id: source_id(&s.path),
+            label: s.label.clone(),
+            path: s.path.to_string_lossy().into_owned(),
+        })
+        .collect();
+    out.sort_by(|a, b| a.label.cmp(&b.label));
+    Ok(out)
+}
+
+#[tauri::command]
+pub async fn keepass_list_items(state: State<'_, AppState>, account_id: String) -> AgateResult<Vec<VaultItem>> {
+    with_source(&state, &account_id, |db, label| Ok(to_vault_items(db, &account_id, label))).await
+}
+
+#[tauri::command]
+pub async fn keepass_list_folders(state: State<'_, AppState>, account_id: String) -> AgateResult<Vec<Folder>> {
+    with_source(&state, &account_id, |db, label| Ok(to_folders(db, &account_id, label))).await
+}
+
+#[tauri::command]
+pub async fn keepass_item_detail(
+    state: State<'_, AppState>,
+    account_id: String,
+    id: String,
+) -> AgateResult<ItemDetail> {
+    with_source(&state, &account_id, |db, label| to_item_detail(db, &account_id, label, &id)).await
+}
+
+#[tauri::command]
+pub async fn keepass_item_totp(
+    state: State<'_, AppState>,
+    account_id: String,
+    id: String,
+) -> AgateResult<TotpCode> {
+    let secret = with_source(&state, &account_id, |db, _| entry_raw_otp(db, &id)).await?;
+    let now = Utc::now();
+    let response = generate_totp(secret, Some(now))
+        .map_err(|e| AgateError::new(ErrorKind::Crypto, format!("TOTP failed: {e}")))?;
+    let period = response.period;
+    let remaining = if period == 0 { 0 } else { period - (now.timestamp() as u32 % period) };
+    Ok(TotpCode { code: response.code, period, remaining })
+}
+
+#[tauri::command]
+pub async fn keepass_save_item(
+    state: State<'_, AppState>,
+    account_id: String,
+    input: ItemInput,
+) -> AgateResult<String> {
+    mutate_and_save(&state, &account_id, |db, _| apply_item(db, &input)).await
+}
+
+#[tauri::command]
+pub async fn keepass_set_favorite(
+    state: State<'_, AppState>,
+    account_id: String,
+    id: String,
+    favorite: bool,
+) -> AgateResult<()> {
+    mutate_and_save(&state, &account_id, |db, _| set_favorite(db, &id, favorite)).await
+}
+
+#[tauri::command]
+pub async fn keepass_move_items(
+    state: State<'_, AppState>,
+    account_id: String,
+    ids: Vec<String>,
+    folder_id: Option<String>,
+) -> AgateResult<()> {
+    mutate_and_save(&state, &account_id, |db, _| move_items(db, &ids, folder_id.as_deref())).await
+}
+
+#[tauri::command]
+pub async fn keepass_delete_items(
+    state: State<'_, AppState>,
+    account_id: String,
+    ids: Vec<String>,
+    permanent: bool,
+) -> AgateResult<()> {
+    mutate_and_save(&state, &account_id, |db, _| delete_items(db, &ids, permanent)).await
+}
+
+#[tauri::command]
+pub async fn keepass_restore_items(
+    state: State<'_, AppState>,
+    account_id: String,
+    ids: Vec<String>,
+) -> AgateResult<()> {
+    mutate_and_save(&state, &account_id, |db, _| restore_items(db, &ids)).await
+}
+
+#[tauri::command]
+pub async fn keepass_create_folder(
+    state: State<'_, AppState>,
+    account_id: String,
+    name: String,
+) -> AgateResult<Folder> {
+    mutate_and_save(&state, &account_id, |db, label| create_folder(db, &name, &account_id, label)).await
+}
+
+#[tauri::command]
+pub async fn keepass_rename_folder(
+    state: State<'_, AppState>,
+    account_id: String,
+    id: String,
+    name: String,
+) -> AgateResult<Folder> {
+    mutate_and_save(&state, &account_id, |db, label| rename_folder(db, &id, &name, &account_id, label)).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -813,7 +1059,7 @@ mod tests {
         // history preserved (the forced version + the version pushed by edit_tracking, if any)
         let id = parse_entry_id(&entry_id).unwrap();
         let hist = db2.entry(id).unwrap().history.clone();
-        assert!(hist.map(|h| !h.entries.is_empty()).unwrap_or(false), "history must survive");
+        assert!(hist.map(|h| !h.get_entries().is_empty()).unwrap_or(false), "history must survive");
     }
 
     #[test]
