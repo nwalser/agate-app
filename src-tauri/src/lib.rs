@@ -45,6 +45,7 @@ async fn get_session_status(state: State<'_>) -> AgateResult<SessionStatus> {
     let cfg = state.config.lock().await;
     Ok(SessionStatus {
         app_unlock_configured: cfg.app_unlock_configured,
+        unlock_device_bound: cfg.unlock_device_bound,
         unlocked,
         hello_configured: cfg.hello_configured,
         darkweb_consent: cfg.darkweb_consent,
@@ -66,13 +67,21 @@ async fn set_server_config(state: State<'_>, server: ServerConfig) -> AgateResul
 // ---- app unlock (appunlock.rs) ----
 
 #[tauri::command]
-async fn configure_app_unlock(state: State<'_>, app_password: String) -> AgateResult<()> {
-    appunlock::configure(&state, Zeroizing::new(app_password)).await
+async fn configure_app_unlock(
+    state: State<'_>,
+    app_password: String,
+    device_bound: bool,
+) -> AgateResult<()> {
+    appunlock::configure(&state, Zeroizing::new(app_password), device_bound).await
 }
 
 #[tauri::command]
-async fn change_app_unlock(state: State<'_>, new_password: String) -> AgateResult<()> {
-    appunlock::change(&state, Zeroizing::new(new_password)).await
+async fn change_app_unlock(
+    state: State<'_>,
+    new_password: String,
+    device_bound: bool,
+) -> AgateResult<()> {
+    appunlock::change(&state, Zeroizing::new(new_password), device_bound).await
 }
 
 #[tauri::command]
@@ -398,8 +407,12 @@ pub fn run() {
 
             if let Some(window) = app.get_webview_window("main") {
                 // Exclude the window from screen capture on Windows (decrypted
-                // secrets are rendered in the DOM).
-                #[cfg(target_os = "windows")]
+                // secrets are rendered in the DOM). Release builds only: under
+                // `tauri dev`, SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)
+                // makes the WebView2 compositor crash the host (exit 1) whenever
+                // the webview re-creates its surfaces — which Vite HMR triggers on
+                // every frontend save. There are no real secrets in dev, so skip it.
+                #[cfg(all(target_os = "windows", not(debug_assertions)))]
                 hello::protect_window(&window);
 
                 // Native window chrome per platform. Windows/Linux run borderless

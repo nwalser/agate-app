@@ -155,6 +155,40 @@
   margin: 7px 6px;
 }
 
+/* Collapse toggle at the top of the rail. */
+.vault-rail-collapse {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: flex-end;
+  border: none;
+  background: transparent;
+  color: var(--muted-foreground);
+  border-radius: var(--radius-sm);
+  padding: 6px;
+  margin-bottom: 2px;
+}
+.vault-rail-collapse:hover {
+  background: var(--card-hover);
+  color: var(--foreground);
+}
+
+/* Collapsed rail: icons only, labels hidden, narrow. */
+.vault-rail.collapsed {
+  width: 52px;
+  padding: 8px 6px;
+}
+.vault-rail.collapsed .vault-rail-collapse {
+  align-self: center;
+}
+.vault-rail.collapsed .vault-rail-btn {
+  justify-content: center;
+  padding: 8px;
+}
+.vault-rail.collapsed .vault-rail-btn span {
+  display: none;
+}
+
 /* Column template shared by the header row and every item row so cells line up.
    Columns: checkbox · type icon · name · username · trailing badges. */
 .vault-list {

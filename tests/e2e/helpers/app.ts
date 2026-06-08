@@ -30,33 +30,30 @@ async function mountedHere(): Promise<boolean> {
 }
 
 /**
- * Switch onto the agate app window. tauri-driver commonly attaches to the app's
- * WebView while it is still parked at `about:blank`, so we force-navigate the
- * context to the app URL and confirm the `#app` mount root is present.
+ * Attach to the agate app window with a FRESH load. tauri-driver commonly
+ * attaches to the app's WebView while it is parked at `about:blank`, so we
+ * force-navigate to the app URL — which doubles as a per-test reset, since the
+ * app keeps module + component state (search query, selection, …) across a spec
+ * file's `it`s otherwise. Confirms the `#app` mount root is present.
  */
 export async function attachToApp(): Promise<void> {
-  const isAppUrl = (u: string) => !!u && u !== 'about:blank' && !u.startsWith('data:');
   const deadline = Date.now() + TIMEOUT.crawl;
-  let seen: Record<string, string> = {};
+  let last = '';
   while (Date.now() < deadline) {
-    const handles = await browser.getWindowHandles().catch(() => [] as string[]);
-    seen = {};
-    for (const h of handles) {
-      try { await browser.switchToWindow(h); } catch { continue; }
-      const url = await browser.getUrl().catch(() => '');
-      seen[h] = url;
-      if (isAppUrl(url) && (await mountedHere())) return;
-    }
     for (const target of APP_URLS) {
       try {
         await browser.url(target);
-        await browser.waitUntil(mountedHere, { timeout: 2_000 });
+        await browser.waitUntil(mountedHere, { timeout: 3_000 });
         return;
-      } catch { /* try next URL / poll again */ }
+      } catch { last = target; }
     }
-    await browser.pause(200);
+    // Navigation may have failed because we're on a non-navigable context; pick a
+    // real window handle and retry.
+    const handles = await browser.getWindowHandles().catch(() => [] as string[]);
+    for (const h of handles) { try { await browser.switchToWindow(h); break; } catch { /* next */ } }
+    await browser.pause(300);
   }
-  throw new Error(`No agate app window after ${TIMEOUT.crawl}ms. Seen: ${JSON.stringify(seen)}`);
+  throw new Error(`No agate app window after ${TIMEOUT.crawl}ms (last target: ${last})`);
 }
 
 // ── Fake backend ──────────────────────────────────────────────────────────────
@@ -89,6 +86,11 @@ export async function installFakeBackend(cfg: FakeConfig): Promise<void> {
       details: clone(c.details) as Record<string, Any>,
     };
     let seq = 1000;
+    // NOTE: this runs in the PAGE context (browser.execute) — Node-scope imports
+    // like FIXTURE_EMAIL/FIXTURE_LABEL are NOT in scope here. Derive defaults from
+    // the (serialized) config instead.
+    const fxEmail = state.connections[0]?.email ?? state.items[0]?.accountEmail ?? 'tester@example.com';
+    const fxLabel = state.items[0]?.accountLabel ?? state.connections[0]?.serverLabel ?? 'Bitwarden — US';
     const findItem = (id: string) => state.items.find((x) => x.id === id);
     const outcomes = () =>
       state.connections.map((cn) => ({ email: cn.email, serverLabel: cn.serverLabel, status: 'unlocked' }));
@@ -108,9 +110,12 @@ export async function installFakeBackend(cfg: FakeConfig): Promise<void> {
         // ── app unlock ──
         case 'configure_app_unlock':
           state.status.appUnlockConfigured = true;
+          state.status.unlockDeviceBound = !!a.deviceBound;
           state.status.unlocked = true;
           return null;
-        case 'change_app_unlock': return null;
+        case 'change_app_unlock':
+          state.status.unlockDeviceBound = !!a.deviceBound;
+          return null;
         case 'unlock_all': {
           if (c.twoFactor && state.connections.length > 0) {
             const cn = state.connections[0];
@@ -136,7 +141,10 @@ export async function installFakeBackend(cfg: FakeConfig): Promise<void> {
           return outcomes();
 
         // ── connections ──
-        case 'list_connections': return state.connections;
+        // Return a fresh array on every read so the frontend's signal setters see
+        // a new reference and re-render (the real backend deserializes anew each
+        // call; returning the same ref makes Solid skip the update).
+        case 'list_connections': return state.connections.map((x) => ({ ...x }));
         case 'add_connection': {
           if (c.addResult.status === 'twoFactorRequired' && !a.twoFactor) return c.addResult;
           const email = (a.email as string) ?? `new-${seq++}@example.com`;
@@ -165,8 +173,8 @@ export async function installFakeBackend(cfg: FakeConfig): Promise<void> {
 
         // ── vault reads ──
         case 'sync_vault': return null;
-        case 'list_items': return state.items;
-        case 'list_folders': return state.folders;
+        case 'list_items': return state.items.map((x) => ({ ...x }));
+        case 'list_folders': return state.folders.map((x) => ({ ...x }));
         case 'item_detail': {
           const d = state.details[a.id as string] ?? null;
           if (d) {
@@ -217,7 +225,7 @@ export async function installFakeBackend(cfg: FakeConfig): Promise<void> {
           } else {
             const id = `new-${seq++}`;
             state.items.push({
-              id, accountEmail: a.accountEmail ?? FIXTURE_EMAIL, accountLabel: FIXTURE_LABEL,
+              id, accountEmail: a.accountEmail ?? fxEmail, accountLabel: fxLabel,
               name: input.name as string, itemType: input.itemType as string,
               username: input.login?.username ?? null, hasTotp: false, favorite: !!input.favorite,
               deleted: false, folderId: (input.folderId as string | null) ?? null, organizationId: null,
@@ -226,14 +234,14 @@ export async function installFakeBackend(cfg: FakeConfig): Promise<void> {
           return null;
         }
         case 'create_folder': {
-          const f = { id: `f-${seq++}`, name: a.name as string, accountEmail: a.accountEmail, accountLabel: FIXTURE_LABEL };
+          const f = { id: `f-${seq++}`, name: a.name as string, accountEmail: a.accountEmail, accountLabel: fxLabel };
           state.folders.push(f);
           return f;
         }
         case 'rename_folder': {
           const f = state.folders.find((x) => x.id === a.id);
           if (f) f.name = a.name as string;
-          return f ?? { id: a.id, name: a.name, accountEmail: a.accountEmail, accountLabel: FIXTURE_LABEL };
+          return f ?? { id: a.id, name: a.name, accountEmail: a.accountEmail, accountLabel: fxLabel };
         }
 
         // ── generators ──

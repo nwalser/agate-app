@@ -37,20 +37,25 @@ const MIN_APP_PASSWORD_LEN: usize = 8;
 // Key helpers
 // ---------------------------------------------------------------------------
 
-/// Derive the App Unlock Key (the KEK) from the app password + KDF params, run
-/// off the async runtime (Argon2id is CPU-bound).
+/// Derive the App Unlock Key (the KEK) from the app password + KDF params (and an
+/// optional device pepper for machine binding), run off the async runtime
+/// (Argon2id is CPU-bound).
 async fn derive_auk(
     password: &Zeroizing<String>,
     salt: [u8; 16],
     m: u32,
     t: u32,
     p: u32,
+    pepper: Option<Zeroizing<Vec<u8>>>,
 ) -> AgateResult<Zeroizing<[u8; 32]>> {
     let pw = password.clone();
     let salt = salt.to_vec();
-    tokio::task::spawn_blocking(move || secrets::derive_auk(pw.as_str(), &salt, m, t, p))
-        .await
-        .map_err(|_| AgateError::internal("key derivation was interrupted"))?
+    tokio::task::spawn_blocking(move || {
+        let pep = pepper.as_ref().map(|z| z.as_slice());
+        secrets::derive_auk(pw.as_str(), &salt, m, t, p, pep)
+    })
+    .await
+    .map_err(|_| AgateError::internal("key derivation was interrupted"))?
 }
 
 fn fresh_vmk() -> Zeroizing<[u8; 32]> {
@@ -77,15 +82,30 @@ pub(crate) async fn current_vmk(state: &AppState) -> AgateResult<Zeroizing<[u8; 
         .ok_or_else(|| AgateError::new(ErrorKind::Locked, "Unlock the app first."))
 }
 
-fn build_blob(salt: &[u8], sealed_vmk: secrets::SealedBlob) -> AppUnlockBlob {
+fn build_blob(salt: &[u8], device_bound: bool, sealed_vmk: secrets::SealedBlob) -> AppUnlockBlob {
     AppUnlockBlob {
         version: BLOB_VERSION,
         kdf_salt: secrets::encode_b64(salt),
         m_cost: ARGON_M_COST,
         t_cost: ARGON_T_COST,
         p_cost: ARGON_P_COST,
+        device_bound,
         sealed_vmk,
     }
+}
+
+/// Resolve the device pepper for a requested binding: reuse an existing one,
+/// generate + store a fresh one when turning binding on, or `None` when off.
+fn resolve_pepper(device_bound: bool) -> AgateResult<Option<Zeroizing<Vec<u8>>>> {
+    if !device_bound {
+        return Ok(None);
+    }
+    if let Some(p) = secrets::load_device_pepper()? {
+        return Ok(Some(p));
+    }
+    let p = secrets::fresh_pepper();
+    secrets::store_device_pepper(&*p)?;
+    Ok(Some(Zeroizing::new(p.to_vec())))
 }
 
 fn check_password_len(password: &Zeroizing<String>) -> AgateResult<()> {
@@ -102,8 +122,14 @@ fn check_password_len(password: &Zeroizing<String>) -> AgateResult<()> {
 // ---------------------------------------------------------------------------
 
 /// First-time setup: generate the VMK, wrap it under a freshly derived AUK, and
-/// hold the VMK in the session so connections can be added immediately.
-pub async fn configure(state: &AppState, app_password: Zeroizing<String>) -> AgateResult<()> {
+/// hold the VMK in the session so connections can be added immediately. When
+/// `device_bound`, a fresh device pepper is generated and mixed into the AUK so the
+/// stored blob can only be unlocked on this machine.
+pub async fn configure(
+    state: &AppState,
+    app_password: Zeroizing<String>,
+    device_bound: bool,
+) -> AgateResult<()> {
     check_password_len(&app_password)?;
     if state.config.lock().await.app_unlock_configured {
         return Err(AgateError::bad_request("App unlock is already configured."));
@@ -111,28 +137,48 @@ pub async fn configure(state: &AppState, app_password: Zeroizing<String>) -> Aga
 
     let vmk = fresh_vmk();
     let salt = secrets::fresh_salt();
-    let auk = derive_auk(&app_password, salt, ARGON_M_COST, ARGON_T_COST, ARGON_P_COST).await?;
-    let aad = secrets::app_unlock_aad(ARGON_M_COST, ARGON_T_COST, ARGON_P_COST);
+    let pepper = resolve_pepper(device_bound)?;
+    let auk = derive_auk(&app_password, salt, ARGON_M_COST, ARGON_T_COST, ARGON_P_COST, pepper).await?;
+    let aad = secrets::app_unlock_aad(ARGON_M_COST, ARGON_T_COST, ARGON_P_COST, device_bound);
     let sealed_vmk = secrets::seal_with_key(&auk, &*vmk, &aad)?;
-    secrets::store_app_unlock(&build_blob(&salt, sealed_vmk))?;
+    secrets::store_app_unlock(&build_blob(&salt, device_bound, sealed_vmk))?;
 
     state.session.lock().await.vmk = Some(vmk);
-    state.config.lock().await.app_unlock_configured = true;
+    {
+        let mut cfg = state.config.lock().await;
+        cfg.app_unlock_configured = true;
+        cfg.unlock_device_bound = device_bound;
+    }
     state.save_config().await
 }
 
-/// Change the app password: re-wrap the VMK under a new AUK. A single keychain
-/// write commits it; the per-connection credential blobs never move, so this can
-/// never half-rekey the store. Requires the app to be unlocked. Windows Hello
-/// stores the VMK directly, so it is unaffected by a password change.
-pub async fn change(state: &AppState, new_password: Zeroizing<String>) -> AgateResult<()> {
+/// Change the app password and/or the device binding: re-wrap the VMK under a new
+/// AUK. A single keychain write commits it; the per-connection credential blobs
+/// never move, so this can never half-rekey the store. Requires the app to be
+/// unlocked. Windows Hello stores the VMK directly, so it is unaffected.
+///
+/// `device_bound` is the *requested* binding — turning it on generates/reuses the
+/// device pepper, turning it off drops it (only after the new blob is committed, so
+/// a failure can't strand a bound blob with no pepper).
+pub async fn change(
+    state: &AppState,
+    new_password: Zeroizing<String>,
+    device_bound: bool,
+) -> AgateResult<()> {
     check_password_len(&new_password)?;
     let vmk = current_vmk(state).await?;
     let salt = secrets::fresh_salt();
-    let auk = derive_auk(&new_password, salt, ARGON_M_COST, ARGON_T_COST, ARGON_P_COST).await?;
-    let aad = secrets::app_unlock_aad(ARGON_M_COST, ARGON_T_COST, ARGON_P_COST);
+    let pepper = resolve_pepper(device_bound)?;
+    let auk = derive_auk(&new_password, salt, ARGON_M_COST, ARGON_T_COST, ARGON_P_COST, pepper).await?;
+    let aad = secrets::app_unlock_aad(ARGON_M_COST, ARGON_T_COST, ARGON_P_COST, device_bound);
     let sealed_vmk = secrets::seal_with_key(&auk, &*vmk, &aad)?;
-    secrets::store_app_unlock(&build_blob(&salt, sealed_vmk))
+    secrets::store_app_unlock(&build_blob(&salt, device_bound, sealed_vmk))?;
+
+    if !device_bound {
+        secrets::delete_device_pepper()?;
+    }
+    state.config.lock().await.unlock_device_bound = device_bound;
+    state.save_config().await
 }
 
 // ---------------------------------------------------------------------------
@@ -163,8 +209,26 @@ async fn unwrap_vmk_with_password(
         .as_slice()
         .try_into()
         .map_err(|_| AgateError::new(ErrorKind::Crypto, "corrupt salt"))?;
-    let auk = derive_auk(&app_password, salt16, blob.m_cost, blob.t_cost, blob.p_cost).await?;
-    let aad = secrets::app_unlock_aad(blob.m_cost, blob.t_cost, blob.p_cost);
+
+    // A device-bound blob needs the device pepper from the keychain; its absence
+    // means the blob was moved from another machine (or the entry was lost).
+    let pepper = if blob.device_bound {
+        match secrets::load_device_pepper()? {
+            Some(p) => Some(p),
+            None => {
+                return Err(AgateError::new(
+                    ErrorKind::InvalidCredentials,
+                    "This vault is bound to a different device.",
+                ))
+            }
+        }
+    } else {
+        None
+    };
+
+    let auk =
+        derive_auk(&app_password, salt16, blob.m_cost, blob.t_cost, blob.p_cost, pepper).await?;
+    let aad = secrets::app_unlock_aad(blob.m_cost, blob.t_cost, blob.p_cost, blob.device_bound);
     // A wrong app password fails the GCM tag here.
     let vmk_bytes = secrets::open_with_key(&auk, &blob.sealed_vmk, &aad)
         .map_err(|_| AgateError::new(ErrorKind::InvalidCredentials, "Incorrect app password."))?;

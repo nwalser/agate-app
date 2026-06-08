@@ -117,11 +117,6 @@
   margin: 0 0 12px;
 }
 
-.gen-toggles {
-  display: flex;
-  gap: 16px;
-  margin-bottom: 14px;
-}
 .checkbox {
   display: flex;
   align-items: center;
@@ -135,9 +130,6 @@
   width: auto;
 }
 
-.gen-result {
-  margin-bottom: 12px;
-}
 .gen-btn {
   display: inline-flex;
   align-items: center;
@@ -183,4 +175,12 @@ input[type='range'] {
 }
 .theme-option svg {
   color: inherit;
+}
+
+/* Device-binding toggle in the App unlock section. */
+.settings-bind {
+  margin: 4px 0 6px;
+}
+.settings-bind-help {
+  margin-top: 0;
 }

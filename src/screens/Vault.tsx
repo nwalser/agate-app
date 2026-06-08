@@ -14,6 +14,7 @@ import {
   Cloud,
   Copy,
   CreditCard,
+  Dices,
   ExternalLink,
   Eye,
   EyeOff,
@@ -23,6 +24,8 @@ import {
   Lock,
   Monitor,
   Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
   Pencil,
   Plus,
   RefreshCw,
@@ -51,8 +54,11 @@ import SyncStatus, { SyncIcon, type SyncState } from '../components/SyncStatus.t
 import CommandPalette, { type Command } from '../components/CommandPalette.tsx';
 import VaultList from '../components/VaultList.tsx';
 import FolderTree from '../components/FolderTree.tsx';
+import VaultSwitcher from '../components/VaultSwitcher.tsx';
+import GeneratorPage from '../components/GeneratorPage.tsx';
 import { columnKey, columns, isFilterable, TYPE_LABELS, type SortDir, type SortKey } from '../state/columns.ts';
 import { filters, NAME_FILTER_KEY } from '../state/columnFilters.ts';
+import { activeVault, setActiveVault, sidebarCollapsed, toggleSidebar } from '../state/ui.ts';
 import './Vault.css';
 
 function typeIcon(t: ItemType) {
@@ -134,12 +140,27 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
 
   // Which main view occupies the body: the vault list/detail, or the security
   // center (reached from the left rail). The rail stays visible in both.
-  const [view, setView] = createSignal<'vault' | 'security' | 'sync'>('vault');
+  const [view, setView] = createSignal<'vault' | 'security' | 'sync' | 'generator'>('vault');
 
   // Switch a rail filter and return to the vault view in one step.
   function selectFilter(f: VaultFilter) {
     setView('vault');
     setFilter(f);
+  }
+
+  // Switch which connection the list is scoped to (null = all vaults merged).
+  // Records the choice, returns to the vault view, and (for a specific, unlocked
+  // connection) makes it the backend's default target for new items.
+  function switchVault(email: string | null) {
+    setActiveVault(email);
+    setView('vault');
+    // A folder filter belongs to one account, so switching vaults invalidates it.
+    if (filter().kind === 'folder') setFilter({ kind: 'all' });
+    clearSelection();
+    setSelectedId(null);
+    if (email) void ipc.setActiveConnection(email).catch(() => {
+      // ignore: a locked connection can't be the active target; filter still applies
+    });
   }
 
   // Overlays / menus.
@@ -165,7 +186,10 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
   const folderNameOf = (id: string | null): string =>
     id ? folders().find((f) => f.id === id)?.name ?? '' : '';
   const filtered = createMemo(() => {
-    const base = filterItems(items(), query(), filter());
+    const av = activeVault();
+    let base = filterItems(items(), query(), filter());
+    // Scope to the selected vault (connection), if any. null = all merged.
+    if (av) base = base.filter((it) => it.accountEmail === av);
     const active = filters();
     if (Object.keys(active).length === 0) return base;
     // Per-column filters. Build extractors only for the Name column and the
@@ -258,9 +282,13 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
     }
   }
 
-  // The connection a freshly created item goes into (prefer an unlocked one).
-  const createAccount = () =>
-    connections().find((c) => c.unlocked)?.email ?? connections()[0]?.email ?? '';
+  // The connection a freshly created item goes into: the scoped vault when one is
+  // active and unlocked, otherwise any unlocked connection.
+  const createAccount = () => {
+    const av = activeVault();
+    if (av && connections().some((c) => c.email === av && c.unlocked)) return av;
+    return connections().find((c) => c.unlocked)?.email ?? connections()[0]?.email ?? '';
+  };
 
   // Map an item id to its owning connection (the unified list mixes accounts).
   function accountFor(id: string): string {
@@ -755,7 +783,22 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
     return list;
   });
 
-  const realFolders = createMemo(() => folders().filter((f) => f.id !== null));
+  // Folders scoped to the active vault (all folders when no vault is selected) —
+  // drives the rail folder tree and the bulk "move to folder" targets.
+  const scopedFolders = createMemo(() => {
+    const av = activeVault();
+    return av ? folders().filter((f) => f.accountEmail === av) : folders();
+  });
+  const realFolders = createMemo(() => scopedFolders().filter((f) => f.id !== null));
+
+  // If the scoped vault was removed (e.g. in Settings), fall back to all vaults so
+  // the list can't silently show nothing with no way to recover.
+  createEffect(() => {
+    const av = activeVault();
+    if (av && connections().length > 0 && !connections().some((c) => c.email === av)) {
+      setActiveVault(null);
+    }
+  });
 
   return (
     <div class="vault">
@@ -819,7 +862,26 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
       </header>
 
       <div class="vault-body">
-        <nav class="vault-rail">
+        <nav class="vault-rail" classList={{ collapsed: sidebarCollapsed() }}>
+          <button
+            class="vault-rail-collapse"
+            title={sidebarCollapsed() ? 'Expand sidebar' : 'Collapse sidebar'}
+            onClick={() => toggleSidebar()}
+          >
+            <Show when={sidebarCollapsed()} fallback={<PanelLeftClose size={16} strokeWidth={1.6} />}>
+              <PanelLeftOpen size={16} strokeWidth={1.6} />
+            </Show>
+          </button>
+
+          <Show when={connections().length > 1}>
+            <VaultSwitcher
+              connections={connections()}
+              active={activeVault()}
+              collapsed={sidebarCollapsed()}
+              onSelect={switchVault}
+            />
+          </Show>
+
           <FilterButton
             label="All items"
             icon={File}
@@ -849,12 +911,21 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
               />
             )}
           </For>
-          <FolderTree
-            folders={folders()}
-            active={view() === 'vault' ? filter() : { kind: 'all' }}
-            onSelect={(f) => selectFilter(f)}
-          />
+          {/* Folders need their labels to be useful — hide the tree when collapsed. */}
+          <Show when={!sidebarCollapsed()}>
+            <FolderTree
+              folders={scopedFolders()}
+              active={view() === 'vault' ? filter() : { kind: 'all' }}
+              onSelect={(f) => selectFilter(f)}
+            />
+          </Show>
           <div class="vault-rail-sep" />
+          <FilterButton
+            label="Generator"
+            icon={Dices}
+            active={view() === 'generator'}
+            onClick={() => setView('generator')}
+          />
           <FilterButton
             label="Security"
             icon={Shield}
@@ -864,7 +935,7 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
           <button
             class="vault-rail-btn"
             classList={{ active: view() === 'sync' }}
-            title={syncTooltip()}
+            title={sidebarCollapsed() ? 'Sync' : syncTooltip()}
             onClick={() => setView('sync')}
           >
             <SyncIcon state={syncState()} lastSync={lastSync()} />
@@ -889,6 +960,9 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
               autoSyncMs={AUTO_SYNC_MS}
               onSync={() => void sync()}
             />
+          </Match>
+          <Match when={view() === 'generator'}>
+            <GeneratorPage />
           </Match>
           <Match when={view() === 'vault'}>
             <>
@@ -1287,7 +1361,12 @@ function FilterButton(props: {
 }) {
   const Icon = props.icon;
   return (
-    <button class="vault-rail-btn" classList={{ active: props.active }} onClick={() => props.onClick()}>
+    <button
+      class="vault-rail-btn"
+      classList={{ active: props.active }}
+      title={props.label}
+      onClick={() => props.onClick()}
+    >
       <Icon size={15} strokeWidth={1.6} />
       <span>{props.label}</span>
     </button>

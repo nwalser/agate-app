@@ -14,6 +14,12 @@ describe('app-unlock setup (first run)', () => {
     expect(await $$('.onboarding input[type="password"]').length).to.equal(2);
   });
 
+  it('offers device binding, enabled by default', async () => {
+    await gotoSetup();
+    expect(await $('.unlock-method').isExisting()).to.equal(true);
+    expect(await $('.unlock-method.active').isExisting()).to.equal(true);
+  });
+
   it('rejects a password shorter than 8 chars', async () => {
     await gotoSetup();
     const pw = await $$('.onboarding input[type="password"]');

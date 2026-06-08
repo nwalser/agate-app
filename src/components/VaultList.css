@@ -57,6 +57,37 @@
   color: var(--primary);
 }
 
+/* Drag handle on a header cell's right edge to resize the column. Sits in the
+   grid gap; double-click resets the column to its default width. */
+.vault-head-resizable {
+  position: relative;
+}
+.vault-col-resize {
+  position: absolute;
+  top: -4px;
+  bottom: -6px;
+  right: -5px;
+  width: 9px;
+  cursor: col-resize;
+  z-index: 2;
+  touch-action: none;
+}
+.vault-col-resize::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  bottom: 6px;
+  left: 4px;
+  width: 2px;
+  border-radius: 1px;
+  background: transparent;
+  transition: background 0.12s;
+}
+.vault-col-resize:hover::after,
+.vault-col-resize:active::after {
+  background: var(--primary);
+}
+
 /* Per-column filter row (pinned under the header). Shares --vault-cols. */
 .vault-filter-row {
   display: grid;

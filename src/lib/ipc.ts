@@ -71,11 +71,11 @@ export const ipc = {
 
   // ---- app unlock (one secret unlocks every connection) ----
 
-  configureAppUnlock: (appPassword: string): Promise<void> =>
-    invoke('configure_app_unlock', { appPassword }),
+  configureAppUnlock: (appPassword: string, deviceBound: boolean): Promise<void> =>
+    invoke('configure_app_unlock', { appPassword, deviceBound }),
 
-  changeAppUnlock: (newPassword: string): Promise<void> =>
-    invoke('change_app_unlock', { newPassword }),
+  changeAppUnlock: (newPassword: string, deviceBound: boolean): Promise<void> =>
+    invoke('change_app_unlock', { newPassword, deviceBound }),
 
   unlockAll: (appPassword: string): Promise<UnlockOutcome[]> =>
     invoke('unlock_all', { appPassword }),

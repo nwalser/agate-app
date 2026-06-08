@@ -25,7 +25,16 @@ export interface ColumnConfig {
   revealed: string[];
   /** Fetch + show website favicons in the Name cell of login rows. */
   favicons: boolean;
+  /** Per-column pixel widths, keyed by `columnKey` (or `NAME_COL_KEY` for the
+   *  always-on Name column). Absent = the column's default flexible width. */
+  widths: Record<string, number>;
 }
+
+/** Width-map key for the always-on Name column. */
+export const NAME_COL_KEY = 'name';
+
+/** Smallest a column may be dragged to (px). */
+export const MIN_COL_WIDTH = 60;
 
 export const ALL_BUILTINS: BuiltinColumnId[] = [
   'username',
@@ -106,6 +115,7 @@ const DEFAULT: ColumnConfig = {
   ],
   revealed: [],
   favicons: true,
+  widths: {},
 };
 
 function isBuiltinId(v: unknown): v is BuiltinColumnId {
@@ -136,7 +146,13 @@ function read(): ColumnConfig {
       ? o.revealed.filter((x): x is string => typeof x === 'string')
       : [];
     const favicons = typeof o.favicons === 'boolean' ? o.favicons : DEFAULT.favicons;
-    return { columns, revealed, favicons };
+    const widths: Record<string, number> = {};
+    if (o.widths && typeof o.widths === 'object') {
+      for (const [k, v] of Object.entries(o.widths as Record<string, unknown>)) {
+        if (typeof v === 'number' && Number.isFinite(v) && v >= MIN_COL_WIDTH) widths[k] = v;
+      }
+    }
+    return { columns, revealed, favicons, widths };
   } catch {
     // ignore: corrupt/unavailable config falls back to defaults
     return DEFAULT;
@@ -165,11 +181,30 @@ export function toggleColumn(c: ColumnSpec) {
   const k = columnKey(c);
   const cur = columns();
   const exists = cur.columns.some((x) => columnKey(x) === k);
+  // Dropping a column also forgets its custom width and reveal state.
+  const widths = { ...cur.widths };
+  if (exists) delete widths[k];
   persist({
     ...cur,
     columns: exists ? cur.columns.filter((x) => columnKey(x) !== k) : [...cur.columns, c],
     revealed: exists ? cur.revealed.filter((r) => r !== k) : cur.revealed,
+    widths,
   });
+}
+
+/** Set a column's pixel width (drag-resize). Clamped to a sane minimum. */
+export function setColumnWidth(key: string, px: number) {
+  const cur = columns();
+  persist({ ...cur, widths: { ...cur.widths, [key]: Math.max(MIN_COL_WIDTH, Math.round(px)) } });
+}
+
+/** Clear a column's custom width, reverting it to the default flexible size. */
+export function resetColumnWidth(key: string) {
+  const cur = columns();
+  if (!(key in cur.widths)) return;
+  const widths = { ...cur.widths };
+  delete widths[key];
+  persist({ ...cur, widths });
 }
 
 export function removeColumn(c: ColumnSpec) {

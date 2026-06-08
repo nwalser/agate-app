@@ -1,5 +1,5 @@
 import { createSignal } from 'solid-js';
-import { ShieldCheck } from 'lucide-solid';
+import { Laptop, ShieldCheck } from 'lucide-solid';
 import { ipc } from '../lib/ipc.ts';
 import { refreshSession } from '../state/session.ts';
 import { pushToast, toastError } from '../state/toast.ts';
@@ -9,6 +9,9 @@ import './Onboarding.css';
 export default function AppUnlockSetup() {
   const [pw, setPw] = createSignal('');
   const [confirm, setConfirm] = createSignal('');
+  // Bind the unlock to this machine by default — strictly stronger, and the blob
+  // can't be opened if copied to another device.
+  const [deviceBound, setDeviceBound] = createSignal(true);
   const [busy, setBusy] = createSignal(false);
 
   async function create() {
@@ -22,7 +25,7 @@ export default function AppUnlockSetup() {
     }
     setBusy(true);
     try {
-      await ipc.configureAppUnlock(pw());
+      await ipc.configureAppUnlock(pw(), deviceBound());
       setPw('');
       setConfirm('');
       await refreshSession();
@@ -66,6 +69,24 @@ export default function AppUnlockSetup() {
               onKeyDown={(e) => e.key === 'Enter' && void create()}
             />
           </div>
+
+          <button
+            type="button"
+            class="unlock-method"
+            classList={{ active: deviceBound() }}
+            onClick={() => setDeviceBound((v) => !v)}
+          >
+            <Laptop size={18} strokeWidth={1.6} />
+            <span class="unlock-method-text">
+              <span class="unlock-method-title">Bind to this computer</span>
+              <span class="muted unlock-method-sub">
+                Mix a device key into the unlock so your vault can only be opened on this machine —
+                even with the password, the data is useless if copied elsewhere.
+              </span>
+            </span>
+            <input type="checkbox" checked={deviceBound()} tabindex={-1} />
+          </button>
+
           <button class="primary full" disabled={busy()} onClick={() => void create()}>
             {busy() ? 'Setting up…' : 'Set app password'}
           </button>

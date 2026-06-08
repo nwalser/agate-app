@@ -1,8 +1,7 @@
 import { createSignal, For, onMount, Show } from 'solid-js';
-import { ArrowLeft, Copy, DownloadCloud, Fingerprint, Monitor, Moon, RefreshCw, Sun, Trash2, UserPlus } from 'lucide-solid';
-import { writeText } from '@tauri-apps/plugin-clipboard-manager';
+import { ArrowLeft, DownloadCloud, Fingerprint, Monitor, Moon, RefreshCw, Sun, Trash2, UserPlus } from 'lucide-solid';
 import { ipc } from '../lib/ipc.ts';
-import type { ConnectionSummary, PasswordGenOptions } from '../lib/types.ts';
+import type { ConnectionSummary } from '../lib/types.ts';
 import { refreshSession, setAddingConnection, status } from '../state/session.ts';
 import { pushToast, toastError } from '../state/toast.ts';
 import { setTheme, theme, type ThemePref } from '../state/theme.ts';
@@ -18,16 +17,9 @@ const THEME_OPTIONS: { value: ThemePref; label: string; icon: typeof Sun }[] = [
 export default function Settings(props: { onBack: () => void }) {
   const [newPw, setNewPw] = createSignal('');
   const [confirmPw, setConfirmPw] = createSignal('');
+  // Reflects the current binding; editable, applied on "Update app unlock".
+  const [deviceBound, setDeviceBound] = createSignal(status().unlockDeviceBound);
   const [busy, setBusy] = createSignal(false);
-
-  const [opts, setOpts] = createSignal<PasswordGenOptions>({
-    length: 16,
-    uppercase: true,
-    lowercase: true,
-    numbers: true,
-    special: true,
-  });
-  const [generated, setGenerated] = createSignal('');
 
   // ---- Windows Hello ----
   const [helloAvailable, setHelloAvailable] = createSignal(false);
@@ -52,6 +44,7 @@ export default function Settings(props: { onBack: () => void }) {
       }
     })();
     void loadConnections();
+    setDeviceBound(status().unlockDeviceBound);
   });
 
   async function removeConn(email: string) {
@@ -137,27 +130,16 @@ export default function Settings(props: { onBack: () => void }) {
     }
     setBusy(true);
     try {
-      await ipc.changeAppUnlock(newPw());
+      await ipc.changeAppUnlock(newPw(), deviceBound());
       setNewPw('');
       setConfirmPw('');
-      pushToast('success', 'App password changed.');
+      await refreshSession();
+      pushToast('success', 'App unlock updated.');
     } catch (err) {
       toastError(err);
     } finally {
       setBusy(false);
     }
-  }
-
-  async function generate() {
-    try {
-      setGenerated(await ipc.generatePassword(opts()));
-    } catch (err) {
-      toastError(err);
-    }
-  }
-
-  function setOpt<K extends keyof PasswordGenOptions>(key: K, value: PasswordGenOptions[K]) {
-    setOpts({ ...opts(), [key]: value });
   }
 
   return (
@@ -229,19 +211,32 @@ export default function Settings(props: { onBack: () => void }) {
         <section class="settings-section">
           <h3>App unlock</h3>
           <p class="muted settings-help">
-            Change the single app password that unlocks every connection. Stored master passwords
-            are re-protected under the new one automatically.
+            Update the single app password that unlocks every connection, or change whether the
+            unlock is bound to this computer. Enter the password (new or current) to apply — stored
+            master passwords are re-protected automatically.
           </p>
           <div class="field">
-            <label>New app password</label>
+            <label>App password</label>
             <input type="password" autocomplete="new-password" value={newPw()} onInput={(e) => setNewPw(e.currentTarget.value)} />
           </div>
           <div class="field">
-            <label>Confirm new password</label>
+            <label>Confirm password</label>
             <input type="password" autocomplete="new-password" value={confirmPw()} onInput={(e) => setConfirmPw(e.currentTarget.value)} />
           </div>
+          <label class="checkbox settings-bind">
+            <input
+              type="checkbox"
+              checked={deviceBound()}
+              onChange={(e) => setDeviceBound(e.currentTarget.checked)}
+            />
+            Bind unlock to this computer
+          </label>
+          <p class="muted settings-help settings-bind-help">
+            When on, your vault can only be unlocked on this machine — the stored data is useless if
+            copied to another device, even with the password.
+          </p>
           <button class="primary" disabled={busy()} onClick={() => void changeAppPw()}>
-            Change app password
+            Update app unlock
           </button>
         </section>
 
@@ -300,45 +295,6 @@ export default function Settings(props: { onBack: () => void }) {
               </>
             )}
           </Show>
-        </section>
-
-        <section class="settings-section">
-          <h3>Password generator</h3>
-          <div class="field">
-            <label>Length: {opts().length}</label>
-            <input
-              type="range"
-              min="5"
-              max="64"
-              value={opts().length}
-              onInput={(e) => setOpt('length', Number(e.currentTarget.value))}
-            />
-          </div>
-          <div class="gen-toggles">
-            <label class="checkbox">
-              <input type="checkbox" checked={opts().uppercase} onChange={(e) => setOpt('uppercase', e.currentTarget.checked)} /> A-Z
-            </label>
-            <label class="checkbox">
-              <input type="checkbox" checked={opts().lowercase} onChange={(e) => setOpt('lowercase', e.currentTarget.checked)} /> a-z
-            </label>
-            <label class="checkbox">
-              <input type="checkbox" checked={opts().numbers} onChange={(e) => setOpt('numbers', e.currentTarget.checked)} /> 0-9
-            </label>
-            <label class="checkbox">
-              <input type="checkbox" checked={opts().special} onChange={(e) => setOpt('special', e.currentTarget.checked)} /> !@#
-            </label>
-          </div>
-          <Show when={generated()}>
-            <div class="detail-value-row gen-result">
-              <code class="detail-value mono truncate">{generated()}</code>
-              <button class="ghost icon-btn" title="Copy" onClick={() => void writeText(generated()).then(() => pushToast('success', 'Copied.'))}>
-                <Copy size={14} />
-              </button>
-            </div>
-          </Show>
-          <button class="primary gen-btn" onClick={() => void generate()}>
-            <RefreshCw size={14} strokeWidth={1.75} /> Generate
-          </button>
         </section>
 
         <p class="muted settings-foot">Agate · unofficial Bitwarden client · GPL-3.0</p>

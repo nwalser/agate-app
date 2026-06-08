@@ -32,6 +32,8 @@ export type LoginResult =
 export interface SessionStatus {
   /** An app-unlock password has been configured (the unified unlock secret). */
   appUnlockConfigured: boolean;
+  /** The app unlock is bound to this machine (device pepper mixed into the AUK). */
+  unlockDeviceBound: boolean;
   /** The app is unlocked (the VMK is held; the vault is visible). */
   unlocked: boolean;
   helloConfigured: boolean;

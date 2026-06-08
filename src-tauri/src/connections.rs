@@ -141,6 +141,7 @@ pub async fn logout(state: &AppState) -> AgateResult<()> {
     }
     let _ = secrets::delete_key(secrets::APP_UNLOCK_KEY);
     let _ = secrets::delete_hello_blob();
+    let _ = secrets::delete_device_pepper(); // ignore: best-effort teardown
 
     state.session.lock().await.clear_secrets();
     *state.breach_directory.lock().await = None;
@@ -149,6 +150,7 @@ pub async fn logout(state: &AppState) -> AgateResult<()> {
         cfg.app_unlock_configured = false;
         cfg.hello_configured = false;
         cfg.darkweb_consent = false;
+        cfg.unlock_device_bound = false;
     }
     state.save_config().await
 }

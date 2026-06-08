@@ -34,6 +34,12 @@ use crate::state::AppState;
 /// Exclude the window from screen capture (screenshots / screen recording /
 /// screen-share) on Windows, so decrypted secrets can't be grabbed off-screen.
 /// Best-effort: capture shows the window as black where supported.
+///
+/// Release-only (see the call site in `lib.rs`): with this affinity set, a
+/// WebView2 *navigation* crashes the host on Windows 11, and `tauri dev` navigates
+/// on every Vite HMR reload — so it's skipped in debug builds, where it would
+/// otherwise be dead code.
+#[cfg_attr(debug_assertions, allow(dead_code))]
 pub fn protect_window(window: &WebviewWindow) {
     if let Ok(hwnd) = window.hwnd() {
         let h = HWND(hwnd.0 as isize as *mut core::ffi::c_void);

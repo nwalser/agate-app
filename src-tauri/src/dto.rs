@@ -92,6 +92,8 @@ pub struct UnlockOutcome {
 pub struct SessionStatus {
     /// An app-unlock password has been configured (the unified unlock secret).
     pub app_unlock_configured: bool,
+    /// The app unlock is bound to this machine (device pepper mixed into the AUK).
+    pub unlock_device_bound: bool,
     /// The app is unlocked (the App Unlock Key is held; the vault is visible).
     pub unlocked: bool,
     /// Windows Hello unlock has been enabled (app-wide; Windows only).
@@ -485,6 +487,9 @@ pub struct WindowControlsLayout {
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ControlsSide {
+    // `Left` is only ever produced on Linux (from the desktop button-layout); on
+    // other platforms the layout is always `Right`, so the variant is dead there.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     Left,
     Right,
 }

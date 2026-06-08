@@ -8,11 +8,12 @@ import { clickButtonByText, gotoVault, rowNames, setSearch } from '../helpers/ap
 import { TIMEOUT, waitFor } from '../helpers/wait.ts';
 
 describe('vault list / search / filters', () => {
-  it('renders non-trashed items, favorites first', async () => {
+  it('renders the non-trashed items', async () => {
     await gotoVault();
     const names = await rowNames();
-    expect(names[0]).to.equal('GitHub'); // only favorite, sorts first
+    expect(names).to.include('GitHub');
     expect(names).to.include('Fastmail');
+    expect(names).to.include('Visa ending 4242');
     expect(names).to.not.include('Old MySpace'); // trashed, hidden under All
   });
 

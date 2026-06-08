@@ -45,6 +45,12 @@ pub const BLOB_VERSION: u32 = 2;
 pub const APP_UNLOCK_KEY: &str = "app-unlock";
 /// Fixed keychain entry name for the (DPAPI-wrapped) Hello-released AUK.
 pub const HELLO_AUK_KEY: &str = "hello-auk";
+/// Fixed keychain entry name for the device pepper — a random secret that mixes
+/// into the AUK derivation when the user binds unlock to this machine. Because the
+/// keychain entry is OS-protected (DPAPI / Keychain / secret-service) to this user
+/// on this machine, a copied `app-unlock` blob can't be unlocked elsewhere even
+/// with the right app password.
+pub const DEVICE_PEPPER_KEY: &str = "device-pepper";
 
 /// Keychain entry name for a connection's sealed master password.
 pub fn cred_key(email: &str) -> String {
@@ -73,6 +79,10 @@ pub struct AppUnlockBlob {
     pub m_cost: u32,
     pub t_cost: u32,
     pub p_cost: u32,
+    /// Whether the AUK derivation mixes in the device pepper (machine binding).
+    /// Defaults false so pre-binding blobs keep the original AAD and still open.
+    #[serde(default)]
+    pub device_bound: bool,
     pub sealed_vmk: SealedBlob,
 }
 
@@ -111,21 +121,37 @@ pub fn decode_b64(s: &str) -> AgateResult<Vec<u8>> {
 
 /// Derive the App Unlock Key from the app password with Argon2id. CPU-bound and
 /// synchronous — callers run it inside `spawn_blocking`.
+///
+/// `pepper` is an optional device-bound secret keyed into Argon2 (the "secret"
+/// parameter). When present, the derived key depends on both the password and the
+/// pepper, so the wrapped VMK is unusable without the device's keychain entry.
 pub fn derive_auk(
     password: &str,
     salt: &[u8],
     m: u32,
     t: u32,
     p: u32,
+    pepper: Option<&[u8]>,
 ) -> AgateResult<Zeroizing<[u8; 32]>> {
     let params = Params::new(m, t, p, Some(32))
         .map_err(|e| AgateError::new(ErrorKind::Crypto, format!("argon2 params: {e}")))?;
-    let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
+    let argon = match pepper {
+        Some(secret) => Argon2::new_with_secret(secret, Algorithm::Argon2id, Version::V0x13, params)
+            .map_err(|e| AgateError::new(ErrorKind::Crypto, format!("argon2 secret: {e}")))?,
+        None => Argon2::new(Algorithm::Argon2id, Version::V0x13, params),
+    };
     let mut key = Zeroizing::new([0u8; 32]);
     argon
         .hash_password_into(password.as_bytes(), salt, &mut *key)
         .map_err(|e| AgateError::new(ErrorKind::Crypto, format!("argon2 derive: {e}")))?;
     Ok(key)
+}
+
+/// Generate a fresh 32-byte device pepper (machine-binding secret).
+pub fn fresh_pepper() -> Zeroizing<[u8; 32]> {
+    let mut p = Zeroizing::new([0u8; 32]);
+    rand::thread_rng().fill_bytes(&mut *p);
+    p
 }
 
 /// Generate a fresh 16-byte Argon2 salt.
@@ -135,10 +161,17 @@ pub fn fresh_salt() -> [u8; 16] {
     salt
 }
 
-/// AAD for the AUK-wrapped VMK — binds it to the version, service and KDF params,
-/// so a KDF-parameter downgrade fails the tag.
-pub fn app_unlock_aad(m: u32, t: u32, p: u32) -> Vec<u8> {
-    format!("{KEYRING_SERVICE}|v{BLOB_VERSION}|app-unlock|m{m}t{t}p{p}").into_bytes()
+/// AAD for the AUK-wrapped VMK — binds it to the version, service, KDF params, and
+/// (when set) the device-binding flag, so a KDF-parameter downgrade or an attempt
+/// to strip the device binding fails the tag. The non-device-bound form keeps the
+/// original (pre-binding) byte string so existing blobs still open.
+pub fn app_unlock_aad(m: u32, t: u32, p: u32, device_bound: bool) -> Vec<u8> {
+    let base = format!("{KEYRING_SERVICE}|v{BLOB_VERSION}|app-unlock|m{m}t{t}p{p}");
+    if device_bound {
+        format!("{base}|device").into_bytes()
+    } else {
+        base.into_bytes()
+    }
 }
 
 /// AAD for a `cred:<email>` blob — binds it to the account email, so a swapped
@@ -290,6 +323,30 @@ pub fn delete_hello_blob() -> AgateResult<()> {
     delete_key(HELLO_AUK_KEY)
 }
 
+/// Store the device pepper (base64). Machine binding ties the keychain entry to
+/// this user/machine, so the wrapped VMK can't be derived on another device.
+pub fn store_device_pepper(pepper: &[u8]) -> AgateResult<()> {
+    store_string(DEVICE_PEPPER_KEY, &b64().encode(pepper))
+}
+
+/// Load the device pepper. `Ok(None)` == not bound; a parse failure is a loud
+/// `Keychain` error (corrupt), never silently treated as absent.
+pub fn load_device_pepper() -> AgateResult<Option<Zeroizing<Vec<u8>>>> {
+    match load_string(DEVICE_PEPPER_KEY)? {
+        Some(s) => {
+            let bytes = b64()
+                .decode(&s)
+                .map_err(|_| AgateError::new(ErrorKind::Keychain, "corrupt device pepper"))?;
+            Ok(Some(Zeroizing::new(bytes)))
+        }
+        None => Ok(None),
+    }
+}
+
+pub fn delete_device_pepper() -> AgateResult<()> {
+    delete_key(DEVICE_PEPPER_KEY)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -318,12 +375,12 @@ mod tests {
         let blob = seal_with_key(&key, b"x", &cred_aad("alice@example.com")).expect("seal");
         // Same key, different AAD (swapped account, or wrong blob type) must fail.
         assert!(open_with_key(&key, &blob, &cred_aad("bob@example.com")).is_err());
-        assert!(open_with_key(&key, &blob, &app_unlock_aad(256, 1, 1)).is_err());
+        assert!(open_with_key(&key, &blob, &app_unlock_aad(256, 1, 1, false)).is_err());
     }
 
     #[test]
     fn wrong_key_fails() {
-        let aad = app_unlock_aad(ARGON_M_COST, ARGON_T_COST, ARGON_P_COST);
+        let aad = app_unlock_aad(ARGON_M_COST, ARGON_T_COST, ARGON_P_COST, false);
         let blob = seal_with_key(&test_key(), b"wrapped-vmk", &aad).expect("seal");
         let mut other = test_key();
         other[0] ^= 0xff;
@@ -333,10 +390,38 @@ mod tests {
     #[test]
     fn derive_auk_is_deterministic_for_same_inputs() {
         let salt = [7u8; 16];
-        let a = derive_auk("app-pw", &salt, 256, 1, 1).expect("derive");
-        let b = derive_auk("app-pw", &salt, 256, 1, 1).expect("derive");
+        let a = derive_auk("app-pw", &salt, 256, 1, 1, None).expect("derive");
+        let b = derive_auk("app-pw", &salt, 256, 1, 1, None).expect("derive");
         assert_eq!(*a, *b);
-        let c = derive_auk("other-pw", &salt, 256, 1, 1).expect("derive");
+        let c = derive_auk("other-pw", &salt, 256, 1, 1, None).expect("derive");
         assert_ne!(*a, *c);
+    }
+
+    #[test]
+    fn device_pepper_changes_the_derived_key() {
+        let salt = [9u8; 16];
+        let pepper = [3u8; 32];
+        let plain = derive_auk("app-pw", &salt, 256, 1, 1, None).expect("derive");
+        let bound = derive_auk("app-pw", &salt, 256, 1, 1, Some(&pepper)).expect("derive");
+        // Same password + salt but a pepper yields a different key (machine binding).
+        assert_ne!(*plain, *bound);
+        // Deterministic for the same pepper; different for a different pepper.
+        let bound2 = derive_auk("app-pw", &salt, 256, 1, 1, Some(&pepper)).expect("derive");
+        assert_eq!(*bound, *bound2);
+        let other = derive_auk("app-pw", &salt, 256, 1, 1, Some(&[4u8; 32])).expect("derive");
+        assert_ne!(*bound, *other);
+    }
+
+    #[test]
+    fn device_binding_changes_the_aad() {
+        // Stripping the device-bound flag changes the AAD, so a device-bound blob
+        // can't be opened as if it were a plain one (and vice versa).
+        assert_ne!(app_unlock_aad(256, 1, 1, true), app_unlock_aad(256, 1, 1, false));
+        // The non-device-bound form is byte-identical to the original (pre-binding)
+        // AAD so existing blobs still open.
+        assert_eq!(
+            app_unlock_aad(256, 1, 1, false),
+            format!("{KEYRING_SERVICE}|v{BLOB_VERSION}|app-unlock|m256t1p1").into_bytes(),
+        );
     }
 }

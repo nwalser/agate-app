@@ -182,7 +182,9 @@ function killProcesses(names: string[]): Promise<void> {
 async function respawnTauriDriver(): Promise<void> {
   if (tauriDriver) { try { tauriDriver.kill('SIGKILL'); } catch { /* already dead */ } }
   await killProcesses(['agate.exe', 'tauri-driver.exe', 'msedgedriver.exe']);
-  await new Promise((r) => setTimeout(r, 300));
+  // WebView2 needs a beat to fully release between specs — too short a settle and
+  // the next session's msedgedriver attaches to a blank standalone Edge.
+  await new Promise((r) => setTimeout(r, 2_000));
   tauriDriver = spawnTauriDriver();
   const deadline = Date.now() + 8_000;
   while (Date.now() < deadline) {
@@ -241,12 +243,15 @@ export const config: WebdriverIO.Config = {
   },
 
   async beforeSession(): Promise<void> {
+    // A FRESH tauri-driver per spec is what reliably attaches msedgedriver to the
+    // app's WebView; a reused/idle driver attaches to a blank standalone Edge
+    // (the about:blank flake). The settle inside respawnTauriDriver gives WebView2
+    // time to release between specs.
     await respawnTauriDriver();
   },
 
   // Force-kill agate.exe before wdio's session DELETE so a slow WebView2 shutdown
-  // can't stall teardown (we've seen UND_ERR_HEADERS_TIMEOUT when it wedges). The
-  // next beforeSession does the rest via respawnTauriDriver.
+  // can't stall teardown (we've seen UND_ERR_HEADERS_TIMEOUT when it wedges).
   async afterSession(): Promise<void> {
     await killProcesses(['agate.exe']).catch(() => { /* already gone */ });
   },

@@ -1,0 +1,94 @@
+.vault-switcher {
+  position: relative;
+  margin-bottom: 6px;
+}
+
+.vault-switcher-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+  padding: 7px 9px;
+  color: var(--foreground);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.vault-switcher-btn:hover {
+  background: var(--card-hover);
+}
+.vault-switcher.collapsed .vault-switcher-btn {
+  justify-content: center;
+  padding: 7px;
+}
+.vault-switcher-btn svg {
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+}
+.vault-switcher-label {
+  flex: 1;
+  min-width: 0;
+}
+.vault-switcher-caret {
+  margin-left: auto;
+}
+
+.vault-switcher-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 51;
+  min-width: 220px;
+  max-width: 300px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  padding: 5px;
+}
+.vault-switcher.collapsed .vault-switcher-menu {
+  left: calc(100% + 6px);
+  top: 0;
+}
+
+.vault-switcher-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-size: 12.5px;
+}
+.vault-switcher-item:hover {
+  background: var(--card-hover);
+}
+.vault-switcher-item svg {
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+}
+.vault-switcher-item-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+.vault-switcher-item-server {
+  font-size: 11px;
+}
+.vault-switcher-check {
+  color: var(--primary) !important;
+  margin-left: auto;
+}
+.vault-switcher-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 6px;
+}

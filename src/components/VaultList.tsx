@@ -40,6 +40,10 @@ import {
   columns,
   isFilterable,
   isRevealed,
+  MIN_COL_WIDTH,
+  NAME_COL_KEY,
+  resetColumnWidth,
+  setColumnWidth,
   sortKeyOf,
   TYPE_LABELS,
   type ColumnSpec,
@@ -223,9 +227,16 @@ export default function VaultList(props: VaultListProps) {
     }
   });
 
+  // A column's track size: a user-set pixel width (drag-resize) wins over the
+  // default flexible width.
+  const widthFor = (key: string, fallback: string): string => {
+    const w = columns().widths[key];
+    return w ? `${w}px` : fallback;
+  };
   const gridTemplate = createMemo(() => {
-    const mid = columns().columns.map(colWidth).join(' ');
-    return `22px minmax(0, 1.6fr)${mid ? ` ${mid}` : ''} 76px`;
+    const nameCol = widthFor(NAME_COL_KEY, 'minmax(0, 1.6fr)');
+    const mid = columns().columns.map((c) => widthFor(columnKey(c), colWidth(c))).join(' ');
+    return `22px ${nameCol}${mid ? ` ${mid}` : ''} 76px`;
   });
 
   const folderName = (id: string | null): string => {
@@ -294,6 +305,7 @@ export default function VaultList(props: VaultListProps) {
           <span class="vault-head-cell" />
           <SortHeader
             label="Name"
+            colKey={NAME_COL_KEY}
             active={props.sortKey === 'name'}
             dir={props.sortDir}
             onClick={() => props.onSort('name')}
@@ -304,13 +316,15 @@ export default function VaultList(props: VaultListProps) {
               return sk ? (
                 <SortHeader
                   label={builtinMeta(col.kind === 'builtin' ? col.id : 'username').label}
+                  colKey={columnKey(col)}
                   active={props.sortKey === sk}
                   dir={props.sortDir}
                   onClick={() => props.onSort(sk)}
                 />
               ) : (
-                <span class="vault-head-cell">
+                <span class="vault-head-cell vault-head-resizable">
                   {col.kind === 'builtin' ? builtinMeta(col.id).label : col.field}
+                  <ColResize colKey={columnKey(col)} />
                 </span>
               );
             }}
@@ -424,13 +438,14 @@ export default function VaultList(props: VaultListProps) {
 
 function SortHeader(props: {
   label: string;
+  colKey?: string;
   active: boolean;
   dir: SortDir;
   onClick: () => void;
 }) {
   return (
     <button
-      class="vault-head-cell sortable"
+      class="vault-head-cell sortable vault-head-resizable"
       classList={{ sorted: props.active }}
       onClick={() => props.onClick()}
     >
@@ -443,6 +458,48 @@ function SortHeader(props: {
           <ChevronUp size={12} class="vault-head-sort" />
         </Show>
       </Show>
+      <Show when={props.colKey}>{(k) => <ColResize colKey={k()} />}</Show>
     </button>
+  );
+}
+
+// A thin drag handle on a header cell's right edge: drag to resize the column,
+// double-click to reset it to its default width. Captures the pointer so the
+// drag tracks smoothly and never triggers the header's sort click.
+function ColResize(props: { colKey: string }) {
+  let startX = 0;
+  let startW = 0;
+
+  function onMove(e: PointerEvent) {
+    setColumnWidth(props.colKey, startW + (e.clientX - startX));
+  }
+  function onUp(e: PointerEvent) {
+    const h = e.currentTarget as HTMLElement;
+    h.releasePointerCapture(e.pointerId);
+    h.removeEventListener('pointermove', onMove);
+    h.removeEventListener('pointerup', onUp);
+  }
+  function onDown(e: PointerEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    const h = e.currentTarget as HTMLElement;
+    const cell = h.parentElement as HTMLElement;
+    startX = e.clientX;
+    startW = Math.max(MIN_COL_WIDTH, cell.getBoundingClientRect().width);
+    h.setPointerCapture(e.pointerId);
+    h.addEventListener('pointermove', onMove);
+    h.addEventListener('pointerup', onUp);
+  }
+
+  return (
+    <span
+      class="vault-col-resize"
+      onPointerDown={onDown}
+      onClick={(e) => e.stopPropagation()}
+      onDblClick={(e) => {
+        e.stopPropagation();
+        resetColumnWidth(props.colKey);
+      }}
+    />
   );
 }
