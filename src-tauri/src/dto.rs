@@ -70,6 +70,9 @@ pub struct SessionStatus {
     pub local_unlock_configured: bool,
     /// Windows Hello unlock has been enabled for this account (Windows only).
     pub hello_configured: bool,
+    /// The user has opted in to the dark-web monitor (sends emails to a third
+    /// party). Default false; gates the network email-breach lookups.
+    pub darkweb_consent: bool,
     /// Email of the logged-in account, if known.
     pub email: Option<String>,
 }

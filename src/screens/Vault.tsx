@@ -9,6 +9,8 @@ import {
   Show,
 } from 'solid-js';
 import {
+  Cloud,
+  CloudOff,
   Copy,
   CreditCard,
   ExternalLink,
@@ -90,6 +92,9 @@ type EditorState =
   | { mode: 'create'; createType: ItemType }
   | { mode: 'edit'; item: ItemDetail };
 
+// Background-sync status, surfaced by the header cloud icon.
+type SyncState = 'idle' | 'syncing' | 'error';
+
 export default function Vault(props: { onLock: () => void; onOpenSettings: () => void }) {
   const [items, setItems] = createSignal<VaultItem[]>([]);
   const [folders, setFolders] = createSignal<Folder[]>([]);
@@ -99,7 +104,11 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
   const [detail, setDetail] = createSignal<ItemDetail | null>(null);
   const [revealed, setRevealed] = createSignal(false);
   const [totp, setTotp] = createSignal<TotpCode | null>(null);
-  const [syncing, setSyncing] = createSignal(false);
+  // Sync status drives the cloud icon in the header. 'syncing' = in flight,
+  // 'error' = last attempt failed, 'idle' = up to date. `lastSync` is the epoch
+  // ms of the last successful sync (null until the first one completes).
+  const [syncState, setSyncState] = createSignal<SyncState>('idle');
+  const [lastSync, setLastSync] = createSignal<number | null>(null);
 
   // Multi-select state. `anchor` is the last clicked row for shift-range select.
   const [selectedIds, setSelectedIds] = createSignal<Set<string>>(new Set());
@@ -115,6 +124,15 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
   const inTrash = createMemo(() => filter().kind === 'trash');
   const filtered = createMemo(() => filterItems(items(), query(), filter()));
   const selectedCount = createMemo(() => selectedIds().size);
+
+  // Hover text for the header cloud icon — state plus last-success clock time.
+  const syncTooltip = createMemo(() => {
+    if (syncState() === 'syncing') return 'Syncing…';
+    const ts = lastSync();
+    const when = ts === null ? '' : ` (last synced ${new Date(ts).toLocaleTimeString()})`;
+    if (syncState() === 'error') return `Sync failed — click to retry${when}`;
+    return `Synced — click to sync now${when}`;
+  });
 
   async function loadItems() {
     try {
@@ -137,41 +155,44 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
     setAnchorId(null);
   }
 
-  async function sync() {
-    setSyncing(true);
+  // Single sync path. `manual` syncs (button / palette) toast on success and
+  // surface errors loudly; background syncs (mount, interval, post-mutation)
+  // stay quiet — the cloud status icon already reflects success/failure, so the
+  // interval can't spam toasts. Overlapping runs are skipped.
+  async function runSync(manual: boolean) {
+    if (syncState() === 'syncing') return;
+    setSyncState('syncing');
     try {
       await ipc.syncVault(false);
       await Promise.all([loadItems(), loadFolders()]);
-      pushToast('success', 'Vault synced.');
+      setLastSync(Date.now());
+      setSyncState('idle');
+      if (manual) pushToast('success', 'Vault synced.');
     } catch (err) {
-      toastError(err);
-    } finally {
-      setSyncing(false);
+      setSyncState('error');
+      if (manual) toastError(err);
     }
   }
+
+  const sync = () => runSync(true);
 
   // Re-sync + reload after any vault mutation, then clear selection.
   async function reloadAfterMutation() {
-    try {
-      await ipc.syncVault(false);
-    } catch (err) {
-      toastError(err);
-    }
-    await Promise.all([loadItems(), loadFolders()]);
+    await runSync(false);
     clearSelection();
   }
 
-  onMount(async () => {
-    // Best-effort sync on open; fall back to whatever is already cached.
-    setSyncing(true);
-    try {
-      await ipc.syncVault(false);
-    } catch (err) {
-      toastError(err);
-    } finally {
-      setSyncing(false);
-    }
-    await Promise.all([loadItems(), loadFolders()]);
+  // Automatic background sync: once on open, then on a fixed interval. The cloud
+  // icon in the header is the visible status.
+  const AUTO_SYNC_MS = 5 * 60 * 1000;
+  let autoSyncTimer: ReturnType<typeof setInterval> | undefined;
+  onMount(() => {
+    void runSync(false);
+    autoSyncTimer = setInterval(() => void runSync(false), AUTO_SYNC_MS);
+  });
+  onCleanup(() => {
+    if (autoSyncTimer) clearInterval(autoSyncTimer);
+    autoSyncTimer = undefined;
   });
 
   // Ctrl/Cmd-K toggles the command palette.
@@ -515,8 +536,24 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
         >
           <Shield size={15} strokeWidth={1.75} />
         </button>
-        <button class="ghost icon-btn" title="Sync" disabled={syncing()} onClick={() => void sync()}>
-          <RefreshCw size={15} strokeWidth={1.75} class={syncing() ? 'spin' : ''} />
+        <button
+          class="ghost icon-btn"
+          title={syncTooltip()}
+          disabled={syncState() === 'syncing'}
+          onClick={() => void sync()}
+        >
+          <Show
+            when={syncState() === 'error'}
+            fallback={
+              <Cloud
+                size={15}
+                strokeWidth={1.75}
+                class={syncState() === 'syncing' ? 'pulse' : ''}
+              />
+            }
+          >
+            <CloudOff size={15} strokeWidth={1.75} class="sync-error" />
+          </Show>
         </button>
         <button class="ghost icon-btn" title="Settings" onClick={() => props.onOpenSettings()}>
           <SettingsIcon size={15} strokeWidth={1.75} />

@@ -1,7 +1,7 @@
 // The only place `invoke` is called. Every backend command has one typed
 // wrapper here so screens never touch the raw IPC string or untyped payloads.
 
-import { invoke } from '@tauri-apps/api/core';
+import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import type {
   AccountSummary,
   ExposedResult,
@@ -18,6 +18,42 @@ import type {
   VaultHealthReport,
   VaultItem,
 } from './types.ts';
+
+// ── Test-only IPC seam (webdriver e2e) ───────────────────────────────────────
+// Every wrapper below calls the local `invoke`, which routes through a swappable
+// transport. e2e specs replace it (via `window.__agateInvoke.setInvoke`) so the
+// SolidJS UI can be driven through every screen without a live Bitwarden backend
+// — the same pattern as the official clients' tests, mirroring themia-app.
+//
+// Hard-gated so it NEVER ships in a release: the hook is only installed when
+// BOTH `import.meta.env.DEV` (false for `tauri build`, so the block is
+// dead-code-eliminated from production bundles) AND `navigator.webdriver` are
+// true. A normally-launched release app has neither, so there is no backdoor.
+type RawInvoke = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
+
+const defaultInvoke: RawInvoke = (cmd, args) => tauriInvoke(cmd, args);
+let invokeImpl: RawInvoke = defaultInvoke;
+
+/** Typed `invoke` routed through the swappable transport. The return type is the
+ *  command's Ok value (the promise rejects on a Rust `Err`). */
+function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  return invokeImpl(cmd, args) as Promise<T>;
+}
+
+declare global {
+  interface Window {
+    /** Test-only hook (webdriver): swap the transport every typed `invoke` uses. */
+    __agateInvoke?: { setInvoke: (fn: RawInvoke | null) => void };
+  }
+}
+
+if (import.meta.env.DEV && typeof window !== 'undefined' && navigator.webdriver) {
+  window.__agateInvoke = {
+    setInvoke: (fn: RawInvoke | null) => {
+      invokeImpl = fn ?? defaultInvoke;
+    },
+  };
+}
 
 export const ipc = {
   getSessionStatus: (): Promise<SessionStatus> => invoke('get_session_status'),

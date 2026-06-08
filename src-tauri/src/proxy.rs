@@ -90,6 +90,24 @@ fn skeleton(v: &serde_json::Value, depth: usize) -> String {
     }
 }
 
+/// Remove the legacy `data` field from each cipher in a `/sync` response.
+/// Vaultwarden sends it as an object; the SDK types it as a string and doesn't
+/// use it (the typed login/card/identity/secureNote/sshKey sub-objects carry the
+/// real content), so dropping it makes the response SDK-parseable without loss.
+fn strip_legacy_cipher_data(v: &mut serde_json::Value) {
+    use serde_json::Value;
+    for key in ["ciphers", "Ciphers"] {
+        if let Some(Value::Array(arr)) = v.get_mut(key) {
+            for item in arr.iter_mut() {
+                if let Value::Object(map) = item {
+                    map.remove("data");
+                    map.remove("Data");
+                }
+            }
+        }
+    }
+}
+
 fn run_proxy(server: tiny_http::Server, upstream: String) {
     let client = match reqwest::blocking::Client::builder().build() {
         Ok(c) => c,
@@ -160,15 +178,21 @@ fn handle(client: &reqwest::blocking::Client, upstream: &str, mut request: tiny_
                 out_headers.push((kl.to_string(), vs.to_string()));
             }
         }
-        let bytes = resp.bytes()?.to_vec();
-        // Diagnostic: log the TYPE STRUCTURE of the sync response (keys + value
-        // types only — never the values) to help pinpoint server/SDK schema
-        // mismatches. Safe to share: contains no secrets.
+        let mut bytes = resp.bytes()?.to_vec();
+        // Self-hosted compatibility: rewrite the /sync body so the SDK can parse
+        // it. Vaultwarden emits a legacy `data` OBJECT on each cipher, but the
+        // SDK's CipherDetailsResponseModel types `data` as a string and ignores
+        // it (it reads the typed login/card/identity/… sub-objects). Strip it so
+        // deserialization doesn't fail with "invalid type: map, expected string".
+        // Also stash a types-only shape (no values) that the vault layer surfaces
+        // on a sync error, to diagnose any future mismatch.
         if path.contains("/sync") {
-            if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
-                let shape = skeleton(&v, 8);
-                log::error!("AGATE_SYNC_SHAPE (types only, no values): {shape}");
-                *sync_shape_cell().lock().unwrap_or_else(|e| e.into_inner()) = Some(shape);
+            if let Ok(mut v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                *sync_shape_cell().lock().unwrap_or_else(|e| e.into_inner()) = Some(skeleton(&v, 8));
+                strip_legacy_cipher_data(&mut v);
+                if let Ok(reserialized) = serde_json::to_vec(&v) {
+                    bytes = reserialized;
+                }
             }
         }
         Ok((status, out_headers, bytes))
@@ -196,6 +220,35 @@ fn handle(client: &reqwest::blocking::Client, upstream: &str, mut request: tiny_
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strip_legacy_data_makes_sync_deserialize() {
+        use bitwarden_api_api::models::SyncResponseModel;
+        // Mirror Vaultwarden: each cipher carries a legacy `data` OBJECT (which the
+        // SDK types as a string) alongside the modern typed `login` sub-object.
+        let raw = r#"{
+            "profile": {"id":"00000000-0000-0000-0000-000000000000","object":"profile"},
+            "ciphers": [{
+                "id":"11111111-1111-1111-1111-111111111111","type":1,
+                "data":{"name":"x","uri":"y","username":"u"},
+                "login":{"username":"u","password":"p"},
+                "name":"n","object":"cipherDetails"
+            }],
+            "object":"sync"
+        }"#;
+        let mut v: serde_json::Value = serde_json::from_str(raw).unwrap();
+
+        // Before the fix, the `data` object breaks deserialization.
+        assert!(
+            serde_json::from_value::<SyncResponseModel>(v.clone()).is_err(),
+            "expected the legacy data object to break parsing pre-strip"
+        );
+
+        // After stripping `data`, the SDK model parses cleanly.
+        strip_legacy_cipher_data(&mut v);
+        let parsed = serde_json::from_value::<SyncResponseModel>(v).expect("parse after strip");
+        assert_eq!(parsed.ciphers.unwrap().len(), 1);
+    }
 
     /// End-to-end check against a real self-hosted identity base. Set
     /// `AGATE_TEST_IDENTITY` to e.g. `https://vault.example.com/identity` and run
