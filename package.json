@@ -37,7 +37,7 @@
     "@wdio/mocha-framework": "^9.4.4",
     "@wdio/spec-reporter": "^9.4.4",
     "chai": "^5.1.2",
-    "eslint": "^9.17.0",
+    "eslint": "^10.4.1",
     "expect-webdriverio": "^5.0.0",
     "globals": "^15.14.0",
     "jsdom": "^25.0.1",
