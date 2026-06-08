@@ -1,17 +1,19 @@
 import { createSignal, onMount, Show, For } from 'solid-js';
 import { Server, ShieldCheck } from 'lucide-solid';
 import { ipc } from '../lib/ipc.ts';
-import type { AccountSummary, ServerConfig, TwoFactorKind } from '../lib/types.ts';
+import type { ConnectionSummary, ServerConfig, TwoFactorKind } from '../lib/types.ts';
 import { refreshSession } from '../state/session.ts';
 import { pushToast, toastError } from '../state/toast.ts';
 import './Onboarding.css';
 
 type Region = 'us' | 'eu' | 'selfHosted';
 
-export default function Onboarding(props: { initialEmail?: string | null }) {
+/** Add (or re-authenticate) a Bitwarden connection. Its master password is sealed
+ *  under the app-unlock key, so this is configured once per account. */
+export default function Onboarding(props: { onDone?: () => void }) {
   const [region, setRegion] = createSignal<Region>('us');
   const [baseUrl, setBaseUrl] = createSignal('');
-  const [email, setEmail] = createSignal(props.initialEmail ?? '');
+  const [email, setEmail] = createSignal('');
   const [password, setPassword] = createSignal('');
   const [busy, setBusy] = createSignal(false);
 
@@ -20,18 +22,18 @@ export default function Onboarding(props: { initialEmail?: string | null }) {
   const [tfToken, setTfToken] = createSignal('');
 
   // Saved connections (server + email) so the user never retypes a self-hosted URL.
-  const [connections, setConnections] = createSignal<AccountSummary[]>([]);
+  const [connections, setConnections] = createSignal<ConnectionSummary[]>([]);
   onMount(() => {
     void (async () => {
       try {
-        setConnections(await ipc.listAccounts());
+        setConnections(await ipc.listConnections());
       } catch {
         // ignore: no saved connections yet
       }
     })();
   });
 
-  function useConnection(conn: AccountSummary) {
+  function useConnection(conn: ConnectionSummary) {
     const s = conn.server;
     if (s.region === 'selfHosted') {
       setRegion('selfHosted');
@@ -49,7 +51,7 @@ export default function Onboarding(props: { initialEmail?: string | null }) {
     return { region: 'us' };
   }
 
-  async function doLogin(withTwoFactor: boolean) {
+  async function doAdd(withTwoFactor: boolean) {
     if (!email().trim() || !password()) {
       pushToast('error', 'Enter your email and master password.');
       return;
@@ -59,13 +61,14 @@ export default function Onboarding(props: { initialEmail?: string | null }) {
       const tf = withTwoFactor
         ? { provider: tfProvider(), token: tfToken().trim(), remember: false }
         : undefined;
-      const result = await ipc.login(serverConfig(), email().trim(), password(), tf);
+      const result = await ipc.addConnection(serverConfig(), email().trim(), password(), tf);
       if (result.status === 'twoFactorRequired') {
         setTwoFactorProviders(result.providers);
         setTfProvider(result.providers[0] ?? 'authenticator');
         pushToast('info', 'Two-factor authentication required.');
       } else {
         await refreshSession();
+        props.onDone?.();
       }
     } catch (err) {
       toastError(err);
@@ -98,7 +101,7 @@ export default function Onboarding(props: { initialEmail?: string | null }) {
           when={!twoFactorProviders()}
           fallback={
             <div class="onboarding-step">
-              <p class="muted onboarding-sub">Enter your two-factor code to finish signing in.</p>
+              <p class="muted onboarding-sub">Enter your two-factor code to finish adding this connection.</p>
               <div class="field">
                 <label>Provider</label>
                 <select value={tfProvider()} onChange={(e) => setTfProvider(e.currentTarget.value as TwoFactorKind)}>
@@ -119,11 +122,11 @@ export default function Onboarding(props: { initialEmail?: string | null }) {
                   inputmode="numeric"
                   autocomplete="one-time-code"
                   onInput={(e) => setTfToken(e.currentTarget.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && void doLogin(true)}
+                  onKeyDown={(e) => e.key === 'Enter' && void doAdd(true)}
                 />
               </div>
-              <button class="primary full" disabled={busy()} onClick={() => void doLogin(true)}>
-                Verify & unlock
+              <button class="primary full" disabled={busy()} onClick={() => void doAdd(true)}>
+                Verify & add
               </button>
               <button class="ghost full" disabled={busy()} onClick={() => setTwoFactorProviders(null)}>
                 Back
@@ -132,6 +135,7 @@ export default function Onboarding(props: { initialEmail?: string | null }) {
           }
         >
           <div class="onboarding-step">
+            <p class="muted onboarding-sub">Add a Bitwarden account. One app unlock opens it with the rest.</p>
             <Show when={connections().length > 0}>
               <div class="field">
                 <label>Saved connections</label>
@@ -184,12 +188,17 @@ export default function Onboarding(props: { initialEmail?: string | null }) {
                 autocomplete="current-password"
                 value={password()}
                 onInput={(e) => setPassword(e.currentTarget.value)}
-                onKeyDown={(e) => e.key === 'Enter' && void doLogin(false)}
+                onKeyDown={(e) => e.key === 'Enter' && void doAdd(false)}
               />
             </div>
-            <button class="primary full" disabled={busy()} onClick={() => void doLogin(false)}>
-              {busy() ? 'Signing in…' : 'Log in'}
+            <button class="primary full" disabled={busy()} onClick={() => void doAdd(false)}>
+              {busy() ? 'Adding…' : 'Add connection'}
             </button>
+            <Show when={props.onDone}>
+              <button class="ghost full" disabled={busy()} onClick={() => props.onDone?.()}>
+                Cancel
+              </button>
+            </Show>
           </div>
         </Show>
 

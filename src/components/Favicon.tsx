@@ -4,8 +4,7 @@
 // state/favicons.ts) so subsequent renders skip dead ends. Fetched directly by
 // the webview from the site — no third-party icon service.
 
-import { createEffect, on, Show, type JSX } from 'solid-js';
-import { createSignal } from 'solid-js';
+import { createEffect, createSignal, on, Show, type JSX } from 'solid-js';
 import { appleUrl, faviconStatus, hostOf, icoUrl, setFaviconStatus } from '../state/favicons.ts';
 
 type Attempt = 'ico' | 'apple' | 'done';

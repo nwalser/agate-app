@@ -85,6 +85,8 @@ const TYPE_LABELS: Record<ItemType, string> = {
 export default function ItemEditor(props: {
   item?: ItemDetail | null;
   createType?: ItemType;
+  /** Which connection this item belongs to / is created in. */
+  accountEmail: string;
   folders: Folder[];
   onSaved: () => void;
   onClose: () => void;
@@ -317,7 +319,7 @@ export default function ItemEditor(props: {
 
     setSaving(true);
     try {
-      await ipc.saveItem(input);
+      await ipc.saveItem(props.accountEmail, input);
       props.onSaved();
     } catch (err) {
       toastError(err);
@@ -366,7 +368,7 @@ export default function ItemEditor(props: {
               }
             >
               <option value="">No folder</option>
-              <For each={props.folders.filter((f) => f.id !== null)}>
+              <For each={props.folders.filter((f) => f.id !== null && f.accountEmail === props.accountEmail)}>
                 {(f) => <option value={f.id ?? ''}>{f.name}</option>}
               </For>
             </select>

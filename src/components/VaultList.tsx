@@ -112,16 +112,17 @@ export default function VaultList(props: VaultListProps) {
   // ---- lazy detail cache (website / password / custom / favicon host) ----
   const [detailCache, setDetailCache] = createSignal<Map<string, ItemDetail>>(new Map());
   const detailPending = new Set<string>();
-  let detailQueue: string[] = [];
+  let detailQueue: { email: string; id: string }[] = [];
   let detailActive = 0;
 
   function pumpDetail() {
     while (detailActive < DETAIL_CONCURRENCY && detailQueue.length > 0) {
-      const id = detailQueue.shift();
-      if (id === undefined) break;
+      const next = detailQueue.shift();
+      if (next === undefined) break;
+      const { email, id } = next;
       detailActive++;
       void ipc
-        .itemDetail(id)
+        .itemDetail(email, id)
         .then((d) => setDetailCache((m) => new Map(m).set(id, d)))
         .catch(() => {
           // ignore: detail is best-effort for list cells; the cell shows blank
@@ -133,21 +134,21 @@ export default function VaultList(props: VaultListProps) {
         });
     }
   }
-  function ensureDetail(id: string) {
+  function ensureDetail(email: string, id: string) {
     if (detailCache().has(id) || detailPending.has(id)) return;
     detailPending.add(id);
-    detailQueue.push(id);
+    detailQueue.push({ email, id });
     pumpDetail();
   }
 
   // ---- lazy TOTP cache (only when the TOTP column is revealed) ----
   const [totpCache, setTotpCache] = createSignal<Map<string, TotpCode>>(new Map());
   const totpPending = new Set<string>();
-  function ensureTotp(id: string, force = false) {
+  function ensureTotp(email: string, id: string, force = false) {
     if (!force && (totpCache().has(id) || totpPending.has(id))) return;
     totpPending.add(id);
     void ipc
-      .itemTotp(id)
+      .itemTotp(email, id)
       .then((c) => setTotpCache((m) => new Map(m).set(id, c)))
       .catch(() => {
         // ignore: TOTP is best-effort for the list cell
@@ -163,7 +164,8 @@ export default function VaultList(props: VaultListProps) {
     let changed = false;
     for (const [id, code] of next) {
       if (code.remaining <= 1) {
-        ensureTotp(id, true);
+        const email = props.items.find((it) => it.id === id)?.accountEmail;
+        if (email) ensureTotp(email, id, true);
       } else {
         next.set(id, { ...code, remaining: code.remaining - 1 });
         changed = true;
@@ -212,8 +214,8 @@ export default function VaultList(props: VaultListProps) {
     columns(); // track config changes
     const wantTotp = totpRevealed();
     for (const it of its) {
-      if (rowNeedsDetail(it)) ensureDetail(it.id);
-      if (wantTotp && it.hasTotp) ensureTotp(it.id);
+      if (rowNeedsDetail(it)) ensureDetail(it.accountEmail, it.id);
+      if (wantTotp && it.hasTotp) ensureTotp(it.accountEmail, it.id);
     }
   });
 

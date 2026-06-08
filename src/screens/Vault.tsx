@@ -11,8 +11,6 @@ import {
   Switch,
 } from 'solid-js';
 import {
-  ChevronDown,
-  ChevronUp,
   Cloud,
   Copy,
   CreditCard,
@@ -43,7 +41,7 @@ import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { ipc } from '../lib/ipc.ts';
 import { filterItems, type VaultFilter } from '../lib/search.ts';
-import type { Folder, ItemDetail, ItemType, TotpCode, VaultItem } from '../lib/types.ts';
+import type { ConnectionSummary, Folder, ItemDetail, ItemType, TotpCode, VaultItem } from '../lib/types.ts';
 import { query, setQuery } from '../state/search.ts';
 import { pushToast, toastError } from '../state/toast.ts';
 import { setTheme, theme, type ThemePref } from '../state/theme.ts';
@@ -51,6 +49,9 @@ import ItemEditor from '../components/ItemEditor.tsx';
 import SecurityCenter from '../components/SecurityCenter.tsx';
 import SyncStatus, { SyncIcon, type SyncState } from '../components/SyncStatus.tsx';
 import CommandPalette, { type Command } from '../components/CommandPalette.tsx';
+import VaultList from '../components/VaultList.tsx';
+import FolderTree from '../components/FolderTree.tsx';
+import type { SortDir, SortKey } from '../state/columns.ts';
 import './Vault.css';
 
 function typeIcon(t: ItemType) {
@@ -91,6 +92,7 @@ const TYPE_FILTERS: { type: ItemType; label: string }[] = [
 function filterEq(a: VaultFilter, b: VaultFilter): boolean {
   if (a.kind !== b.kind) return false;
   if (a.kind === 'type' && b.kind === 'type') return a.itemType === b.itemType;
+  if (a.kind === 'folder' && b.kind === 'folder') return a.folderId === b.folderId;
   return true;
 }
 
@@ -99,10 +101,6 @@ type EditorState =
   | { mode: 'closed' }
   | { mode: 'create'; createType: ItemType }
   | { mode: 'edit'; item: ItemDetail };
-
-// Item-list column sort.
-type SortKey = 'name' | 'username';
-type SortDir = 'asc' | 'desc';
 
 // Header theme button cycles through these in order.
 const THEME_CYCLE: ThemePref[] = ['system', 'light', 'dark'];
@@ -115,6 +113,7 @@ const THEME_META: Record<ThemePref, { icon: typeof Sun; label: string }> = {
 export default function Vault(props: { onLock: () => void; onOpenSettings: () => void }) {
   const [items, setItems] = createSignal<VaultItem[]>([]);
   const [folders, setFolders] = createSignal<Folder[]>([]);
+  const [connections, setConnections] = createSignal<ConnectionSummary[]>([]);
   // `query` is the shared titlebar search signal (state/search.ts) — the search
   // field now lives in the custom window titlebar, not this header.
   const [filter, setFilter] = createSignal<VaultFilter>({ kind: 'all' });
@@ -153,6 +152,8 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
   // visual order and logical order never diverge.
   const [sortKey, setSortKey] = createSignal<SortKey>('name');
   const [sortDir, setSortDir] = createSignal<SortDir>('asc');
+  // Bumped after a vault mutation so the list drops stale cached row detail.
+  const [cacheToken, setCacheToken] = createSignal(0);
 
   // Right-click context menu: the target item plus the cursor anchor, or null.
   const [ctxMenu, setCtxMenu] = createSignal<{ item: VaultItem; x: number; y: number } | null>(
@@ -161,10 +162,23 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
 
   const inTrash = createMemo(() => filter().kind === 'trash');
   const filtered = createMemo(() => filterItems(items(), query(), filter()));
+  const folderNameOf = (id: string | null): string =>
+    id ? folders().find((f) => f.id === id)?.name ?? '' : '';
   const displayed = createMemo(() => {
     const dir = sortDir() === 'asc' ? 1 : -1;
     const key = sortKey();
-    const val = (it: VaultItem) => (key === 'name' ? it.name : it.username ?? '');
+    const val = (it: VaultItem): string => {
+      switch (key) {
+        case 'name':
+          return it.name;
+        case 'username':
+          return it.username ?? '';
+        case 'folder':
+          return folderNameOf(it.folderId);
+        case 'type':
+          return it.itemType;
+      }
+    };
     // Stable, case-insensitive, locale-aware; empty values sort last.
     return [...filtered()].sort((a, b) => {
       const av = val(a);
@@ -213,6 +227,37 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
     }
   }
 
+  async function loadConnections() {
+    try {
+      setConnections(await ipc.listConnections());
+    } catch (err) {
+      toastError(err);
+    }
+  }
+
+  // The connection a freshly created item goes into (prefer an unlocked one).
+  const createAccount = () =>
+    connections().find((c) => c.unlocked)?.email ?? connections()[0]?.email ?? '';
+
+  // Map an item id to its owning connection (the unified list mixes accounts).
+  function accountFor(id: string): string {
+    return items().find((it) => it.id === id)?.accountEmail ?? '';
+  }
+
+  // Group selected ids by owning connection, so bulk ops route per account.
+  function groupByAccount(ids: string[]): Map<string, string[]> {
+    const byId = new Map(items().map((it) => [it.id, it] as const));
+    const groups = new Map<string, string[]>();
+    for (const id of ids) {
+      const acct = byId.get(id)?.accountEmail;
+      if (!acct) continue;
+      const arr = groups.get(acct) ?? [];
+      arr.push(id);
+      groups.set(acct, arr);
+    }
+    return groups;
+  }
+
   function clearSelection() {
     setSelectedIds(new Set<string>());
     setAnchorId(null);
@@ -243,6 +288,7 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
   async function reloadAfterMutation() {
     await runSync(false);
     clearSelection();
+    setCacheToken((t) => t + 1);
   }
 
   // Automatic background sync: once on open, then on a fixed interval. The cloud
@@ -256,7 +302,7 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
     // Show cached items immediately (instant on re-mounts / after a prior sync),
     // then refresh in the background — avoids a blank-then-populate flicker.
     void (async () => {
-      await Promise.all([loadItems(), loadFolders()]);
+      await Promise.all([loadItems(), loadFolders(), loadConnections()]);
       await runSync(false);
     })();
     autoSyncTimer = setInterval(() => void runSync(false), AUTO_SYNC_MS);
@@ -351,7 +397,10 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
       // Favorite every selected item that isn't already a favorite.
       const byId = new Map(items().map((it) => [it.id, it]));
       await Promise.all(
-        ids.map((id) => ipc.setFavorite(id, !(byId.get(id)?.favorite ?? false))),
+        ids.map((id) => {
+          const it = byId.get(id);
+          return it ? ipc.setFavorite(it.accountEmail, id, !it.favorite) : Promise.resolve();
+        }),
       );
       await reloadAfterMutation();
       pushToast('success', `Updated ${ids.length} item${ids.length === 1 ? '' : 's'}.`);
@@ -365,7 +414,20 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
     if (ids.length === 0) return;
     setMoveMenuOpen(false);
     try {
-      await ipc.moveItems(ids, folderId);
+      if (folderId === null) {
+        for (const [acct, gids] of groupByAccount(ids)) {
+          await ipc.moveItems(acct, gids, null);
+        }
+      } else {
+        // A folder belongs to one account; only move that account's selected items.
+        const acct = folders().find((f) => f.id === folderId)?.accountEmail ?? '';
+        const own = ids.filter((id) => accountFor(id) === acct);
+        if (own.length === 0) {
+          pushToast('error', 'Pick a folder in the same account as the items.');
+          return;
+        }
+        await ipc.moveItems(acct, own, folderId);
+      }
       await reloadAfterMutation();
       pushToast('success', `Moved ${ids.length} item${ids.length === 1 ? '' : 's'}.`);
     } catch (err) {
@@ -377,7 +439,9 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
     const ids = [...selectedIds()];
     if (ids.length === 0) return;
     try {
-      await ipc.deleteItems(ids, permanent);
+      for (const [acct, gids] of groupByAccount(ids)) {
+        await ipc.deleteItems(acct, gids, permanent);
+      }
       if (ids.includes(selectedId() ?? '')) setSelectedId(null);
       await reloadAfterMutation();
       pushToast('success', permanent ? `Deleted ${ids.length} permanently.` : `Trashed ${ids.length}.`);
@@ -390,7 +454,9 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
     const ids = [...selectedIds()];
     if (ids.length === 0) return;
     try {
-      await ipc.restoreItems(ids);
+      for (const [acct, gids] of groupByAccount(ids)) {
+        await ipc.restoreItems(acct, gids);
+      }
       await reloadAfterMutation();
       pushToast('success', `Restored ${ids.length} item${ids.length === 1 ? '' : 's'}.`);
     } catch (err) {
@@ -401,7 +467,7 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
   // ---- single-item detail actions ----
   async function detailClone(id: string) {
     try {
-      await ipc.cloneItem(id);
+      await ipc.cloneItem(accountFor(id), id);
       await reloadAfterMutation();
       pushToast('success', 'Item cloned.');
     } catch (err) {
@@ -411,10 +477,10 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
 
   async function detailFavorite(d: ItemDetail) {
     try {
-      await ipc.setFavorite(d.id, !d.favorite);
+      await ipc.setFavorite(d.accountEmail, d.id, !d.favorite);
       await reloadAfterMutation();
       // Refresh the open detail so the toggle reflects the new state.
-      setDetail(await ipc.itemDetail(d.id));
+      setDetail(await ipc.itemDetail(d.accountEmail, d.id));
     } catch (err) {
       toastError(err);
     }
@@ -422,7 +488,7 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
 
   async function detailDelete(id: string, permanent: boolean) {
     try {
-      await ipc.deleteItems([id], permanent);
+      await ipc.deleteItems(accountFor(id), [id], permanent);
       setSelectedId(null);
       await reloadAfterMutation();
       pushToast('success', permanent ? 'Item permanently deleted.' : 'Moved to trash.');
@@ -433,9 +499,10 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
 
   async function detailRestore(id: string) {
     try {
-      await ipc.restoreItems([id]);
+      const acct = accountFor(id);
+      await ipc.restoreItems(acct, [id]);
       await reloadAfterMutation();
-      setDetail(await ipc.itemDetail(id));
+      setDetail(await ipc.itemDetail(acct, id));
       pushToast('success', 'Item restored.');
     } catch (err) {
       toastError(err);
@@ -471,9 +538,9 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
   async function rowFavorite(item: VaultItem) {
     closeCtxMenu();
     try {
-      await ipc.setFavorite(item.id, !item.favorite);
+      await ipc.setFavorite(item.accountEmail, item.id, !item.favorite);
       await reloadAfterMutation();
-      if (selectedId() === item.id) setDetail(await ipc.itemDetail(item.id));
+      if (selectedId() === item.id) setDetail(await ipc.itemDetail(item.accountEmail, item.id));
     } catch (err) {
       toastError(err);
     }
@@ -482,7 +549,7 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
   async function rowEdit(item: VaultItem) {
     closeCtxMenu();
     try {
-      openEdit(await ipc.itemDetail(item.id));
+      openEdit(await ipc.itemDetail(item.accountEmail, item.id));
     } catch (err) {
       toastError(err);
     }
@@ -491,7 +558,7 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
   async function copyPasswordFor(item: VaultItem) {
     closeCtxMenu();
     try {
-      const d = await ipc.itemDetail(item.id);
+      const d = await ipc.itemDetail(item.accountEmail, item.id);
       if (!d.login?.password) {
         pushToast('error', 'No password on this item.');
         return;
@@ -505,7 +572,7 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
   async function copyTotpFor(item: VaultItem) {
     closeCtxMenu();
     try {
-      const code = await ipc.itemTotp(item.id);
+      const code = await ipc.itemTotp(item.accountEmail, item.id);
       await copy('Code', code.code);
     } catch (err) {
       toastError(err);
@@ -514,7 +581,7 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
 
   // First populated URI on the item, shared by "copy website" and "open website".
   async function firstUri(item: VaultItem): Promise<string | null> {
-    const d = await ipc.itemDetail(item.id);
+    const d = await ipc.itemDetail(item.accountEmail, item.id);
     return d.login?.uris.find((u) => u.uri)?.uri ?? null;
   }
 
@@ -549,12 +616,12 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
   // After the editor saves, close it and refresh.
   async function onEditorSaved() {
     const state = editor();
-    const wasEditingId = state.mode === 'edit' ? state.item.id : null;
+    const wasEditing = state.mode === 'edit' ? state.item : null;
     setEditor({ mode: 'closed' });
     await reloadAfterMutation();
-    if (wasEditingId && selectedId() === wasEditingId) {
+    if (wasEditing && selectedId() === wasEditing.id) {
       try {
-        setDetail(await ipc.itemDetail(wasEditingId));
+        setDetail(await ipc.itemDetail(wasEditing.accountEmail, wasEditing.id));
       } catch (err) {
         toastError(err);
       }
@@ -573,7 +640,7 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
 
   async function refreshTotp(id: string) {
     try {
-      setTotp(await ipc.itemTotp(id));
+      setTotp(await ipc.itemTotp(accountFor(id), id));
     } catch (err) {
       toastError(err);
     }
@@ -586,7 +653,7 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
       setDetail(null);
       if (!id) return;
       try {
-        const d = await ipc.itemDetail(id);
+        const d = await ipc.itemDetail(accountFor(id), id);
         setDetail(d);
         if (d.login?.hasTotp) {
           await refreshTotp(id);
@@ -759,6 +826,11 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
               />
             )}
           </For>
+          <FolderTree
+            folders={folders()}
+            active={view() === 'vault' ? filter() : { kind: 'all' }}
+            onSelect={(f) => selectFilter(f)}
+          />
           <div class="vault-rail-sep" />
           <FilterButton
             label="Security"
@@ -855,72 +927,21 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
             </div>
           </Show>
 
-          <Show
-            when={displayed().length > 0}
-            fallback={
-              <div class="vault-empty muted">
-                {items().length === 0 ? 'Vault is empty or not synced.' : 'No matches.'}
-              </div>
-            }
-          >
-            <div class="vault-head">
-              <span class="vault-head-cell" />
-              <span class="vault-head-cell" />
-              <SortHeader
-                label="Name"
-                col="name"
-                sortKey={sortKey()}
-                sortDir={sortDir()}
-                onSort={toggleSort}
-              />
-              <SortHeader
-                label="Username"
-                col="username"
-                sortKey={sortKey()}
-                sortDir={sortDir()}
-                onSort={toggleSort}
-              />
-              <span class="vault-head-cell" />
-            </div>
-            <div class="vault-list-scroll">
-              <For each={displayed()}>
-                {(item) => {
-                  const Icon = typeIcon(item.itemType);
-                  const isChecked = () => selectedIds().has(item.id);
-                  return (
-                    <div
-                      class="vault-row"
-                      classList={{
-                        active: selectedId() === item.id && selectedCount() === 0,
-                        'multi-selected': isChecked(),
-                      }}
-                      onClick={(e) => onRowClick(item, e)}
-                      onContextMenu={(e) => openCtxMenu(item, e)}
-                    >
-                      <label class="vault-row-check" onClick={(e) => e.stopPropagation()}>
-                        <input
-                          type="checkbox"
-                          checked={isChecked()}
-                          onChange={(e) => onCheckboxToggle(item, e.currentTarget.checked)}
-                        />
-                      </label>
-                      <Icon size={16} strokeWidth={1.6} class="vault-row-icon" />
-                      <span class="vault-row-name">{item.name}</span>
-                      <span class="vault-row-sub">{item.username ?? ''}</span>
-                      <span class="vault-row-end">
-                        <Show when={item.hasTotp}>
-                          <Timer size={13} strokeWidth={1.75} />
-                        </Show>
-                        <Show when={item.favorite}>
-                          <Star size={13} strokeWidth={1.75} class="vault-row-fav" />
-                        </Show>
-                      </span>
-                    </div>
-                  );
-                }}
-              </For>
-            </div>
-          </Show>
+          <VaultList
+            items={displayed()}
+            folders={folders()}
+            sortKey={sortKey()}
+            sortDir={sortDir()}
+            onSort={toggleSort}
+            selectedId={selectedId()}
+            selectedCount={selectedCount()}
+            isSelected={(id) => selectedIds().has(id)}
+            onRowClick={onRowClick}
+            onRowContextMenu={openCtxMenu}
+            onCheckboxToggle={onCheckboxToggle}
+            emptyMessage={items().length === 0 ? 'Vault is empty or not synced.' : 'No matches.'}
+            cacheToken={cacheToken()}
+          />
         </aside>
 
         <section class="vault-detail">
@@ -1108,6 +1129,7 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
             <ItemEditor
               item={state.mode === 'edit' ? state.item : null}
               createType={state.mode === 'create' ? state.createType : undefined}
+              accountEmail={state.mode === 'edit' ? state.item.accountEmail : createAccount()}
               folders={folders()}
               onSaved={() => void onEditorSaved()}
               onClose={() => setEditor({ mode: 'closed' })}
@@ -1245,33 +1267,6 @@ function FilterButton(props: {
     <button class="vault-rail-btn" classList={{ active: props.active }} onClick={() => props.onClick()}>
       <Icon size={15} strokeWidth={1.6} />
       <span>{props.label}</span>
-    </button>
-  );
-}
-
-function SortHeader(props: {
-  label: string;
-  col: SortKey;
-  sortKey: SortKey;
-  sortDir: SortDir;
-  onSort: (k: SortKey) => void;
-}) {
-  const active = () => props.sortKey === props.col;
-  return (
-    <button
-      class="vault-head-cell sortable"
-      classList={{ sorted: active() }}
-      onClick={() => props.onSort(props.col)}
-    >
-      {props.label}
-      <Show when={active()}>
-        <Show
-          when={props.sortDir === 'asc'}
-          fallback={<ChevronDown size={12} class="vault-head-sort" />}
-        >
-          <ChevronUp size={12} class="vault-head-sort" />
-        </Show>
-      </Show>
     </button>
   );
 }
