@@ -9,6 +9,7 @@ const DEFAULT_STATUS: SessionStatus = {
   loggedIn: false,
   unlocked: false,
   localUnlockConfigured: false,
+  helloConfigured: false,
   email: null,
 };
 
