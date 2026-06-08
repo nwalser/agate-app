@@ -96,6 +96,21 @@ async fn collect_logins(state: &AppState) -> AgateResult<Vec<LoginAudit>> {
     Ok(out)
 }
 
+/// Parse a HIBP range-API response body for the breach count of `suffix`.
+/// Lines are `SUFFIX:COUNT`; padded filler rows (count 0) are ignored. Returns
+/// 0 when the suffix is absent or only present as padding (i.e. not breached).
+fn hibp_count_for_suffix(body: &str, suffix: &str) -> u64 {
+    for line in body.split(['\r', '\n']).filter(|l| !l.is_empty()) {
+        let mut parts = line.splitn(2, ':');
+        let (s, c) = (parts.next().unwrap_or(""), parts.next().unwrap_or("0"));
+        let parsed = c.trim().parse::<u64>().unwrap_or(0);
+        if parsed > 0 && s.eq_ignore_ascii_case(suffix) {
+            return parsed;
+        }
+    }
+    0
+}
+
 fn band_for(score: u8) -> HealthBand {
     match score {
         0..=39 => HealthBand::Critical,
@@ -219,17 +234,7 @@ pub async fn audit_exposed(state: &AppState) -> AgateResult<Vec<ExposedResult>> 
                 text
             }
         };
-        let mut count = 0u64;
-        for line in body.split(['\r', '\n']).filter(|l| !l.is_empty()) {
-            let mut parts = line.splitn(2, ':');
-            let (s, c) = (parts.next().unwrap_or(""), parts.next().unwrap_or("0"));
-            // Padded filler rows have count 0 — discard them.
-            let parsed = c.trim().parse::<u64>().unwrap_or(0);
-            if parsed > 0 && s.eq_ignore_ascii_case(suffix) {
-                count = parsed;
-                break;
-            }
-        }
+        let count = hibp_count_for_suffix(&body, suffix);
         counts.insert(hash, count);
     }
 
@@ -259,6 +264,18 @@ mod tests {
         assert!(h.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()));
         // The HIBP range query sends only the first 5 chars.
         assert_eq!(&h[..5], "5BAA6");
+    }
+
+    #[test]
+    fn hibp_parsing_matches_suffix_and_ignores_padding() {
+        // Real HIBP range body shape: SUFFIX:COUNT lines, CRLF-separated.
+        let body = "0018A45C4D1DEF81644B54AB7F969B88D65:1\r\nAAAA:0\r\n00D4F6E8FA6EECAD2A3AA415EEC418D38EC:23547";
+        // Present with a real count, case-insensitive.
+        assert_eq!(hibp_count_for_suffix(body, "00d4f6e8fa6eecad2a3aa415eec418d38ec"), 23547);
+        // Padding rows (count 0) are not a match.
+        assert_eq!(hibp_count_for_suffix(body, "AAAA"), 0);
+        // Absent suffix → not breached.
+        assert_eq!(hibp_count_for_suffix(body, "DEADBEEF"), 0);
     }
 
     #[test]
