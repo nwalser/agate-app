@@ -18,7 +18,7 @@ tauri-build = { version = "2", features = [] }
 # NOTE: do NOT add the "devtools" feature here — it would enable the web
 # inspector in RELEASE builds (a debug surface exposing decrypted secrets in the
 # DOM). Debug builds enable devtools automatically without the feature.
-tauri = { version = "2" }
+tauri = { version = "2", features = [] }
 tauri-plugin-log = "2"
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-opener = "2"
@@ -47,7 +47,6 @@ base64 = "0.22"
 # password-manager SDK is explicitly unstable ("changes without warning").
 # Bumping the rev is a deliberate, reviewed action — never float `main`.
 bitwarden-core = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e" }
-bitwarden-auth = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e" }
 bitwarden-pm = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e" }
 bitwarden-vault = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e" }
 bitwarden-sync = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e" }
@@ -57,12 +56,11 @@ bitwarden-collections = { git = "https://github.com/bitwarden/sdk-internal", rev
 bitwarden-state = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e" }
 zxcvbn = "3.1"
 sha1 = "0.10"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
-# Self-hosted prelogin compatibility shim (build the SDK client with a custom
-# reqwest middleware). Versions must match the SDK's to share the trait types.
-reqwest-middleware = "0.5"
-async-trait = "0.1"
-http = "1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking"] }
+# Tiny loopback HTTP proxy used to fix self-hosted (Vaultwarden) prelogin: the
+# SDK's identity client has no middleware hook, so we rewrite the one prelogin
+# path at the network edge. See proxy.rs.
+tiny_http = "0.12"
 
 [target.'cfg(windows)'.dependencies]
 # Windows Hello (UserConsentVerifier) for passwordless unlock, and

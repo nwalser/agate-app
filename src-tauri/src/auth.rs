@@ -44,10 +44,16 @@ fn classify_login_error(msg: &str) -> AgateError {
 
 async fn build_client(state: &AppState, server: &ServerConfig) -> AgateResult<PasswordManagerClient> {
     let device_id = state.config.lock().await.device_id.clone();
-    let settings = server::client_settings(server, device_id)?;
-    // Self-hosted servers get a prelogin-path compatibility shim; the SDK does
-    // the rest of login/crypto unchanged.
-    Ok(crate::clientbuild::build_pm_client(server, settings))
+    let mut settings = server::client_settings(server, device_id)?;
+    // Self-hosted servers may lack the SDK's newer `/accounts/prelogin/password`
+    // endpoint. Route identity traffic through a loopback proxy that rewrites
+    // that one path; the SDK does all login/crypto/token work unchanged.
+    if matches!(server, ServerConfig::SelfHosted { .. }) {
+        let upstream_identity = settings.identity_url.clone();
+        settings.identity_url = crate::proxy::ensure_identity_proxy(&upstream_identity)
+            .map_err(|e| AgateError::new(ErrorKind::Network, format!("identity proxy: {e}")))?;
+    }
+    Ok(PasswordManagerClient::new(Some(settings)))
 }
 
 /// Attempt a master-password login. On success the vault is unlocked and the
