@@ -1,0 +1,87 @@
+.titlebar {
+  display: flex;
+  align-items: stretch;
+  flex-shrink: 0;
+  height: 38px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+}
+
+.titlebar-brand {
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+
+/* Grows to fill the gap between brand and controls; the search field floats
+   centered within it. Stays in the layout (and draggable) even when search is
+   hidden so the brand/controls keep their edges. */
+.titlebar-center {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  padding: 0 8px;
+}
+
+.titlebar-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 460px;
+  height: 26px;
+  padding: 0 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.titlebar-search:focus-within {
+  border-color: var(--primary);
+}
+.titlebar-search svg {
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+.titlebar-search input {
+  border: none;
+  background: transparent;
+  padding: 0;
+  height: 100%;
+}
+.titlebar-search input:focus {
+  border: none;
+}
+
+.titlebar-controls {
+  display: flex;
+  align-items: stretch;
+  flex-shrink: 0;
+}
+.titlebar-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 100%;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted-foreground);
+}
+.titlebar-btn:hover {
+  background: var(--card-hover);
+  color: var(--foreground);
+}
+.titlebar-close:hover {
+  background: var(--destructive);
+  color: #fff;
+}

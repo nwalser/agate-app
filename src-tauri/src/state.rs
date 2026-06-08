@@ -13,7 +13,7 @@ use bitwarden_vault::Cipher;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
-use crate::dto::{Folder, ServerConfig};
+use crate::dto::{BreachRecord, Folder, ServerConfig};
 use crate::error::{AgateError, AgateResult, ErrorKind};
 
 /// A known account for fast switching (non-secret: server + email only).
@@ -36,6 +36,10 @@ pub struct PersistedConfig {
     pub local_unlock_configured: bool,
     #[serde(default)]
     pub hello_configured: bool,
+    /// The user opted in to the dark-web monitor (emails leave the device to a
+    /// third-party breach API). Default false; a non-secret preference.
+    #[serde(default)]
+    pub darkweb_consent: bool,
     #[serde(default)]
     pub accounts: Vec<AccountRef>,
 }
@@ -61,6 +65,7 @@ impl PersistedConfig {
             email: None,
             local_unlock_configured: false,
             hello_configured: false,
+            darkweb_consent: false,
             accounts: Vec::new(),
         }
     }
@@ -118,6 +123,9 @@ impl Session {
 pub struct AppState {
     pub config: Mutex<PersistedConfig>,
     pub session: Mutex<Session>,
+    /// Cached HIBP public breach directory (large, CDN-cached, non-secret). Fetched
+    /// once per process the first time the breach directory is opened. See darkweb.rs.
+    pub breach_directory: Mutex<Option<Vec<BreachRecord>>>,
     config_path: PathBuf,
 }
 
@@ -133,6 +141,7 @@ impl AppState {
         Self {
             config: Mutex::new(config),
             session: Mutex::new(Session::default()),
+            breach_directory: Mutex::new(None),
             config_path,
         }
     }

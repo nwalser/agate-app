@@ -3,14 +3,17 @@ import {
   createMemo,
   createSignal,
   For,
+  Match,
   on,
   onCleanup,
   onMount,
   Show,
+  Switch,
 } from 'solid-js';
 import {
+  ChevronDown,
+  ChevronUp,
   Cloud,
-  CloudOff,
   Copy,
   CreditCard,
   ExternalLink,
@@ -20,15 +23,17 @@ import {
   FolderInput,
   KeyRound,
   Lock,
+  Monitor,
+  Moon,
   Pencil,
   Plus,
   RefreshCw,
   RotateCcw,
-  Search,
   Settings as SettingsIcon,
   Shield,
   Star,
   StickyNote,
+  Sun,
   Terminal,
   Timer,
   Trash2,
@@ -39,9 +44,12 @@ import { openUrl } from '@tauri-apps/plugin-opener';
 import { ipc } from '../lib/ipc.ts';
 import { filterItems, type VaultFilter } from '../lib/search.ts';
 import type { Folder, ItemDetail, ItemType, TotpCode, VaultItem } from '../lib/types.ts';
+import { query, setQuery } from '../state/search.ts';
 import { pushToast, toastError } from '../state/toast.ts';
+import { setTheme, theme, type ThemePref } from '../state/theme.ts';
 import ItemEditor from '../components/ItemEditor.tsx';
-import AuditReport from '../components/AuditReport.tsx';
+import SecurityCenter from '../components/SecurityCenter.tsx';
+import SyncStatus, { SyncIcon, type SyncState } from '../components/SyncStatus.tsx';
 import CommandPalette, { type Command } from '../components/CommandPalette.tsx';
 import './Vault.css';
 
@@ -92,13 +100,23 @@ type EditorState =
   | { mode: 'create'; createType: ItemType }
   | { mode: 'edit'; item: ItemDetail };
 
-// Background-sync status, surfaced by the header cloud icon.
-type SyncState = 'idle' | 'syncing' | 'error';
+// Item-list column sort.
+type SortKey = 'name' | 'username';
+type SortDir = 'asc' | 'desc';
+
+// Header theme button cycles through these in order.
+const THEME_CYCLE: ThemePref[] = ['system', 'light', 'dark'];
+const THEME_META: Record<ThemePref, { icon: typeof Sun; label: string }> = {
+  system: { icon: Monitor, label: 'System theme' },
+  light: { icon: Sun, label: 'Light theme' },
+  dark: { icon: Moon, label: 'Dark theme' },
+};
 
 export default function Vault(props: { onLock: () => void; onOpenSettings: () => void }) {
   const [items, setItems] = createSignal<VaultItem[]>([]);
   const [folders, setFolders] = createSignal<Folder[]>([]);
-  const [query, setQuery] = createSignal('');
+  // `query` is the shared titlebar search signal (state/search.ts) — the search
+  // field now lives in the custom window titlebar, not this header.
   const [filter, setFilter] = createSignal<VaultFilter>({ kind: 'all' });
   const [selectedId, setSelectedId] = createSignal<string | null>(null);
   const [detail, setDetail] = createSignal<ItemDetail | null>(null);
@@ -114,24 +132,69 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
   const [selectedIds, setSelectedIds] = createSignal<Set<string>>(new Set());
   const [anchorId, setAnchorId] = createSignal<string | null>(null);
 
+  // Which main view occupies the body: the vault list/detail, or the security
+  // center (reached from the left rail). The rail stays visible in both.
+  const [view, setView] = createSignal<'vault' | 'security' | 'sync'>('vault');
+
+  // Switch a rail filter and return to the vault view in one step.
+  function selectFilter(f: VaultFilter) {
+    setView('vault');
+    setFilter(f);
+  }
+
   // Overlays / menus.
   const [editor, setEditor] = createSignal<EditorState>({ mode: 'closed' });
-  const [showAudit, setShowAudit] = createSignal(false);
   const [addMenuOpen, setAddMenuOpen] = createSignal(false);
   const [moveMenuOpen, setMoveMenuOpen] = createSignal(false);
   const [paletteOpen, setPaletteOpen] = createSignal(false);
 
+  // Column sort. `displayed` is the filtered list in the sorted order the rows
+  // actually render in — selection (shift-range) and the For both key off it so
+  // visual order and logical order never diverge.
+  const [sortKey, setSortKey] = createSignal<SortKey>('name');
+  const [sortDir, setSortDir] = createSignal<SortDir>('asc');
+
+  // Right-click context menu: the target item plus the cursor anchor, or null.
+  const [ctxMenu, setCtxMenu] = createSignal<{ item: VaultItem; x: number; y: number } | null>(
+    null,
+  );
+
   const inTrash = createMemo(() => filter().kind === 'trash');
   const filtered = createMemo(() => filterItems(items(), query(), filter()));
+  const displayed = createMemo(() => {
+    const dir = sortDir() === 'asc' ? 1 : -1;
+    const key = sortKey();
+    const val = (it: VaultItem) => (key === 'name' ? it.name : it.username ?? '');
+    // Stable, case-insensitive, locale-aware; empty values sort last.
+    return [...filtered()].sort((a, b) => {
+      const av = val(a);
+      const bv = val(b);
+      if (!av && bv) return 1;
+      if (av && !bv) return -1;
+      return dir * av.localeCompare(bv, undefined, { sensitivity: 'base' });
+    });
+  });
   const selectedCount = createMemo(() => selectedIds().size);
+
+  // Click a column header: toggle direction if already sorted by it, else switch
+  // to it ascending.
+  function toggleSort(key: SortKey) {
+    if (sortKey() === key) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(key);
+      setSortDir('asc');
+    }
+  }
 
   // Hover text for the header cloud icon — state plus last-success clock time.
   const syncTooltip = createMemo(() => {
     if (syncState() === 'syncing') return 'Syncing…';
     const ts = lastSync();
-    const when = ts === null ? '' : ` (last synced ${new Date(ts).toLocaleTimeString()})`;
+    const when = ts === null ? '' : ` (synced ${new Date(ts).toLocaleTimeString()})`;
     if (syncState() === 'error') return `Sync failed — click to retry${when}`;
-    return `Synced — click to sync now${when}`;
+    if (ts === null) return 'Not synced yet — click to sync';
+    return `Live — click to sync now${when}`;
   });
 
   async function loadItems() {
@@ -187,7 +250,15 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
   const AUTO_SYNC_MS = 5 * 60 * 1000;
   let autoSyncTimer: ReturnType<typeof setInterval> | undefined;
   onMount(() => {
-    void runSync(false);
+    // Start each vault session with a clean search so a stale query (the field
+    // now lives in the persistent titlebar) can't hide items on entry.
+    setQuery('');
+    // Show cached items immediately (instant on re-mounts / after a prior sync),
+    // then refresh in the background — avoids a blank-then-populate flicker.
+    void (async () => {
+      await Promise.all([loadItems(), loadFolders()]);
+      await runSync(false);
+    })();
     autoSyncTimer = setInterval(() => void runSync(false), AUTO_SYNC_MS);
   });
   onCleanup(() => {
@@ -197,11 +268,14 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
 
   // Ctrl/Cmd-K toggles the command palette.
   function onGlobalKeyDown(e: KeyboardEvent) {
+    if (e.key === 'Escape' && ctxMenu()) {
+      setCtxMenu(null);
+      return;
+    }
     if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
-      // Don't open the palette over an open editor/audit modal — palette
-      // commands could switch the editor state without it remounting, leaving
-      // stale field values.
-      if (editor().mode !== 'closed' || showAudit()) return;
+      // Don't open the palette over an open editor — palette commands could
+      // switch the editor state without it remounting, leaving stale values.
+      if (editor().mode !== 'closed') return;
       e.preventDefault();
       setPaletteOpen((v) => !v);
     }
@@ -236,7 +310,7 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
 
   // ---- selection handling (single-click selects; modifiers multi-select) ----
   function onRowClick(item: VaultItem, e: MouseEvent) {
-    const visible = filtered();
+    const visible = displayed();
     if (e.shiftKey && anchorId()) {
       const anchorIdx = visible.findIndex((it) => it.id === anchorId());
       const clickIdx = visible.findIndex((it) => it.id === item.id);
@@ -372,6 +446,106 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
     setEditor({ mode: 'edit', item: d });
   }
 
+  // Cycle the header theme button through system -> light -> dark.
+  function cycleTheme() {
+    const idx = THEME_CYCLE.indexOf(theme());
+    setTheme(THEME_CYCLE[(idx + 1) % THEME_CYCLE.length]);
+  }
+
+  // ---- row context-menu actions (operate on a single right-clicked item) ----
+  // The list row only carries username/type; secrets live in the full detail, so
+  // copy-password/-totp/-uri fetch the detail (or live code) on demand.
+  function openCtxMenu(item: VaultItem, e: MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    // Clamp to the viewport so the menu never opens off-screen near an edge.
+    const MENU_W = 210;
+    const MENU_H = 360;
+    const x = Math.min(e.clientX, window.innerWidth - MENU_W);
+    const y = Math.min(e.clientY, window.innerHeight - MENU_H);
+    setCtxMenu({ item, x: Math.max(8, x), y: Math.max(8, y) });
+  }
+
+  const closeCtxMenu = () => setCtxMenu(null);
+
+  async function rowFavorite(item: VaultItem) {
+    closeCtxMenu();
+    try {
+      await ipc.setFavorite(item.id, !item.favorite);
+      await reloadAfterMutation();
+      if (selectedId() === item.id) setDetail(await ipc.itemDetail(item.id));
+    } catch (err) {
+      toastError(err);
+    }
+  }
+
+  async function rowEdit(item: VaultItem) {
+    closeCtxMenu();
+    try {
+      openEdit(await ipc.itemDetail(item.id));
+    } catch (err) {
+      toastError(err);
+    }
+  }
+
+  async function copyPasswordFor(item: VaultItem) {
+    closeCtxMenu();
+    try {
+      const d = await ipc.itemDetail(item.id);
+      if (!d.login?.password) {
+        pushToast('error', 'No password on this item.');
+        return;
+      }
+      await copy('Password', d.login.password);
+    } catch (err) {
+      toastError(err);
+    }
+  }
+
+  async function copyTotpFor(item: VaultItem) {
+    closeCtxMenu();
+    try {
+      const code = await ipc.itemTotp(item.id);
+      await copy('Code', code.code);
+    } catch (err) {
+      toastError(err);
+    }
+  }
+
+  // First populated URI on the item, shared by "copy website" and "open website".
+  async function firstUri(item: VaultItem): Promise<string | null> {
+    const d = await ipc.itemDetail(item.id);
+    return d.login?.uris.find((u) => u.uri)?.uri ?? null;
+  }
+
+  async function copyUriFor(item: VaultItem) {
+    closeCtxMenu();
+    try {
+      const uri = await firstUri(item);
+      if (!uri) {
+        pushToast('error', 'No website on this item.');
+        return;
+      }
+      await copy('URL', uri);
+    } catch (err) {
+      toastError(err);
+    }
+  }
+
+  async function openSiteFor(item: VaultItem) {
+    closeCtxMenu();
+    try {
+      const uri = await firstUri(item);
+      if (!uri) {
+        pushToast('error', 'No website on this item.');
+        return;
+      }
+      await openUrl(uri);
+    } catch (err) {
+      toastError(err);
+    }
+  }
+
   // After the editor saves, close it and refresh.
   async function onEditorSaved() {
     const state = editor();
@@ -446,15 +620,21 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
     }
     list.push({
       id: 'security',
-      label: 'Open Security report',
+      label: 'Open Security center',
       icon: Shield,
-      run: () => setShowAudit(true),
+      run: () => setView('security'),
     });
     list.push({
       id: 'sync',
       label: 'Sync now',
       icon: RefreshCw,
       run: () => void sync(),
+    });
+    list.push({
+      id: 'sync-status',
+      label: 'Open Sync status',
+      icon: Cloud,
+      run: () => setView('sync'),
     });
     list.push({
       id: 'lock',
@@ -476,7 +656,7 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
         hint: it.username ?? undefined,
         icon: typeIcon(it.itemType),
         run: () => {
-          setFilter({ kind: 'all' });
+          selectFilter({ kind: 'all' });
           clearSelection();
           setSelectedId(it.id);
         },
@@ -521,39 +701,24 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
           </Show>
         </div>
 
-        <div class="vault-search">
-          <Search size={14} strokeWidth={1.75} />
-          <input
-            placeholder="Search vault…"
-            value={query()}
-            onInput={(e) => setQuery(e.currentTarget.value)}
-          />
-        </div>
-        <button
-          class="ghost icon-btn"
-          title="Security report"
-          onClick={() => setShowAudit(true)}
-        >
-          <Shield size={15} strokeWidth={1.75} />
-        </button>
+        <span class="spacer" />
         <button
           class="ghost icon-btn"
           title={syncTooltip()}
           disabled={syncState() === 'syncing'}
           onClick={() => void sync()}
         >
-          <Show
-            when={syncState() === 'error'}
-            fallback={
-              <Cloud
-                size={15}
-                strokeWidth={1.75}
-                class={syncState() === 'syncing' ? 'pulse' : ''}
-              />
-            }
-          >
-            <CloudOff size={15} strokeWidth={1.75} class="sync-error" />
-          </Show>
+          <SyncIcon state={syncState()} lastSync={lastSync()} />
+        </button>
+        <button class="ghost icon-btn" title={THEME_META[theme()].label} onClick={cycleTheme}>
+          <Switch fallback={<Monitor size={15} strokeWidth={1.75} />}>
+            <Match when={theme() === 'light'}>
+              <Sun size={15} strokeWidth={1.75} />
+            </Match>
+            <Match when={theme() === 'dark'}>
+              <Moon size={15} strokeWidth={1.75} />
+            </Match>
+          </Switch>
         </button>
         <button class="ghost icon-btn" title="Settings" onClick={() => props.onOpenSettings()}>
           <SettingsIcon size={15} strokeWidth={1.75} />
@@ -568,20 +733,20 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
           <FilterButton
             label="All items"
             icon={File}
-            active={filterEq(filter(), { kind: 'all' })}
-            onClick={() => setFilter({ kind: 'all' })}
+            active={view() === 'vault' && filterEq(filter(), { kind: 'all' })}
+            onClick={() => selectFilter({ kind: 'all' })}
           />
           <FilterButton
             label="Favorites"
             icon={Star}
-            active={filterEq(filter(), { kind: 'favorites' })}
-            onClick={() => setFilter({ kind: 'favorites' })}
+            active={view() === 'vault' && filterEq(filter(), { kind: 'favorites' })}
+            onClick={() => selectFilter({ kind: 'favorites' })}
           />
           <FilterButton
             label="Trash"
             icon={Trash2}
-            active={filterEq(filter(), { kind: 'trash' })}
-            onClick={() => setFilter({ kind: 'trash' })}
+            active={view() === 'vault' && filterEq(filter(), { kind: 'trash' })}
+            onClick={() => selectFilter({ kind: 'trash' })}
           />
           <div class="vault-rail-sep" />
           <For each={TYPE_FILTERS}>
@@ -589,13 +754,49 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
               <FilterButton
                 label={tf.label}
                 icon={typeIcon(tf.type)}
-                active={filterEq(filter(), { kind: 'type', itemType: tf.type })}
-                onClick={() => setFilter({ kind: 'type', itemType: tf.type })}
+                active={view() === 'vault' && filterEq(filter(), { kind: 'type', itemType: tf.type })}
+                onClick={() => selectFilter({ kind: 'type', itemType: tf.type })}
               />
             )}
           </For>
+          <div class="vault-rail-sep" />
+          <FilterButton
+            label="Security"
+            icon={Shield}
+            active={view() === 'security'}
+            onClick={() => setView('security')}
+          />
+          <button
+            class="vault-rail-btn"
+            classList={{ active: view() === 'sync' }}
+            title={syncTooltip()}
+            onClick={() => setView('sync')}
+          >
+            <SyncIcon state={syncState()} lastSync={lastSync()} />
+            <span>Sync</span>
+          </button>
         </nav>
 
+        <Switch>
+          <Match when={view() === 'security'}>
+            <SecurityCenter
+              onOpenItem={(id) => {
+                selectFilter({ kind: 'all' });
+                clearSelection();
+                setSelectedId(id);
+              }}
+            />
+          </Match>
+          <Match when={view() === 'sync'}>
+            <SyncStatus
+              state={syncState()}
+              lastSync={lastSync()}
+              autoSyncMs={AUTO_SYNC_MS}
+              onSync={() => void sync()}
+            />
+          </Match>
+          <Match when={view() === 'vault'}>
+            <>
         <aside class="vault-list">
           <Show when={selectedCount() > 0}>
             <div class="vault-bulk">
@@ -655,47 +856,70 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
           </Show>
 
           <Show
-            when={filtered().length > 0}
+            when={displayed().length > 0}
             fallback={
               <div class="vault-empty muted">
                 {items().length === 0 ? 'Vault is empty or not synced.' : 'No matches.'}
               </div>
             }
           >
-            <For each={filtered()}>
-              {(item) => {
-                const Icon = typeIcon(item.itemType);
-                const isChecked = () => selectedIds().has(item.id);
-                return (
-                  <div
-                    class="vault-row"
-                    classList={{
-                      active: selectedId() === item.id && selectedCount() === 0,
-                      'multi-selected': isChecked(),
-                    }}
-                    onClick={(e) => onRowClick(item, e)}
-                  >
-                    <label class="vault-row-check" onClick={(e) => e.stopPropagation()}>
-                      <input
-                        type="checkbox"
-                        checked={isChecked()}
-                        onChange={(e) => onCheckboxToggle(item, e.currentTarget.checked)}
-                      />
-                    </label>
-                    <Icon size={16} strokeWidth={1.6} class="vault-row-icon" />
-                    <span class="vault-row-text">
+            <div class="vault-head">
+              <span class="vault-head-cell" />
+              <span class="vault-head-cell" />
+              <SortHeader
+                label="Name"
+                col="name"
+                sortKey={sortKey()}
+                sortDir={sortDir()}
+                onSort={toggleSort}
+              />
+              <SortHeader
+                label="Username"
+                col="username"
+                sortKey={sortKey()}
+                sortDir={sortDir()}
+                onSort={toggleSort}
+              />
+              <span class="vault-head-cell" />
+            </div>
+            <div class="vault-list-scroll">
+              <For each={displayed()}>
+                {(item) => {
+                  const Icon = typeIcon(item.itemType);
+                  const isChecked = () => selectedIds().has(item.id);
+                  return (
+                    <div
+                      class="vault-row"
+                      classList={{
+                        active: selectedId() === item.id && selectedCount() === 0,
+                        'multi-selected': isChecked(),
+                      }}
+                      onClick={(e) => onRowClick(item, e)}
+                      onContextMenu={(e) => openCtxMenu(item, e)}
+                    >
+                      <label class="vault-row-check" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={isChecked()}
+                          onChange={(e) => onCheckboxToggle(item, e.currentTarget.checked)}
+                        />
+                      </label>
+                      <Icon size={16} strokeWidth={1.6} class="vault-row-icon" />
                       <span class="vault-row-name">{item.name}</span>
-                      <Show when={item.username}>
-                        <span class="vault-row-sub">{item.username}</span>
-                      </Show>
-                    </span>
-                    <Show when={item.favorite}>
-                      <Star size={13} strokeWidth={1.75} class="vault-row-fav" />
-                    </Show>
-                  </div>
-                );
-              }}
-            </For>
+                      <span class="vault-row-sub">{item.username ?? ''}</span>
+                      <span class="vault-row-end">
+                        <Show when={item.hasTotp}>
+                          <Timer size={13} strokeWidth={1.75} />
+                        </Show>
+                        <Show when={item.favorite}>
+                          <Star size={13} strokeWidth={1.75} class="vault-row-fav" />
+                        </Show>
+                      </span>
+                    </div>
+                  );
+                }}
+              </For>
+            </div>
           </Show>
         </aside>
 
@@ -871,6 +1095,9 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
             )}
           </Show>
         </section>
+            </>
+          </Match>
+        </Switch>
       </div>
 
       <Show when={editor().mode !== 'closed'}>
@@ -889,20 +1116,112 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
         })()}
       </Show>
 
-      <Show when={showAudit()}>
-        <div class="vault-audit-overlay" onClick={() => setShowAudit(false)}>
-          <div class="vault-audit-panel" onClick={(e) => e.stopPropagation()}>
-            <AuditReport
-              onClose={() => setShowAudit(false)}
-              onOpenItem={(id) => {
-                setShowAudit(false);
-                setFilter({ kind: 'all' });
-                clearSelection();
-                setSelectedId(id);
-              }}
-            />
-          </div>
-        </div>
+      <Show when={ctxMenu()}>
+        {(menu) => {
+          const item = () => menu().item;
+          const isLogin = () => item().itemType === 'login';
+          return (
+            <>
+              <div
+                class="vault-menu-backdrop"
+                onClick={closeCtxMenu}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  closeCtxMenu();
+                }}
+              />
+              <div
+                class="vault-ctx"
+                role="menu"
+                style={{ left: menu().x + 'px', top: menu().y + 'px' }}
+              >
+                <div class="vault-ctx-title">{item().name}</div>
+                <div class="vault-ctx-sep" />
+                <Show when={item().username}>
+                  <button
+                    class="vault-ctx-item"
+                    onClick={() => {
+                      closeCtxMenu();
+                      void copy('Username', item().username);
+                    }}
+                  >
+                    <UserRound size={14} /> Copy username
+                  </button>
+                </Show>
+                <Show when={isLogin()}>
+                  <button class="vault-ctx-item" onClick={() => void copyPasswordFor(item())}>
+                    <KeyRound size={14} /> Copy password
+                  </button>
+                </Show>
+                <Show when={item().hasTotp}>
+                  <button class="vault-ctx-item" onClick={() => void copyTotpFor(item())}>
+                    <Timer size={14} /> Copy one-time code
+                  </button>
+                </Show>
+                <Show when={isLogin()}>
+                  <button class="vault-ctx-item" onClick={() => void copyUriFor(item())}>
+                    <Copy size={14} /> Copy website
+                  </button>
+                  <button class="vault-ctx-item" onClick={() => void openSiteFor(item())}>
+                    <ExternalLink size={14} /> Open website
+                  </button>
+                </Show>
+                <div class="vault-ctx-sep" />
+                <Show
+                  when={!inTrash()}
+                  fallback={
+                    <>
+                      <button
+                        class="vault-ctx-item"
+                        onClick={() => {
+                          closeCtxMenu();
+                          void detailRestore(item().id);
+                        }}
+                      >
+                        <RotateCcw size={14} /> Restore
+                      </button>
+                      <button
+                        class="vault-ctx-item danger"
+                        onClick={() => {
+                          closeCtxMenu();
+                          void detailDelete(item().id, true);
+                        }}
+                      >
+                        <Trash2 size={14} /> Delete permanently
+                      </button>
+                    </>
+                  }
+                >
+                  <button class="vault-ctx-item" onClick={() => void rowFavorite(item())}>
+                    <Star size={14} /> {item().favorite ? 'Unfavorite' : 'Favorite'}
+                  </button>
+                  <button class="vault-ctx-item" onClick={() => void rowEdit(item())}>
+                    <Pencil size={14} /> Edit
+                  </button>
+                  <button
+                    class="vault-ctx-item"
+                    onClick={() => {
+                      closeCtxMenu();
+                      void detailClone(item().id);
+                    }}
+                  >
+                    <Copy size={14} /> Clone
+                  </button>
+                  <div class="vault-ctx-sep" />
+                  <button
+                    class="vault-ctx-item danger"
+                    onClick={() => {
+                      closeCtxMenu();
+                      void detailDelete(item().id, false);
+                    }}
+                  >
+                    <Trash2 size={14} /> Move to trash
+                  </button>
+                </Show>
+              </div>
+            </>
+          );
+        }}
       </Show>
 
       <CommandPalette
@@ -926,6 +1245,33 @@ function FilterButton(props: {
     <button class="vault-rail-btn" classList={{ active: props.active }} onClick={() => props.onClick()}>
       <Icon size={15} strokeWidth={1.6} />
       <span>{props.label}</span>
+    </button>
+  );
+}
+
+function SortHeader(props: {
+  label: string;
+  col: SortKey;
+  sortKey: SortKey;
+  sortDir: SortDir;
+  onSort: (k: SortKey) => void;
+}) {
+  const active = () => props.sortKey === props.col;
+  return (
+    <button
+      class="vault-head-cell sortable"
+      classList={{ sorted: active() }}
+      onClick={() => props.onSort(props.col)}
+    >
+      {props.label}
+      <Show when={active()}>
+        <Show
+          when={props.sortDir === 'asc'}
+          fallback={<ChevronDown size={12} class="vault-head-sort" />}
+        >
+          <ChevronUp size={12} class="vault-head-sort" />
+        </Show>
+      </Show>
     </button>
   );
 }

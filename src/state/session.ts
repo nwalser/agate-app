@@ -10,6 +10,7 @@ const DEFAULT_STATUS: SessionStatus = {
   unlocked: false,
   localUnlockConfigured: false,
   helloConfigured: false,
+  darkwebConsent: false,
   email: null,
 };
 
@@ -42,4 +43,14 @@ export function screenForStatus(s: SessionStatus): 'onboarding' | 'unlock' | 'va
   if (s.localUnlockConfigured && s.email) return 'unlock';
   if (s.loggedIn) return 'unlock';
   return 'onboarding';
+}
+
+// Test-only hook (webdriver e2e): re-derive the screen after a spec swaps the
+// fake IPC backend (see lib/ipc.ts `__agateInvoke`). A reload would wipe the
+// in-page fake, so specs call this instead. Same hard gate as the IPC seam —
+// `__AGATE_TEST_HOOKS__` is false for `tauri build`, so this is dead-code-
+// eliminated from release bundles and never ships.
+if (__AGATE_TEST_HOOKS__ && typeof window !== 'undefined' && navigator.webdriver) {
+  (window as Window & { __agateRefreshSession?: () => Promise<void> }).__agateRefreshSession =
+    () => refreshSession();
 }

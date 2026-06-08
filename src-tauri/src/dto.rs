@@ -346,6 +346,65 @@ pub struct ExposedResult {
     pub count: u64,
 }
 
+// ---------------------------------------------------------------------------
+// Dark-web / breach monitor (darkweb.rs → frontend). Two free, keyless
+// providers: XposedOrNot (per-email breach lookup — full email leaves the
+// device, hence opt-in) and HIBP's public /breaches directory (no email sent).
+// `BreachRecord` is a unified shape both providers map onto.
+// ---------------------------------------------------------------------------
+
+/// One breach. `data_classes` is the headline: *what personal data leaked*.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BreachRecord {
+    /// Display/stable name, e.g. "Adobe".
+    pub name: String,
+    /// Associated domain (may be empty).
+    pub domain: String,
+    /// Breach date as the provider gives it (a year "2026" or "YYYY-MM-DD").
+    pub breach_date: Option<String>,
+    /// Accounts in the breach, if known.
+    pub pwn_count: Option<u64>,
+    /// Categories of personal data exposed ("Email addresses", "Passwords", …).
+    pub data_classes: Vec<String>,
+    /// Human description (may contain HTML when sourced from HIBP).
+    pub description: Option<String>,
+    /// Logo URL, if any.
+    pub logo: Option<String>,
+    /// Whether the provider marks the breach as verified.
+    pub verified: bool,
+    /// How exposed passwords were stored ("plaintext", "hardtocrack", …); may be absent.
+    pub password_risk: Option<String>,
+}
+
+/// Per-email scan result from the dark-web monitor.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountBreaches {
+    pub email: String,
+    pub breaches: Vec<BreachRecord>,
+    /// Union of every data class across this email's breaches.
+    pub exposed_data: Vec<String>,
+    /// Overall risk label/score the provider assigns the address, if any.
+    pub risk_label: Option<String>,
+    pub risk_score: Option<i64>,
+}
+
+/// Aggregate dark-web report across every account email found in the vault.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DarkWebReport {
+    /// Every email actually scanned, including clean ones (empty `breaches`).
+    pub accounts: Vec<AccountBreaches>,
+    /// Total breaches across all scanned emails.
+    pub total_breaches: usize,
+    /// How many scanned emails came back clean.
+    pub clean: usize,
+    /// Emails found in the vault but NOT scanned (per-run cap, to respect the
+    /// provider's daily rate limit). Surfaced so coverage is never silently lost.
+    pub skipped: usize,
+}
+
 /// One create-or-edit payload for any item type.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]

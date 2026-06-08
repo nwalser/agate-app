@@ -160,11 +160,13 @@ pub async fn lock(state: &AppState) -> AgateResult<()> {
 /// Log out completely: clear the session and delete any local-unlock blob.
 pub async fn logout(state: &AppState) -> AgateResult<()> {
     state.session.lock().await.clear_secrets();
+    *state.breach_directory.lock().await = None;
 
     let email = {
         let mut cfg = state.config.lock().await;
         let email = cfg.email.take();
         cfg.local_unlock_configured = false;
+        cfg.darkweb_consent = false;
         email
     };
     if let Some(email) = email {

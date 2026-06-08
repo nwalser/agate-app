@@ -1,11 +1,19 @@
 import { createSignal, For, onMount, Show } from 'solid-js';
-import { ArrowLeft, Copy, DownloadCloud, Fingerprint, LogIn, RefreshCw, Trash2, UserPlus } from 'lucide-solid';
+import { ArrowLeft, Copy, DownloadCloud, Fingerprint, LogIn, Monitor, Moon, RefreshCw, Sun, Trash2, UserPlus } from 'lucide-solid';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { ipc } from '../lib/ipc.ts';
 import type { AccountSummary, PasswordGenOptions, ServerConfig } from '../lib/types.ts';
 import { refreshSession, server, setAddingAccount, status } from '../state/session.ts';
 import { pushToast, toastError } from '../state/toast.ts';
+import { setTheme, theme, type ThemePref } from '../state/theme.ts';
 import './Settings.css';
+
+// Theme picker options (segmented control in the Appearance section).
+const THEME_OPTIONS: { value: ThemePref; label: string; icon: typeof Sun }[] = [
+  { value: 'system', label: 'System', icon: Monitor },
+  { value: 'light', label: 'Light', icon: Sun },
+  { value: 'dark', label: 'Dark', icon: Moon },
+];
 
 function serverLabel(s: ServerConfig): string {
   if (s.region === 'eu') return 'Bitwarden EU';
@@ -182,6 +190,30 @@ export default function Settings(props: { onBack: () => void }) {
       </header>
 
       <div class="settings-body">
+        <section class="settings-section">
+          <h3>Appearance</h3>
+          <p class="muted settings-help">
+            Choose a light or dark theme, or follow your system setting.
+          </p>
+          <div class="theme-options">
+            <For each={THEME_OPTIONS}>
+              {(opt) => {
+                const Icon = opt.icon;
+                return (
+                  <button
+                    class="theme-option"
+                    classList={{ active: theme() === opt.value }}
+                    onClick={() => setTheme(opt.value)}
+                  >
+                    <Icon size={16} strokeWidth={1.6} />
+                    <span>{opt.label}</span>
+                  </button>
+                );
+              }}
+            </For>
+          </div>
+        </section>
+
         <section class="settings-section">
           <h3>Account</h3>
           <div class="settings-kv">

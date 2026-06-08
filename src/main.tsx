@@ -1,7 +1,11 @@
 import { render } from 'solid-js/web';
 import App from './App.tsx';
 import { toastError } from './state/toast.ts';
+import { initTheme } from './state/theme.ts';
 import './styles.css';
+
+// Paint the persisted theme before first render so there's no dark→light flash.
+initTheme();
 
 // Route uncaught errors + unhandled rejections into the toast pipeline so a
 // setup-time failure surfaces instead of dying silently in the webview console.

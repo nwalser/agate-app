@@ -23,6 +23,7 @@ export interface SessionStatus {
   unlocked: boolean;
   localUnlockConfigured: boolean;
   helloConfigured: boolean;
+  darkwebConsent: boolean;
   email: string | null;
 }
 
@@ -62,6 +63,38 @@ export interface ExposedResult {
   id: string;
   name: string;
   count: number;
+}
+
+// ---- Dark-web / breach monitor (mirror src-tauri/src/dto.rs) ----
+
+export interface BreachRecord {
+  name: string;
+  domain: string;
+  breachDate: string | null;
+  pwnCount: number | null;
+  /** What personal data leaked: "Email addresses", "Passwords", … */
+  dataClasses: string[];
+  description: string | null;
+  logo: string | null;
+  verified: boolean;
+  passwordRisk: string | null;
+}
+
+export interface AccountBreaches {
+  email: string;
+  breaches: BreachRecord[];
+  /** Union of every data class across this email's breaches. */
+  exposedData: string[];
+  riskLabel: string | null;
+  riskScore: number | null;
+}
+
+export interface DarkWebReport {
+  accounts: AccountBreaches[];
+  totalBreaches: number;
+  clean: number;
+  /** Vault emails found but not scanned this run (per-run cap / rate limit). */
+  skipped: number;
 }
 
 export type ItemType =

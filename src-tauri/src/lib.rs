@@ -7,6 +7,7 @@
 mod accounts;
 mod audit;
 mod auth;
+mod darkweb;
 mod dto;
 mod error;
 #[cfg(target_os = "windows")]
@@ -23,9 +24,9 @@ use bitwarden_core::{init_host_platform_info, DeviceType, HostPlatformInfo};
 use tauri::Manager;
 
 use dto::{
-    AccountSummary, ExposedResult, Folder, ItemDetail, ItemInput, LoginResult, PassphraseGenOptions,
-    PasswordGenOptions, ServerConfig, SessionStatus, TotpCode, TwoFactorInput, VaultHealthReport,
-    VaultItem,
+    AccountBreaches, AccountSummary, BreachRecord, DarkWebReport, ExposedResult, Folder, ItemDetail,
+    ItemInput, LoginResult, PassphraseGenOptions, PasswordGenOptions, ServerConfig, SessionStatus,
+    TotpCode, TwoFactorInput, VaultHealthReport, VaultItem,
 };
 use error::{AgateError, AgateResult, ErrorKind};
 use state::AppState;
@@ -47,6 +48,7 @@ async fn get_session_status(state: State<'_>) -> AgateResult<SessionStatus> {
         unlocked,
         local_unlock_configured: cfg.local_unlock_configured,
         hello_configured: cfg.hello_configured,
+        darkweb_consent: cfg.darkweb_consent,
         email: cfg.email.clone(),
     })
 }
@@ -201,6 +203,28 @@ async fn audit_offline(state: State<'_>) -> AgateResult<VaultHealthReport> {
 #[tauri::command]
 async fn audit_exposed(state: State<'_>) -> AgateResult<Vec<ExposedResult>> {
     audit::audit_exposed(&state).await
+}
+
+// ---- dark-web / breach monitor (darkweb.rs) ----
+
+#[tauri::command]
+async fn set_darkweb_consent(state: State<'_>, enabled: bool) -> AgateResult<()> {
+    darkweb::set_consent(&state, enabled).await
+}
+
+#[tauri::command]
+async fn darkweb_scan_email(state: State<'_>, email: String) -> AgateResult<AccountBreaches> {
+    darkweb::scan_email(&state, email).await
+}
+
+#[tauri::command]
+async fn darkweb_scan_vault(state: State<'_>) -> AgateResult<DarkWebReport> {
+    darkweb::scan_vault(&state).await
+}
+
+#[tauri::command]
+async fn breach_directory(state: State<'_>) -> AgateResult<Vec<BreachRecord>> {
+    darkweb::directory(&state).await
 }
 
 // ---- Windows Hello unlock (hello.rs; stubs on other platforms) ----
@@ -369,6 +393,10 @@ pub fn run() {
             rename_folder,
             audit_offline,
             audit_exposed,
+            set_darkweb_consent,
+            darkweb_scan_email,
+            darkweb_scan_vault,
+            breach_directory,
             hello_available,
             hello_enable,
             hello_disable,

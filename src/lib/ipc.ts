@@ -3,7 +3,10 @@
 
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import type {
+  AccountBreaches,
   AccountSummary,
+  BreachRecord,
+  DarkWebReport,
   ExposedResult,
   Folder,
   ItemDetail,
@@ -26,9 +29,10 @@ import type {
 // — the same pattern as the official clients' tests, mirroring themia-app.
 //
 // Hard-gated so it NEVER ships in a release: the hook is only installed when
-// BOTH `import.meta.env.DEV` (false for `tauri build`, so the block is
-// dead-code-eliminated from production bundles) AND `navigator.webdriver` are
-// true. A normally-launched release app has neither, so there is no backdoor.
+// BOTH `__AGATE_TEST_HOOKS__` (a build-time constant — false for `tauri build`,
+// so the whole block is dead-code-eliminated from production bundles) AND
+// `navigator.webdriver` are true. A normally-launched release app has neither,
+// so there is no backdoor.
 type RawInvoke = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
 
 const defaultInvoke: RawInvoke = (cmd, args) => tauriInvoke(cmd, args);
@@ -47,7 +51,7 @@ declare global {
   }
 }
 
-if (import.meta.env.DEV && typeof window !== 'undefined' && navigator.webdriver) {
+if (__AGATE_TEST_HOOKS__ && typeof window !== 'undefined' && navigator.webdriver) {
   window.__agateInvoke = {
     setInvoke: (fn: RawInvoke | null) => {
       invokeImpl = fn ?? defaultInvoke;
@@ -129,6 +133,18 @@ export const ipc = {
   auditOffline: (): Promise<VaultHealthReport> => invoke('audit_offline'),
 
   auditExposed: (): Promise<ExposedResult[]> => invoke('audit_exposed'),
+
+  // ---- dark-web / breach monitor ----
+
+  setDarkwebConsent: (enabled: boolean): Promise<void> =>
+    invoke('set_darkweb_consent', { enabled }),
+
+  darkwebScanEmail: (email: string): Promise<AccountBreaches> =>
+    invoke('darkweb_scan_email', { email }),
+
+  darkwebScanVault: (): Promise<DarkWebReport> => invoke('darkweb_scan_vault'),
+
+  breachDirectory: (): Promise<BreachRecord[]> => invoke('breach_directory'),
 
   // ---- Windows Hello unlock ----
 

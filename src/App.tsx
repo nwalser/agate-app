@@ -1,4 +1,5 @@
 import { createMemo, createSignal, Match, onMount, Show, Switch } from 'solid-js';
+import Titlebar from './components/Titlebar.tsx';
 import ToastHost from './components/Toast.tsx';
 import Onboarding from './screens/Onboarding.tsx';
 import Unlock from './screens/Unlock.tsx';
@@ -20,6 +21,10 @@ export default function App() {
 
   const base = createMemo(() => screenForStatus(status()));
 
+  // Search lives in the titlebar but only belongs to the vault list — hide it on
+  // onboarding / unlock / settings / add-account.
+  const showSearch = createMemo(() => base() === 'vault' && !showSettings() && !addingAccount());
+
   async function lock() {
     try {
       await ipc.lock();
@@ -32,6 +37,7 @@ export default function App() {
 
   return (
     <>
+      <Titlebar showSearch={showSearch()} />
       <Show when={ready()} fallback={<div class="app-loading muted">Loading…</div>}>
         <Switch>
           {/* Adding a new account: blank login while other accounts stay remembered. */}

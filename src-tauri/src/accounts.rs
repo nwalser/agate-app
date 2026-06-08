@@ -52,8 +52,11 @@ pub async fn switch_account(state: &AppState, email: String) -> AgateResult<()> 
         cfg.email = Some(email);
         cfg.local_unlock_configured = has_local;
         cfg.hello_configured = false; // Hello is re-enabled per account
+        cfg.darkweb_consent = false; // dark-web monitor is re-consented per account
     }
     state.session.lock().await.clear_secrets();
+    // The cached breach directory is public, but reset it so a switch starts clean.
+    *state.breach_directory.lock().await = None;
     state.save_config().await
 }
 
@@ -69,6 +72,7 @@ pub async fn remove_account(state: &AppState, email: String) -> AgateResult<()> 
             cfg.email = None;
             cfg.local_unlock_configured = false;
             cfg.hello_configured = false;
+            cfg.darkweb_consent = false;
         }
         active
     };

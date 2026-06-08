@@ -5,7 +5,17 @@ import solid from 'vite-plugin-solid';
 // `target/` (Rust build output, tens of thousands of files) is excluded from the
 // file watcher so the dev server doesn't spend ~40s registering OS watch handles
 // on startup.
-export default defineConfig({
+export default defineConfig(({ command }) => ({
+  // Build-time gate for the test-only IPC seam (src/lib/ipc.ts, src/state/session.ts).
+  // True for `vite serve` (dev + the e2e harness) and for Tauri debug builds —
+  // `tauri dev` and the e2e `tauri build --debug` both export TAURI_ENV_DEBUG=true.
+  // A real release (`tauri build`, TAURI_ENV_DEBUG unset) makes it `false`, so the
+  // seam is dead-code-eliminated and never ships in a release binary.
+  define: {
+    __AGATE_TEST_HOOKS__: JSON.stringify(
+      command === 'serve' || process.env.TAURI_ENV_DEBUG === 'true',
+    ),
+  },
   plugins: [solid()],
   clearScreen: false,
   server: {
@@ -21,4 +31,4 @@ export default defineConfig({
     outDir: 'dist',
     emptyOutDir: true,
   },
-});
+}));
