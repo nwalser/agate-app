@@ -56,7 +56,16 @@ pub async fn sync(state: &AppState, force: bool) -> AgateResult<()> {
         .sync()
         .sync(SyncRequest { force, exclude_subdomains: None })
         .await
-        .map_err(|e| AgateError::new(ErrorKind::Network, format!("Sync failed: {e}")))?;
+        .map_err(|e| {
+            let mut msg = format!("Sync failed: {e}");
+            // Append the (types-only, value-free) response shape captured by the
+            // self-hosted proxy, to pinpoint server/SDK schema mismatches.
+            if let Some(shape) = crate::proxy::last_sync_shape() {
+                let shape = &shape[..shape.len().min(1800)];
+                msg.push_str(&format!(" | response shape: {shape}"));
+            }
+            AgateError::new(ErrorKind::Network, msg)
+        })?;
 
     // Convert raw API cipher models → domain ciphers. Undecodable ones are
     // skipped loudly rather than failing the whole sync.

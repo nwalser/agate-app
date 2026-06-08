@@ -19,9 +19,21 @@ const NEW_PRELOGIN: &str = "/accounts/prelogin/password";
 const OLD_PRELOGIN: &str = "/accounts/prelogin";
 
 static PROXIES: OnceLock<Mutex<HashMap<String, u16>>> = OnceLock::new();
+/// The last observed `/sync` response shape (types only, never values), so the
+/// vault layer can surface it in a sync error for diagnosis.
+static LAST_SYNC_SHAPE: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 
 fn registry() -> &'static Mutex<HashMap<String, u16>> {
     PROXIES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn sync_shape_cell() -> &'static Mutex<Option<String>> {
+    LAST_SYNC_SHAPE.get_or_init(|| Mutex::new(None))
+}
+
+/// The type-only skeleton of the most recent `/sync` response, if captured.
+pub fn last_sync_shape() -> Option<String> {
+    sync_shape_cell().lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
 /// Ensure a loopback identity proxy is running for `upstream_identity_base`
@@ -154,7 +166,9 @@ fn handle(client: &reqwest::blocking::Client, upstream: &str, mut request: tiny_
         // mismatches. Safe to share: contains no secrets.
         if path.contains("/sync") {
             if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
-                log::error!("AGATE_SYNC_SHAPE (types only, no values): {}", skeleton(&v, 8));
+                let shape = skeleton(&v, 8);
+                log::error!("AGATE_SYNC_SHAPE (types only, no values): {shape}");
+                *sync_shape_cell().lock().unwrap_or_else(|e| e.into_inner()) = Some(shape);
             }
         }
         Ok((status, out_headers, bytes))
