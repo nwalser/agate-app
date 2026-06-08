@@ -21,7 +21,8 @@
     "test:e2e": "wdio run ./tests/e2e/wdio.conf.ts",
     "test:e2e:spec": "wdio run ./tests/e2e/wdio.conf.ts --spec",
     "test:e2e:all": "npm run test:e2e:build && npm run test:e2e",
-    "check": "npm run typecheck && npm run lint && npm run test:unit"
+    "check": "npm run typecheck && npm run lint && npm run test:unit",
+    "release": "node scripts/release.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",

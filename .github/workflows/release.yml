@@ -1,18 +1,21 @@
 name: Release
 
 # Triggered by a version tag (agate-v*). Builds Linux + macOS (arm64 + x86_64) +
-# Windows, signs the updater artifacts with the minisign key, and publishes a
-# (draft) GitHub Release including the updater `latest.json`.
+# Windows, signs the updater artifacts with the minisign key, optionally OS-signs
+# (macOS notarization / Windows Authenticode), and publishes a (draft) GitHub
+# Release including the updater `latest.json` + a SHA-256 checksum manifest.
 #
-# Required repository secrets:
+# Cut a release with:  npm run release -- 0.2.0   (syncs all version files, tags
+# agate-v0.2.0), then  git push --follow-tags.  See docs/SIGNING.md.
+#
+# Required repository secrets (updater — free, mandatory for auto-update):
 #   TAURI_SIGNING_PRIVATE_KEY           — contents of the minisign private key
 #   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  — its password
-# (Optional, for OS code signing — see docs/SIGNING.md:)
+# Optional macOS Developer ID signing + notarization (see docs/SIGNING.md):
 #   APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY,
 #   APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID
-#
-# Tag a release with:  npm version patch && git push --follow-tags  (after
-# aligning the tauri.conf.json version), or push a tag like `agate-v0.2.0`.
+# Optional Windows Authenticode signing (base64-encoded PFX, see docs/SIGNING.md):
+#   WINDOWS_CERTIFICATE, WINDOWS_CERTIFICATE_PASSWORD
 
 on:
   push:
@@ -23,6 +26,11 @@ jobs:
   release:
     permissions:
       contents: write
+    env:
+      # Surfaced to the step `if:` guards so the Windows signing step is a no-op
+      # when no certificate secret is configured.
+      WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+      WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
     strategy:
       fail-fast: false
       matrix:
@@ -40,16 +48,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      # Fail fast (before the long Rust build) if the pushed tag and the three
+      # version files disagree — the #1 cause of a broken release. npm run release
+      # keeps them in sync; this is the backstop.
+      - name: Verify tag matches version files
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#agate-v}"
+          conf=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          pkg=$(node -p "require('./package.json').version")
+          cargo=$(node -e "const fs=require('fs');const m=fs.readFileSync('src-tauri/Cargo.toml','utf8').match(/^\[package\][\s\S]*?^version\s*=\s*\"([^\"]+)\"/m);process.stdout.write(m?m[1]:'')")
+          fail=0
+          for pair in "tauri.conf.json:$conf" "package.json:$pkg" "Cargo.toml:$cargo"; do
+            name="${pair%%:*}"; ver="${pair#*:}"
+            if [ "$ver" != "$tag" ]; then
+              echo "::error::$name version '$ver' != tag 'agate-v$tag'"; fail=1
+            fi
+          done
+          [ "$fail" = 0 ] || { echo "Run: npm run release -- $tag"; exit 1; }
+          echo "Version $tag is consistent across tag, tauri.conf.json, package.json, Cargo.toml."
+
       - name: Install Linux build dependencies
         if: startsWith(matrix.platform, 'ubuntu')
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: lts/*
-          cache: npm
 
       - run: npm ci
 
@@ -61,6 +89,29 @@ jobs:
         with:
           workspaces: './src-tauri -> target'
           cache-on-failure: true
+
+      # Optional Windows Authenticode signing. No-op unless WINDOWS_CERTIFICATE is
+      # set (a base64-encoded PFX). Imports the cert and injects its thumbprint
+      # into tauri.conf.json so `tauri build` Authenticode-signs the installers.
+      - name: Set up Windows code signing
+        if: startsWith(matrix.platform, 'windows') && env.WINDOWS_CERTIFICATE != ''
+        shell: pwsh
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP 'agate-signing.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+          $pwd = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+          $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $pwd
+          Remove-Item $pfx -Force
+          $conf = 'src-tauri/tauri.conf.json'
+          $json = Get-Content $conf -Raw | ConvertFrom-Json
+          if (-not $json.bundle.PSObject.Properties['windows']) {
+            $json.bundle | Add-Member -NotePropertyName windows -NotePropertyValue ([PSCustomObject]@{})
+          }
+          $json.bundle.windows | Add-Member -NotePropertyName certificateThumbprint -NotePropertyValue $cert.Thumbprint -Force
+          $json.bundle.windows | Add-Member -NotePropertyName digestAlgorithm -NotePropertyValue 'sha256' -Force
+          $json.bundle.windows | Add-Member -NotePropertyName timestampUrl -NotePropertyValue 'http://timestamp.digicert.com' -Force
+          $json | ConvertTo-Json -Depth 100 | Set-Content $conf -Encoding utf8
+          Write-Host "Windows Authenticode signing enabled (thumbprint $($cert.Thumbprint))."
 
       - uses: tauri-apps/tauri-action@v0
         env:
@@ -79,7 +130,31 @@ jobs:
         with:
           tagName: agate-v__VERSION__
           releaseName: 'Agate v__VERSION__'
-          releaseBody: 'Unofficial Bitwarden desktop client. Download the installer for your platform below. See docs/SIGNING.md for the first-launch security prompts on unsigned builds.'
+          releaseBody: 'Unofficial Bitwarden desktop client. Download the installer for your platform below; verify it against SHA256SUMS.txt. See docs/SIGNING.md for the first-launch security prompts on unsigned builds.'
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+  # After all platform builds have attached their installers to the (draft)
+  # release, publish a single SHA-256 manifest so users can verify downloads —
+  # the integrity story for the platforms we cannot OS-sign for free.
+  checksums:
+    needs: release
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: Generate and upload SHA256SUMS.txt
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          mkdir -p dl
+          gh release download "$TAG" --dir dl --pattern '*' || true
+          if [ -z "$(ls -A dl)" ]; then
+            echo "::warning::No release assets found to checksum."; exit 0
+          fi
+          ( cd dl && sha256sum -- * ) > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          gh release upload "$TAG" SHA256SUMS.txt --clobber
