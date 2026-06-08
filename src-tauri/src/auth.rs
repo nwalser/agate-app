@@ -50,8 +50,13 @@ async fn build_client(state: &AppState, server: &ServerConfig) -> AgateResult<Pa
     // that one path; the SDK does all login/crypto/token work unchanged.
     if matches!(server, ServerConfig::SelfHosted { .. }) {
         let upstream_identity = settings.identity_url.clone();
-        settings.identity_url = crate::proxy::ensure_identity_proxy(&upstream_identity)
+        settings.identity_url = crate::proxy::ensure_proxy(&upstream_identity)
             .map_err(|e| AgateError::new(ErrorKind::Network, format!("identity proxy: {e}")))?;
+        // Route the API through the proxy too (no path rewrite needed there; this
+        // also captures the /sync response shape for diagnostics).
+        let upstream_api = settings.api_url.clone();
+        settings.api_url = crate::proxy::ensure_proxy(&upstream_api)
+            .map_err(|e| AgateError::new(ErrorKind::Network, format!("api proxy: {e}")))?;
     }
     Ok(PasswordManagerClient::new(Some(settings)))
 }

@@ -27,7 +27,7 @@ fn registry() -> &'static Mutex<HashMap<String, u16>> {
 /// Ensure a loopback identity proxy is running for `upstream_identity_base`
 /// (e.g. `https://vault.example.com/identity`) and return its loopback base URL
 /// (e.g. `http://127.0.0.1:54321`) to use as the SDK `identity_url`.
-pub fn ensure_identity_proxy(upstream_identity_base: &str) -> std::io::Result<String> {
+pub fn ensure_proxy(upstream_identity_base: &str) -> std::io::Result<String> {
     let key = upstream_identity_base.trim_end_matches('/').to_string();
 
     {
@@ -50,6 +50,32 @@ pub fn ensure_identity_proxy(upstream_identity_base: &str) -> std::io::Result<St
 
     registry().lock().unwrap_or_else(|e| e.into_inner()).insert(key, port);
     Ok(format!("http://127.0.0.1:{port}"))
+}
+
+/// Render a JSON value as a type-only skeleton (keys preserved, values replaced
+/// by their type) so we can diagnose schema mismatches without logging secrets.
+fn skeleton(v: &serde_json::Value, depth: usize) -> String {
+    use serde_json::Value;
+    if depth == 0 {
+        return "…".to_string();
+    }
+    match v {
+        Value::Null => "null".into(),
+        Value::Bool(_) => "bool".into(),
+        Value::Number(_) => "num".into(),
+        Value::String(_) => "str".into(),
+        Value::Array(a) => match a.first() {
+            Some(first) => format!("[{}]x{}", skeleton(first, depth - 1), a.len()),
+            None => "[]".into(),
+        },
+        Value::Object(map) => {
+            let inner: Vec<String> = map
+                .iter()
+                .map(|(k, val)| format!("{k}:{}", skeleton(val, depth - 1)))
+                .collect();
+            format!("{{{}}}", inner.join(","))
+        }
+    }
 }
 
 fn run_proxy(server: tiny_http::Server, upstream: String) {
@@ -123,6 +149,14 @@ fn handle(client: &reqwest::blocking::Client, upstream: &str, mut request: tiny_
             }
         }
         let bytes = resp.bytes()?.to_vec();
+        // Diagnostic: log the TYPE STRUCTURE of the sync response (keys + value
+        // types only — never the values) to help pinpoint server/SDK schema
+        // mismatches. Safe to share: contains no secrets.
+        if path.contains("/sync") {
+            if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                log::error!("AGATE_SYNC_SHAPE (types only, no values): {}", skeleton(&v, 8));
+            }
+        }
         Ok((status, out_headers, bytes))
     })();
 
@@ -159,7 +193,7 @@ mod tests {
         let Ok(base) = std::env::var("AGATE_TEST_IDENTITY") else {
             return;
         };
-        let local = ensure_identity_proxy(&base).expect("start proxy");
+        let local = ensure_proxy(&base).expect("start proxy");
         let client = reqwest::blocking::Client::new();
         // The SDK posts the NEW path; the proxy must rewrite it to the OLD one.
         let resp = client
