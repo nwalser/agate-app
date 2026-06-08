@@ -1,12 +1,12 @@
 name: Release
 
-# Triggered by a version tag (agate-v*). Builds Linux + macOS (arm64 + x86_64) +
+# Triggered by a version tag (v*). Builds Linux + macOS (arm64 + x86_64) +
 # Windows, signs the updater artifacts with the minisign key, optionally OS-signs
 # (macOS notarization / Windows Authenticode), and publishes a (draft) GitHub
 # Release including the updater `latest.json` + a SHA-256 checksum manifest.
 #
 # Cut a release with:  npm run release -- 0.2.0   (syncs all version files, tags
-# agate-v0.2.0), then  git push --follow-tags.  See docs/SIGNING.md.
+# v0.2.0), then  git push --follow-tags.  See docs/SIGNING.md.
 #
 # Required repository secrets (updater — free, mandatory for auto-update):
 #   TAURI_SIGNING_PRIVATE_KEY           — contents of the minisign private key
@@ -20,7 +20,7 @@ name: Release
 on:
   push:
     tags:
-      - 'agate-v*'
+      - 'v*'
 
 jobs:
   release:
@@ -59,7 +59,7 @@ jobs:
       - name: Verify tag matches version files
         shell: bash
         run: |
-          tag="${GITHUB_REF_NAME#agate-v}"
+          tag="${GITHUB_REF_NAME#v}"
           conf=$(node -p "require('./src-tauri/tauri.conf.json').version")
           pkg=$(node -p "require('./package.json').version")
           cargo=$(node -e "const fs=require('fs');const m=fs.readFileSync('src-tauri/Cargo.toml','utf8').match(/^\[package\][\s\S]*?^version\s*=\s*\"([^\"]+)\"/m);process.stdout.write(m?m[1]:'')")
@@ -67,7 +67,7 @@ jobs:
           for pair in "tauri.conf.json:$conf" "package.json:$pkg" "Cargo.toml:$cargo"; do
             name="${pair%%:*}"; ver="${pair#*:}"
             if [ "$ver" != "$tag" ]; then
-              echo "::error::$name version '$ver' != tag 'agate-v$tag'"; fail=1
+              echo "::error::$name version '$ver' != tag 'v$tag'"; fail=1
             fi
           done
           [ "$fail" = 0 ] || { echo "Run: npm run release -- $tag"; exit 1; }
@@ -156,7 +156,7 @@ jobs:
           # macOS APPLE_* vars are injected via $GITHUB_ENV by the "Set up macOS
           # code signing" step above — only when a cert secret exists, never empty.
         with:
-          tagName: agate-v__VERSION__
+          tagName: v__VERSION__
           releaseName: 'Agate v__VERSION__'
           releaseBody: 'Unofficial Bitwarden desktop client. Download the installer for your platform below; verify it against SHA256SUMS.txt. See docs/SIGNING.md for the first-launch security prompts on unsigned builds.'
           releaseDraft: true

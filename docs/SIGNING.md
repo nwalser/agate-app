@@ -82,7 +82,7 @@ auto-updatable.
 
 1. `npm run release -- 0.2.0` — syncs the version across `package.json`,
    `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` and `Cargo.lock`, commits,
-   and creates the `agate-v0.2.0` tag. (It does **not** push.)
+   and creates the `v0.2.0` tag. (It does **not** push.)
 2. `git push --follow-tags` — pushes the commit and the tag.
 3. `release.yml` builds all platforms, signs the updater artifacts (+ OS-signs
    where the optional secrets are set), uploads `SHA256SUMS.txt`, and creates a

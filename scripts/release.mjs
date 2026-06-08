@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Cut a release: sync the version across every file that carries it, commit, and
-// create the `agate-v<version>` tag that .github/workflows/release.yml listens
+// create the `v<version>` tag that .github/workflows/release.yml listens
 // for. Does NOT push — review the commit/tag, then `git push --follow-tags`.
 //
 //   npm run release -- 0.2.0
@@ -21,7 +21,7 @@ if (!version || !/^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$/.test(version)) {
   process.exit(1);
 }
 
-const tag = `agate-v${version}`;
+const tag = `v${version}`;
 
 // --- update the version-bearing files ---------------------------------------
 
