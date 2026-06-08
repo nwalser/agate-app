@@ -222,6 +222,7 @@ export function loggedOutFake(over: Partial<FakeConfig> = {}): FakeConfig {
     generatedPassword: 'Xq7!vPz2@Lm9',
     generatedPassphrase: 'amber-tractor-vivid-9',
     updateVersion: null,
+    errors: {},
     ...over,
   };
 }

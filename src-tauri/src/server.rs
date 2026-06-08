@@ -9,6 +9,15 @@ use bitwarden_core::{ClientSettings, DeviceType};
 use crate::dto::ServerConfig;
 use crate::error::{AgateError, AgateResult, ErrorKind};
 
+/// Human label for a server: the cloud region name, or the self-hosted base URL.
+pub fn server_label(server: &ServerConfig) -> String {
+    match server {
+        ServerConfig::Us => "Bitwarden US".to_string(),
+        ServerConfig::Eu => "Bitwarden EU".to_string(),
+        ServerConfig::SelfHosted { base_url } => base_url.clone(),
+    }
+}
+
 const US_IDENTITY: &str = "https://identity.bitwarden.com";
 const US_API: &str = "https://api.bitwarden.com";
 const EU_IDENTITY: &str = "https://identity.bitwarden.eu";

@@ -357,11 +357,26 @@ pub fn run() {
                 .unwrap_or_else(|_| std::path::PathBuf::from("."));
             app.manage(AppState::load(config_dir));
 
-            // Exclude the window from screen capture on Windows (decrypted
-            // secrets are rendered in the DOM).
-            #[cfg(target_os = "windows")]
             if let Some(window) = app.get_webview_window("main") {
+                // Exclude the window from screen capture on Windows (decrypted
+                // secrets are rendered in the DOM).
+                #[cfg(target_os = "windows")]
                 hello::protect_window(&window);
+
+                // Native window chrome per platform. Windows/Linux run
+                // borderless so the custom titlebar (components/Titlebar.tsx)
+                // owns the top strip with its own min/maximize/close controls.
+                // macOS keeps its real title bar with the overlay style
+                // (tauri.conf.json `titleBarStyle`), so the traffic-light
+                // buttons stay native and top-left and the frontend only draws
+                // beside them. Best-effort: a failure here leaves the default
+                // (decorated) chrome rather than crashing setup.
+                #[cfg(not(target_os = "macos"))]
+                let _ = window.set_decorations(false);
+
+                // The window starts hidden (`visible: false`) so the decoration
+                // change is never visible as a flash; reveal it once chrome is set.
+                let _ = window.show();
             }
             Ok(())
         })

@@ -84,7 +84,7 @@ async fn collect_account_emails(state: &AppState) -> AgateResult<Vec<String>> {
     let ciphers_client = client.vault().ciphers();
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
-    let mut push = |raw: &str, out: &mut Vec<String>, seen: &mut std::collections::HashSet<String>| {
+    let push = |raw: &str, out: &mut Vec<String>, seen: &mut std::collections::HashSet<String>| {
         if is_email(raw) {
             let n = normalize_email(raw);
             if seen.insert(n.clone()) {

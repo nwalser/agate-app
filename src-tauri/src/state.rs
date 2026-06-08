@@ -1,39 +1,46 @@
 //! Managed application state + on-disk (non-secret) config.
 //!
-//! Secrets never live here or in the config file — only in memory (the SDK
-//! client / decrypted ciphers, dropped on lock) and the OS keychain (the
-//! local-unlock blob, see `secrets.rs`). The config file holds only the chosen
-//! server, a stable device id, the account email, and whether local unlock is
-//! configured.
+//! Secrets never live in the config file — only in memory (the per-connection SDK
+//! clients / decrypted ciphers and the App Unlock Key, all dropped on lock) and
+//! the OS keychain (the sealed per-connection credentials + the app-unlock
+//! descriptor, see `secrets.rs`). The config file holds only the connection list
+//! (server + email), a stable device id, the app-unlock flags, and non-secret
+//! preferences (dark-web opt-in).
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use bitwarden_pm::PasswordManagerClient;
 use bitwarden_vault::Cipher;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
+use zeroize::Zeroizing;
 
 use crate::dto::{BreachRecord, Folder, ServerConfig};
 use crate::error::{AgateError, AgateResult, ErrorKind};
 
-/// A known account for fast switching (non-secret: server + email only).
+/// A known connection for the unlock-all set + add-connection prefill
+/// (non-secret: server + email only).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccountRef {
     pub server: ServerConfig,
     pub email: String,
 }
 
-/// Non-secret config persisted across launches. `server`/`email` are the ACTIVE
-/// account; `accounts` is the set of known accounts the user can switch between.
+/// Non-secret config persisted across launches. `accounts` is the set of
+/// configured connections; `server` is just the last-used server (add-connection
+/// form prefill). The app-unlock flags are app-wide, not per-account.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersistedConfig {
     #[serde(default = "schema_version")]
     pub schema_version: u32,
+    #[serde(default)]
     pub server: ServerConfig,
     pub device_id: String,
-    pub email: Option<String>,
+    /// A single app password (App Unlock Key) is configured.
     #[serde(default)]
-    pub local_unlock_configured: bool,
+    pub app_unlock_configured: bool,
+    /// Windows Hello unlock is enabled (app-wide).
     #[serde(default)]
     pub hello_configured: bool,
     /// The user opted in to the dark-web monitor (emails leave the device to a
@@ -45,15 +52,20 @@ pub struct PersistedConfig {
 }
 
 impl PersistedConfig {
-    /// Record/update an account in the known-accounts list (dedup by email).
+    /// Record/update a connection in the list (dedup by email).
     pub fn upsert_account(&mut self, server: ServerConfig, email: &str) {
         self.accounts.retain(|a| a.email != email);
         self.accounts.push(AccountRef { server, email: email.to_string() });
     }
+
+    /// The server recorded for `email`, if the connection is known.
+    pub fn server_for(&self, email: &str) -> Option<ServerConfig> {
+        self.accounts.iter().find(|a| a.email == email).map(|a| a.server.clone())
+    }
 }
 
 fn schema_version() -> u32 {
-    1
+    2
 }
 
 impl PersistedConfig {
@@ -62,8 +74,7 @@ impl PersistedConfig {
             schema_version: schema_version(),
             server: ServerConfig::default(),
             device_id: uuid::Uuid::new_v4().to_string(),
-            email: None,
-            local_unlock_configured: false,
+            app_unlock_configured: false,
             hello_configured: false,
             darkweb_consent: false,
             accounts: Vec::new(),
@@ -71,51 +82,63 @@ impl PersistedConfig {
     }
 }
 
-/// The live session. Secret material is cleared on full lock / logout.
-#[derive(Default)]
-pub struct Session {
-    /// Active (unlocked) SDK client; `Some` while the vault is unlocked.
-    pub client: Option<PasswordManagerClient>,
-    /// Soft-locked client held in memory behind the local password. When local
-    /// unlock is configured, locking moves `client` here instead of dropping it,
-    /// so the user can re-unlock with the local password (no master password).
-    /// Lost on full logout and on process exit — see `unlock.rs`.
-    pub locked_client: Option<PasswordManagerClient>,
-    /// Encrypted domain ciphers from the last sync, kept so the detail pane can
-    /// decrypt a single item on demand. Cleared on lock.
+/// One live, unlocked connection: its SDK client plus the last sync's encrypted
+/// ciphers (decrypted on demand) and decrypted folders.
+pub struct LiveConnection {
+    pub client: PasswordManagerClient,
     pub ciphers: Vec<Cipher>,
-    /// Decrypted folder names from the last sync.
     pub folders: Vec<Folder>,
 }
 
+impl LiveConnection {
+    pub fn new(client: PasswordManagerClient) -> Self {
+        Self { client, ciphers: Vec::new(), folders: Vec::new() }
+    }
+}
+
+/// The live session. All secret material is dropped on lock / logout.
+#[derive(Default)]
+pub struct Session {
+    /// Vault Master Key (the data key that seals every connection credential),
+    /// held only while unlocked so newly added connections can be sealed without
+    /// re-prompting the app password. Zeroized when dropped/cleared.
+    pub vmk: Option<Zeroizing<[u8; 32]>>,
+    /// Unlocked connections, keyed by account email.
+    pub connections: HashMap<String, LiveConnection>,
+    /// Default account for "new item" / folder context (one of `connections`).
+    pub active_email: Option<String>,
+}
+
 impl Session {
-    /// A fresh handle to the active client (the inner SDK `Client` is cheap to
-    /// clone — it's `Arc`-backed and shares the unlocked key store).
-    pub fn cloned_client(&self) -> Option<PasswordManagerClient> {
-        self.client.as_ref().map(|pm| PasswordManagerClient(pm.0.clone()))
+    /// A fresh handle to a connection's client (the inner SDK `Client` is cheap to
+    /// clone — `Arc`-backed, sharing the unlocked key store).
+    pub fn client_for(&self, email: &str) -> Option<PasswordManagerClient> {
+        self.connections.get(email).map(|c| PasswordManagerClient(c.client.0.clone()))
     }
 
-    /// True if there is a session at all (unlocked or soft-locked).
-    pub fn has_session(&self) -> bool {
-        self.client.is_some() || self.locked_client.is_some()
+    /// True if any connection is currently unlocked.
+    pub fn any_unlocked(&self) -> bool {
+        self.connections.values().any(|c| c.client.is_unlocked())
     }
 
-    /// Soft lock: keep the client in memory behind the local password, but clear
-    /// the decrypted item cache so a locked window exposes nothing.
-    pub fn soft_lock(&mut self) {
-        if let Some(client) = self.client.take() {
-            self.locked_client = Some(client);
-        }
-        self.ciphers.clear();
-        self.folders.clear();
+    /// Number of live connections.
+    pub fn connection_count(&self) -> usize {
+        self.connections.len()
     }
 
-    /// Drop all in-memory secret material (full lock / logout).
+    /// Sorted list of live connection emails (stable order for the UI).
+    pub fn emails(&self) -> Vec<String> {
+        let mut v: Vec<String> = self.connections.keys().cloned().collect();
+        v.sort();
+        v
+    }
+
+    /// Drop all in-memory secret material (lock / logout): every client, the
+    /// decrypted caches, and the AUK (zeroized on drop).
     pub fn clear_secrets(&mut self) {
-        self.client = None;
-        self.locked_client = None;
-        self.ciphers.clear();
-        self.folders.clear();
+        self.auk = None; // Zeroizing zeroes the AUK on drop.
+        self.connections.clear();
+        self.active_email = None;
     }
 }
 
@@ -133,11 +156,7 @@ impl AppState {
     /// Load (or initialize) config from the app config directory.
     pub fn load(config_dir: PathBuf) -> Self {
         let config_path = config_dir.join("config.json");
-        let config = read_config(&config_path).unwrap_or_else(|| {
-            // Distinguish absent (fresh install) from corrupt: a corrupt file is
-            // logged loudly and replaced with defaults rather than silently eaten.
-            PersistedConfig::fresh()
-        });
+        let config = read_config(&config_path).unwrap_or_else(PersistedConfig::fresh);
         Self {
             config: Mutex::new(config),
             session: Mutex::new(Session::default()),
@@ -156,12 +175,35 @@ impl AppState {
 fn read_config(path: &PathBuf) -> Option<PersistedConfig> {
     let bytes = std::fs::read(path).ok()?;
     match serde_json::from_slice::<PersistedConfig>(&bytes) {
-        Ok(cfg) => Some(cfg),
+        Ok(mut cfg) => {
+            migrate(&mut cfg);
+            Some(cfg)
+        }
         Err(e) => {
+            // Distinguish absent (the `?` above) from corrupt: a corrupt file is
+            // logged loudly and replaced with defaults rather than silently eaten.
             log::error!("config.json is corrupt, using defaults: {e}");
             None
         }
     }
+}
+
+/// Migrate older config in place. v1 (single-account local-unlock) → v2 (unified
+/// app-unlock): keep the connection list and the dark-web opt-in, but the old
+/// per-account local-unlock / Hello flags no longer apply — clear them so the user
+/// is routed through app-unlock setup, and best-effort delete the orphaned v1
+/// keychain verifiers (which were keyed by bare email).
+fn migrate(cfg: &mut PersistedConfig) {
+    if cfg.schema_version >= 2 {
+        return;
+    }
+    for acct in &cfg.accounts {
+        let _ = crate::secrets::delete_key(&acct.email); // ignore: best-effort cleanup
+    }
+    cfg.app_unlock_configured = false;
+    cfg.hello_configured = false;
+    cfg.schema_version = 2;
+    log::info!("migrated config v1 → v2 (app-unlock); {} connection(s) kept", cfg.accounts.len());
 }
 
 fn write_config(path: &PathBuf, cfg: &PersistedConfig) -> AgateResult<()> {

@@ -16,10 +16,18 @@ import './Titlebar.css';
 
 const appWindow = getCurrentWindow();
 
+// macOS keeps its native title bar (overlay style) with the real traffic-light
+// buttons top-left, so we draw no custom controls there — only a left gutter so
+// our content clears the lights. Windows/Linux run borderless and we own the
+// min/maximize/close controls. WKWebView reports "Macintosh" in its UA.
+const IS_MAC =
+  typeof navigator !== 'undefined' &&
+  (/Macintosh|Mac OS X/.test(navigator.userAgent) || /^Mac/.test(navigator.platform));
+
 export default function Titlebar(props: { showSearch: boolean }) {
   // Tracks the OS maximize state so the middle button shows the right glyph
   // (single square = maximize, overlapping = restore). Seeded once, then kept in
-  // sync via the window's resize event.
+  // sync via the window's resize event. Unused on macOS (no custom controls).
   const [maximized, setMaximized] = createSignal(false);
 
   function syncMaximized() {
@@ -32,6 +40,7 @@ export default function Titlebar(props: { showSearch: boolean }) {
   }
 
   onMount(() => {
+    if (IS_MAC) return;
     syncMaximized();
     const unlisten = appWindow.onResized(syncMaximized);
     onCleanup(() => {
@@ -40,7 +49,7 @@ export default function Titlebar(props: { showSearch: boolean }) {
   });
 
   return (
-    <header class="titlebar" data-tauri-drag-region>
+    <header class="titlebar" classList={{ mac: IS_MAC }} data-tauri-drag-region>
       <div class="titlebar-brand" data-tauri-drag-region>
         Agate
       </div>
@@ -58,25 +67,27 @@ export default function Titlebar(props: { showSearch: boolean }) {
         </Show>
       </div>
 
-      <div class="titlebar-controls">
-        <button class="titlebar-btn" title="Minimize" onClick={() => void appWindow.minimize()}>
-          <Minus size={15} strokeWidth={1.75} />
-        </button>
-        <button
-          class="titlebar-btn"
-          title={maximized() ? 'Restore' : 'Maximize'}
-          onClick={() => void appWindow.toggleMaximize()}
-        >
-          {maximized() ? <Copy size={13} strokeWidth={1.75} /> : <Square size={13} strokeWidth={1.75} />}
-        </button>
-        <button
-          class="titlebar-btn titlebar-close"
-          title="Close"
-          onClick={() => void appWindow.close()}
-        >
-          <X size={16} strokeWidth={1.75} />
-        </button>
-      </div>
+      <Show when={!IS_MAC}>
+        <div class="titlebar-controls">
+          <button class="titlebar-btn" title="Minimize" onClick={() => void appWindow.minimize()}>
+            <Minus size={15} strokeWidth={1.75} />
+          </button>
+          <button
+            class="titlebar-btn"
+            title={maximized() ? 'Restore' : 'Maximize'}
+            onClick={() => void appWindow.toggleMaximize()}
+          >
+            {maximized() ? <Copy size={13} strokeWidth={1.75} /> : <Square size={13} strokeWidth={1.75} />}
+          </button>
+          <button
+            class="titlebar-btn titlebar-close"
+            title="Close"
+            onClick={() => void appWindow.close()}
+          >
+            <X size={16} strokeWidth={1.75} />
+          </button>
+        </div>
+      </Show>
     </header>
   );
 }

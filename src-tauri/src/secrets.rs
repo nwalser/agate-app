@@ -1,10 +1,18 @@
 //! Local secret storage — the crypto Agate owns for the unified app-unlock.
 //!
-//! Model (see `appunlock.rs` for the flow): one **App Unlock Key (AUK)** is
-//! derived from the user's single app password with Argon2id. Each connection's
-//! master password is sealed under the AUK with AES-256-GCM and stored in the OS
-//! keychain (`cred:<email>`); the `app-unlock` entry holds the KDF params + a
-//! sealed verifier that proves the app password.
+//! Model (see `appunlock.rs` for the flow) — a KEK/DEK envelope:
+//! * a random **Vault Master Key (VMK)** is the data key; it seals every
+//!   connection's master password into `cred:<email>` and is stable for the life
+//!   of the install.
+//! * the user's single app password derives an **App Unlock Key (AUK)** with
+//!   Argon2id; the AUK only *wraps the VMK*. The `app-unlock` keychain entry holds
+//!   the KDF params + the AUK-wrapped VMK. Opening it (GCM tag) proves the app
+//!   password — no separate verifier needed.
+//!
+//! Changing the app password re-wraps the VMK alone (one atomic keychain write);
+//! the per-connection blobs never move, so a password change can't half-rekey the
+//! credential store. Windows Hello stores a DPAPI-wrapped copy of the VMK,
+//! released after a consent check.
 //!
 //! ⚠️ Security posture (inverted from the original local-unlock design): to
 //! deliver "one unlock opens every vault and survives restart", the per-connection
@@ -56,9 +64,8 @@ pub struct SealedBlob {
     pub ciphertext: String, // base64 (includes the GCM tag)
 }
 
-/// The `app-unlock` keychain descriptor: KDF params + a sealed verifier. Opening
-/// the verifier with a candidate AUK proves the app password (works even when no
-/// connections are enrolled yet). This is the authoritative AUK descriptor.
+/// The `app-unlock` keychain descriptor: KDF params + the AUK-wrapped VMK.
+/// Unwrapping the VMK with a candidate AUK (GCM tag) proves the app password.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppUnlockBlob {
     pub version: u32,
@@ -66,8 +73,7 @@ pub struct AppUnlockBlob {
     pub m_cost: u32,
     pub t_cost: u32,
     pub p_cost: u32,
-    pub auk_epoch: u32,
-    pub verifier: SealedBlob,
+    pub sealed_vmk: SealedBlob,
 }
 
 /// A connection's persisted credentials, sealed under the AUK into `cred:<email>`.
@@ -89,6 +95,18 @@ impl Drop for StoredConnection {
 
 fn b64() -> base64::engine::general_purpose::GeneralPurpose {
     base64::engine::general_purpose::STANDARD
+}
+
+/// Base64-encode bytes (for storing salts / wrapped keys in keychain JSON).
+pub fn encode_b64(bytes: &[u8]) -> String {
+    b64().encode(bytes)
+}
+
+/// Base64-decode, mapping a malformed value to a `Crypto` error.
+pub fn decode_b64(s: &str) -> AgateResult<Vec<u8>> {
+    b64()
+        .decode(s)
+        .map_err(|_| AgateError::new(ErrorKind::Crypto, "corrupt base64"))
 }
 
 /// Derive the App Unlock Key from the app password with Argon2id. CPU-bound and
@@ -117,16 +135,16 @@ pub fn fresh_salt() -> [u8; 16] {
     salt
 }
 
-/// AAD for the `app-unlock` verifier — binds it to the version, service, epoch and
-/// KDF params, so a downgrade of the params or a rollback fails the tag.
-pub fn app_unlock_aad(epoch: u32, m: u32, t: u32, p: u32) -> Vec<u8> {
-    format!("{KEYRING_SERVICE}|v{BLOB_VERSION}|app-unlock|epoch{epoch}|m{m}t{t}p{p}").into_bytes()
+/// AAD for the AUK-wrapped VMK — binds it to the version, service and KDF params,
+/// so a KDF-parameter downgrade fails the tag.
+pub fn app_unlock_aad(m: u32, t: u32, p: u32) -> Vec<u8> {
+    format!("{KEYRING_SERVICE}|v{BLOB_VERSION}|app-unlock|m{m}t{t}p{p}").into_bytes()
 }
 
-/// AAD for a `cred:<email>` blob — binds it to the account email and AUK epoch,
-/// so a swapped or rolled-back credential blob fails the tag.
-pub fn cred_aad(email: &str, epoch: u32) -> Vec<u8> {
-    format!("{KEYRING_SERVICE}|v{BLOB_VERSION}|cred|{email}|epoch{epoch}").into_bytes()
+/// AAD for a `cred:<email>` blob — binds it to the account email, so a swapped
+/// credential blob (re-pointing one account's secret at another) fails the tag.
+pub fn cred_aad(email: &str) -> Vec<u8> {
+    format!("{KEYRING_SERVICE}|v{BLOB_VERSION}|cred|{email}").into_bytes()
 }
 
 fn cipher_for(key: &[u8; 32]) -> AgateResult<Aes256Gcm> {
@@ -287,7 +305,7 @@ mod tests {
     #[test]
     fn seal_then_open_roundtrips_with_aad() {
         let key = test_key();
-        let aad = cred_aad("alice@example.com", 1);
+        let aad = cred_aad("alice@example.com");
         let secret = b"super-secret-master-password";
         let blob = seal_with_key(&key, secret, &aad).expect("seal");
         let opened = open_with_key(&key, &blob, &aad).expect("open");
@@ -297,16 +315,16 @@ mod tests {
     #[test]
     fn wrong_aad_fails_the_tag() {
         let key = test_key();
-        let blob = seal_with_key(&key, b"x", &cred_aad("alice@example.com", 1)).expect("seal");
-        // Same key, different AAD (swapped account / rolled-back epoch) must fail.
-        assert!(open_with_key(&key, &blob, &cred_aad("bob@example.com", 1)).is_err());
-        assert!(open_with_key(&key, &blob, &cred_aad("alice@example.com", 2)).is_err());
+        let blob = seal_with_key(&key, b"x", &cred_aad("alice@example.com")).expect("seal");
+        // Same key, different AAD (swapped account, or wrong blob type) must fail.
+        assert!(open_with_key(&key, &blob, &cred_aad("bob@example.com")).is_err());
+        assert!(open_with_key(&key, &blob, &app_unlock_aad(256, 1, 1)).is_err());
     }
 
     #[test]
     fn wrong_key_fails() {
-        let aad = app_unlock_aad(1, ARGON_M_COST, ARGON_T_COST, ARGON_P_COST);
-        let blob = seal_with_key(&test_key(), b"verifier", &aad).expect("seal");
+        let aad = app_unlock_aad(ARGON_M_COST, ARGON_T_COST, ARGON_P_COST);
+        let blob = seal_with_key(&test_key(), b"wrapped-vmk", &aad).expect("seal");
         let mut other = test_key();
         other[0] ^= 0xff;
         assert!(open_with_key(&other, &blob, &aad).is_err());

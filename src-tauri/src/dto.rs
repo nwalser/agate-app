@@ -47,34 +47,62 @@ pub enum LoginResult {
     TwoFactorRequired { providers: Vec<TwoFactorKind> },
 }
 
-/// One known account/connection for the switcher + onboarding quick-pick.
+/// One configured connection for the unlock screen, settings, and the
+/// add-connection quick-pick. Non-secret (server + email only).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AccountSummary {
+pub struct ConnectionSummary {
     pub email: String,
     pub server_label: String,
-    /// The full server config, so onboarding can prefill it without retyping.
+    /// The full server config, so the add-connection form can prefill it.
     pub server: ServerConfig,
-    pub active: bool,
+    /// Whether this connection is currently unlocked (live this session).
+    pub unlocked: bool,
+}
+
+/// Per-connection result of an `unlock_all`, so the UI can show progress and
+/// drive per-connection reconnect / 2FA.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum UnlockStatus {
+    /// Connection re-logged-in and unlocked.
+    Unlocked,
+    /// The server needs a second factor before this connection can unlock.
+    #[serde(rename_all = "camelCase")]
+    TwoFactorRequired { providers: Vec<TwoFactorKind> },
+    /// Re-login failed (network / credentials / corrupt blob); message is
+    /// secret-free.
+    #[serde(rename_all = "camelCase")]
+    Failed { message: String },
+}
+
+/// One connection's outcome from `unlock_all`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnlockOutcome {
+    pub email: String,
+    pub server_label: String,
+    #[serde(flatten)]
+    pub status: UnlockStatus,
 }
 
 /// Overall app/session status the frontend uses to pick a screen.
 #[derive(Debug, Clone, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionStatus {
-    /// A logged-in session exists (tokens present).
-    pub logged_in: bool,
-    /// The vault key is loaded (decryption possible).
+    /// An app-unlock password has been configured (the unified unlock secret).
+    pub app_unlock_configured: bool,
+    /// The app is unlocked (the App Unlock Key is held; the vault is visible).
     pub unlocked: bool,
-    /// A local-password unlock has been configured for this account.
-    pub local_unlock_configured: bool,
-    /// Windows Hello unlock has been enabled for this account (Windows only).
+    /// Windows Hello unlock has been enabled (app-wide; Windows only).
     pub hello_configured: bool,
     /// The user has opted in to the dark-web monitor (sends emails to a third
     /// party). Default false; gates the network email-breach lookups.
     pub darkweb_consent: bool,
-    /// Email of the logged-in account, if known.
-    pub email: Option<String>,
+    /// Number of configured connections (whether or not currently unlocked).
+    pub connection_count: usize,
+    /// Number of connections currently unlocked this session.
+    pub live_count: usize,
 }
 
 /// Closed set of Bitwarden item types.
@@ -94,6 +122,11 @@ pub enum ItemType {
 #[serde(rename_all = "camelCase")]
 pub struct VaultItem {
     pub id: String,
+    /// Which connection (account email) this item belongs to — routes every
+    /// per-item operation to the right unlocked client in the unified list.
+    pub account_email: String,
+    /// Human label for the owning connection's server (badge in the list).
+    pub account_label: String,
     pub name: String,
     pub item_type: ItemType,
     pub username: Option<String>,
@@ -139,6 +172,9 @@ pub struct CustomField {
 #[serde(rename_all = "camelCase")]
 pub struct ItemDetail {
     pub id: String,
+    /// Owning connection (account email) — routes edits/clones/TOTP correctly.
+    pub account_email: String,
+    pub account_label: String,
     pub name: String,
     pub item_type: ItemType,
     pub favorite: bool,
@@ -164,12 +200,17 @@ pub struct TotpCode {
     pub remaining: u32,
 }
 
-/// A vault folder.
+/// A vault folder. In the unified view folders are per-connection, so each
+/// carries its owning account; "move to folder" is scoped to that account.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Folder {
     pub id: Option<String>,
     pub name: String,
+    #[serde(default)]
+    pub account_email: String,
+    #[serde(default)]
+    pub account_label: String,
 }
 
 /// Password-generator options from the UI.

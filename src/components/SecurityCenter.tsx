@@ -399,7 +399,9 @@ function DarkWebMonitor() {
           <button class="primary sec-run-btn" disabled={busy()} onClick={() => void scanVault()}>
             <RefreshCw size={14} strokeWidth={1.75} class={busy() ? 'spin' : ''} /> Scan my accounts
           </button>
-          <button class="ghost sec-link-btn" onClick={() => void disable()}>Turn off</button>
+          <button class="ghost sec-link-btn" disabled={disabling()} onClick={() => void disable()}>
+            Turn off
+          </button>
         </div>
 
         <form class="sec-email-form" onSubmit={(e) => void scanOne(e)}>

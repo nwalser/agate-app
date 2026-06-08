@@ -8,6 +8,12 @@
   user-select: none;
 }
 
+/* macOS: native traffic-light buttons are overlaid top-left, so reserve a
+   gutter for them and draw no custom controls (see Titlebar.tsx). */
+.titlebar.mac {
+  padding-left: 72px;
+}
+
 .titlebar-brand {
   display: flex;
   align-items: center;

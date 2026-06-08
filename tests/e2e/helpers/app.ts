@@ -225,7 +225,10 @@ export async function installFakeBackend(cfg: FakeConfig): Promise<void> {
 
         // ── accounts ──
         case 'switch_account': {
+          // Mirrors the real backend: switching clears the live session, so the
+          // app routes to the target account's unlock/login.
           state.status.email = a.email as string;
+          state.status.unlocked = false;
           for (const acc of state.accounts) acc.active = acc.email === a.email;
           return null;
         }
