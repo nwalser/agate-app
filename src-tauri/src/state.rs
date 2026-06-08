@@ -26,6 +26,8 @@ pub struct PersistedConfig {
     pub email: Option<String>,
     #[serde(default)]
     pub local_unlock_configured: bool,
+    #[serde(default)]
+    pub hello_configured: bool,
 }
 
 fn schema_version() -> u32 {
@@ -40,6 +42,7 @@ impl PersistedConfig {
             device_id: uuid::Uuid::new_v4().to_string(),
             email: None,
             local_unlock_configured: false,
+            hello_configured: false,
         }
     }
 }

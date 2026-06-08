@@ -3,6 +3,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import type {
+  ExposedResult,
   Folder,
   ItemDetail,
   ItemInput,
@@ -13,6 +14,7 @@ import type {
   SessionStatus,
   TotpCode,
   TwoFactorInput,
+  VaultHealthReport,
   VaultItem,
 } from './types.ts';
 
@@ -84,4 +86,20 @@ export const ipc = {
 
   renameFolder: (id: string, name: string): Promise<Folder> =>
     invoke('rename_folder', { id, name }),
+
+  // ---- security audit ----
+
+  auditOffline: (): Promise<VaultHealthReport> => invoke('audit_offline'),
+
+  auditExposed: (): Promise<ExposedResult[]> => invoke('audit_exposed'),
+
+  // ---- Windows Hello unlock ----
+
+  helloAvailable: (): Promise<boolean> => invoke('hello_available'),
+
+  helloEnable: (): Promise<void> => invoke('hello_enable'),
+
+  helloDisable: (): Promise<void> => invoke('hello_disable'),
+
+  helloUnlock: (): Promise<void> => invoke('hello_unlock'),
 };

@@ -4,9 +4,12 @@
 //! `vault`, `unlock`), and return a typed `AgateResult`. No business logic or
 //! SDK calls live here, and no command panics.
 
+mod audit;
 mod auth;
 mod dto;
 mod error;
+#[cfg(target_os = "windows")]
+mod hello;
 mod mutate;
 mod secrets;
 mod server;
@@ -18,9 +21,12 @@ use bitwarden_core::{init_host_platform_info, DeviceType, HostPlatformInfo};
 use tauri::Manager;
 
 use dto::{
-    Folder, ItemDetail, ItemInput, LoginResult, PassphraseGenOptions, PasswordGenOptions,
-    ServerConfig, SessionStatus, TotpCode, TwoFactorInput, VaultItem,
+    ExposedResult, Folder, ItemDetail, ItemInput, LoginResult, PassphraseGenOptions,
+    PasswordGenOptions, ServerConfig, SessionStatus, TotpCode, TwoFactorInput, VaultHealthReport,
+    VaultItem,
 };
+#[cfg(not(target_os = "windows"))]
+use error::{AgateError, ErrorKind};
 use error::AgateResult;
 use state::AppState;
 
@@ -39,6 +45,7 @@ async fn get_session_status(state: State<'_>) -> AgateResult<SessionStatus> {
         logged_in,
         unlocked,
         local_unlock_configured: cfg.local_unlock_configured,
+        hello_configured: cfg.hello_configured,
         email: cfg.email.clone(),
     })
 }
@@ -166,6 +173,64 @@ async fn restore_items(state: State<'_>, ids: Vec<String>) -> AgateResult<()> {
     mutate::restore_items(&state, ids).await
 }
 
+// ---- security audit (audit.rs) ----
+
+#[tauri::command]
+async fn audit_offline(state: State<'_>) -> AgateResult<VaultHealthReport> {
+    audit::audit_offline(&state).await
+}
+
+#[tauri::command]
+async fn audit_exposed(state: State<'_>) -> AgateResult<Vec<ExposedResult>> {
+    audit::audit_exposed(&state).await
+}
+
+// ---- Windows Hello unlock (hello.rs; stubs on other platforms) ----
+
+#[tauri::command]
+async fn hello_available() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        hello::available().await
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        false
+    }
+}
+
+#[tauri::command]
+async fn hello_enable(state: State<'_>) -> AgateResult<()> {
+    #[cfg(target_os = "windows")]
+    {
+        hello::enable(&state).await
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = &state;
+        Err(AgateError::new(ErrorKind::Internal, "Windows Hello is only available on Windows."))
+    }
+}
+
+#[tauri::command]
+async fn hello_disable(state: State<'_>) -> AgateResult<()> {
+    state.config.lock().await.hello_configured = false;
+    state.save_config().await
+}
+
+#[tauri::command]
+async fn hello_unlock(state: State<'_>, window: tauri::WebviewWindow) -> AgateResult<()> {
+    #[cfg(target_os = "windows")]
+    {
+        hello::unlock(&state, &window).await
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (&state, &window);
+        Err(AgateError::new(ErrorKind::Internal, "Windows Hello is only available on Windows."))
+    }
+}
+
 #[tauri::command]
 async fn create_folder(state: State<'_>, name: String) -> AgateResult<Folder> {
     mutate::create_folder(&state, name).await
@@ -241,6 +306,12 @@ pub fn run() {
             restore_items,
             create_folder,
             rename_folder,
+            audit_offline,
+            audit_exposed,
+            hello_available,
+            hello_enable,
+            hello_disable,
+            hello_unlock,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Agate");

@@ -57,6 +57,8 @@ pub struct SessionStatus {
     pub unlocked: bool,
     /// A local-password unlock has been configured for this account.
     pub local_unlock_configured: bool,
+    /// Windows Hello unlock has been enabled for this account (Windows only).
+    pub hello_configured: bool,
     /// Email of the logged-in account, if known.
     pub email: Option<String>,
 }
@@ -267,6 +269,58 @@ pub struct FieldInput {
     pub value: Option<String>,
     /// 0=Text,1=Hidden,2=Boolean,3=Linked
     pub field_type: u8,
+}
+
+// ---------------------------------------------------------------------------
+// Security audit / vault health (backend → frontend).
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum HealthBand {
+    Critical,
+    Poor,
+    Fair,
+    Good,
+    Excellent,
+}
+
+/// Per-item offline audit findings.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ItemAudit {
+    pub id: String,
+    pub name: String,
+    pub reused: bool,
+    pub weak: bool,
+    pub weak_score: Option<u8>,
+    pub old: bool,
+    pub insecure_uri: bool,
+    pub no_totp: bool,
+}
+
+/// Aggregate vault-health report (all offline; no secret leaves the device).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultHealthReport {
+    pub score: u8,
+    pub band: HealthBand,
+    pub total_logins: usize,
+    pub reused: usize,
+    pub weak: usize,
+    pub old: usize,
+    pub insecure: usize,
+    pub no_totp: usize,
+    pub at_risk: Vec<ItemAudit>,
+}
+
+/// Result of the opt-in HIBP exposed-password check (k-anonymity).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExposedResult {
+    pub id: String,
+    pub name: String,
+    pub count: u64,
 }
 
 /// One create-or-edit payload for any item type.

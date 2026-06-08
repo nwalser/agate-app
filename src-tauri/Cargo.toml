@@ -52,3 +52,16 @@ bitwarden-state = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef
 zxcvbn = "3.1"
 sha1 = "0.10"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+
+[target.'cfg(windows)'.dependencies]
+# Windows Hello (UserConsentVerifier) for passwordless unlock, and
+# SetWindowDisplayAffinity for screen-capture protection. Windows-only so other
+# platforms never resolve it.
+windows = { version = "0.58", features = [
+    "Foundation",
+    "Security_Credentials_UI",
+    "Win32_Foundation",
+    "Win32_System_WinRT",
+    "Win32_System_Com",
+    "Win32_UI_WindowsAndMessaging",
+] }

@@ -22,7 +22,39 @@ export interface SessionStatus {
   loggedIn: boolean;
   unlocked: boolean;
   localUnlockConfigured: boolean;
+  helloConfigured: boolean;
   email: string | null;
+}
+
+export type HealthBand = 'critical' | 'poor' | 'fair' | 'good' | 'excellent';
+
+export interface ItemAudit {
+  id: string;
+  name: string;
+  reused: boolean;
+  weak: boolean;
+  weakScore: number | null;
+  old: boolean;
+  insecureUri: boolean;
+  noTotp: boolean;
+}
+
+export interface VaultHealthReport {
+  score: number;
+  band: HealthBand;
+  totalLogins: number;
+  reused: number;
+  weak: number;
+  old: number;
+  insecure: number;
+  noTotp: number;
+  atRisk: ItemAudit[];
+}
+
+export interface ExposedResult {
+  id: string;
+  name: string;
+  count: number;
 }
 
 export type ItemType =
