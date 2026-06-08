@@ -1,0 +1,160 @@
+import { createSignal, Show, For } from 'solid-js';
+import { ShieldCheck } from 'lucide-solid';
+import { ipc } from '../lib/ipc.ts';
+import type { ServerConfig, TwoFactorKind } from '../lib/types.ts';
+import { refreshSession } from '../state/session.ts';
+import { pushToast, toastError } from '../state/toast.ts';
+import './Onboarding.css';
+
+type Region = 'us' | 'eu' | 'selfHosted';
+
+export default function Onboarding(props: { initialEmail?: string | null }) {
+  const [region, setRegion] = createSignal<Region>('us');
+  const [baseUrl, setBaseUrl] = createSignal('');
+  const [email, setEmail] = createSignal(props.initialEmail ?? '');
+  const [password, setPassword] = createSignal('');
+  const [busy, setBusy] = createSignal(false);
+
+  const [twoFactorProviders, setTwoFactorProviders] = createSignal<TwoFactorKind[] | null>(null);
+  const [tfProvider, setTfProvider] = createSignal<TwoFactorKind>('authenticator');
+  const [tfToken, setTfToken] = createSignal('');
+
+  function serverConfig(): ServerConfig {
+    if (region() === 'eu') return { region: 'eu' };
+    if (region() === 'selfHosted') return { region: 'selfHosted', baseUrl: baseUrl().trim() };
+    return { region: 'us' };
+  }
+
+  async function doLogin(withTwoFactor: boolean) {
+    if (!email().trim() || !password()) {
+      pushToast('error', 'Enter your email and master password.');
+      return;
+    }
+    setBusy(true);
+    try {
+      const tf = withTwoFactor
+        ? { provider: tfProvider(), token: tfToken().trim(), remember: false }
+        : undefined;
+      const result = await ipc.login(serverConfig(), email().trim(), password(), tf);
+      if (result.status === 'twoFactorRequired') {
+        setTwoFactorProviders(result.providers);
+        setTfProvider(result.providers[0] ?? 'authenticator');
+        pushToast('info', 'Two-factor authentication required.');
+      } else {
+        await refreshSession();
+      }
+    } catch (err) {
+      toastError(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function sendEmailCode() {
+    setBusy(true);
+    try {
+      await ipc.sendEmailCode(serverConfig(), email().trim(), password());
+      pushToast('success', 'Code sent to your email.');
+    } catch (err) {
+      toastError(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div class="onboarding">
+      <div class="onboarding-card">
+        <div class="onboarding-brand">
+          <ShieldCheck size={22} strokeWidth={1.75} />
+          <span>Agate</span>
+        </div>
+
+        <Show
+          when={!twoFactorProviders()}
+          fallback={
+            <div class="onboarding-step">
+              <p class="muted onboarding-sub">Enter your two-factor code to finish signing in.</p>
+              <div class="field">
+                <label>Provider</label>
+                <select value={tfProvider()} onChange={(e) => setTfProvider(e.currentTarget.value as TwoFactorKind)}>
+                  <For each={twoFactorProviders()!}>
+                    {(p) => <option value={p}>{p === 'authenticator' ? 'Authenticator app' : 'Email'}</option>}
+                  </For>
+                </select>
+              </div>
+              <Show when={tfProvider() === 'email'}>
+                <button class="ghost send-code" disabled={busy()} onClick={() => void sendEmailCode()}>
+                  Send code to email
+                </button>
+              </Show>
+              <div class="field">
+                <label>Verification code</label>
+                <input
+                  value={tfToken()}
+                  inputmode="numeric"
+                  autocomplete="one-time-code"
+                  onInput={(e) => setTfToken(e.currentTarget.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && void doLogin(true)}
+                />
+              </div>
+              <button class="primary full" disabled={busy()} onClick={() => void doLogin(true)}>
+                Verify & unlock
+              </button>
+              <button class="ghost full" disabled={busy()} onClick={() => setTwoFactorProviders(null)}>
+                Back
+              </button>
+            </div>
+          }
+        >
+          <div class="onboarding-step">
+            <div class="field">
+              <label>Server</label>
+              <select value={region()} onChange={(e) => setRegion(e.currentTarget.value as Region)}>
+                <option value="us">Bitwarden — US (bitwarden.com)</option>
+                <option value="eu">Bitwarden — EU (bitwarden.eu)</option>
+                <option value="selfHosted">Self-hosted / Vaultwarden…</option>
+              </select>
+            </div>
+            <Show when={region() === 'selfHosted'}>
+              <div class="field">
+                <label>Server URL</label>
+                <input
+                  placeholder="https://vault.example.com"
+                  value={baseUrl()}
+                  onInput={(e) => setBaseUrl(e.currentTarget.value)}
+                />
+              </div>
+            </Show>
+            <div class="field">
+              <label>Email</label>
+              <input
+                type="email"
+                autocomplete="username"
+                value={email()}
+                onInput={(e) => setEmail(e.currentTarget.value)}
+              />
+            </div>
+            <div class="field">
+              <label>Master password</label>
+              <input
+                type="password"
+                autocomplete="current-password"
+                value={password()}
+                onInput={(e) => setPassword(e.currentTarget.value)}
+                onKeyDown={(e) => e.key === 'Enter' && void doLogin(false)}
+              />
+            </div>
+            <button class="primary full" disabled={busy()} onClick={() => void doLogin(false)}>
+              {busy() ? 'Signing in…' : 'Log in'}
+            </button>
+          </div>
+        </Show>
+
+        <p class="onboarding-disclaimer muted">
+          Unofficial client — not affiliated with Bitwarden, Inc.
+        </p>
+      </div>
+    </div>
+  );
+}

@@ -1,0 +1,47 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Agate",
+  "version": "0.1.0",
+  "identifier": "com.agate.desktop",
+  "build": {
+    "beforeBuildCommand": "npm run vite:build",
+    "beforeDevCommand": "npm run vite:dev",
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Agate",
+        "width": 1040,
+        "height": 720,
+        "minWidth": 720,
+        "minHeight": 520,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+    }
+  },
+  "bundle": {
+    "publisher": "Nathaniel Walser",
+    "active": true,
+    "category": "Utility",
+    "shortDescription": "Unofficial Bitwarden desktop client",
+    "longDescription": "Agate is an unofficial, open-source desktop client for Bitwarden, built with Tauri and SolidJS. Connects to the Bitwarden API via the official Rust SDK; supports a local-password unlock that keeps the master password off disk.",
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "linux": {
+      "deb": {
+        "depends": []
+      }
+    }
+  }
+}

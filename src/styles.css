@@ -1,0 +1,160 @@
+/* Global reset + design tokens. Components reference these variables only —
+   never hardcode a color (CLAUDE.md). Dark theme. */
+
+:root {
+  --foreground: rgba(255, 255, 255, 0.886);
+  --muted-foreground: rgba(255, 255, 255, 0.544);
+  --subtle-foreground: rgba(255, 255, 255, 0.36);
+
+  --background: #16161a;
+  --surface: #1e1e22;
+  --surface-2: #26262b;
+  --card: rgba(255, 255, 255, 0.03);
+  --card-hover: rgba(255, 255, 255, 0.06);
+  --border: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.16);
+
+  --primary: #60cdff;
+  --primary-foreground: #06121a;
+  --destructive: #ef4444;
+  --success: #34d399;
+  --warning: #fbbf24;
+
+  --radius: 8px;
+  --radius-sm: 6px;
+
+  --z-toast: 1000;
+
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+}
+
+button {
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--foreground);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 7px 12px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+button:hover {
+  background: var(--card-hover);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button.primary {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border-color: transparent;
+  font-weight: 600;
+}
+
+button.primary:hover {
+  background: #7ad6ff;
+}
+
+button.ghost {
+  border-color: transparent;
+}
+
+button.danger {
+  color: var(--destructive);
+  border-color: rgba(239, 68, 68, 0.4);
+}
+
+input,
+select {
+  font-family: inherit;
+  font-size: 13px;
+  width: 100%;
+  color: var(--foreground);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 9px 11px;
+  outline: none;
+  transition: border-color 0.12s;
+}
+
+input:focus,
+select:focus {
+  border-color: var(--primary);
+}
+
+label {
+  display: block;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  margin-bottom: 5px;
+}
+
+a {
+  color: var(--primary);
+}
+
+.field {
+  margin-bottom: 14px;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.muted {
+  color: var(--muted-foreground);
+}
+
+.error-text {
+  color: var(--destructive);
+  font-size: 12px;
+  margin-top: 8px;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 6px;
+  border: 2px solid var(--background);
+}

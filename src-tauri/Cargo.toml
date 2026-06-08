@@ -1,0 +1,57 @@
+[package]
+name = "agate"
+version = "0.1.0"
+description = "Agate — unofficial cross-platform Bitwarden desktop client"
+authors = ["Nathaniel Walser"]
+license = "GPL-3.0-or-later"
+edition = "2021"
+rust-version = "1.82"
+
+[lib]
+name = "agate_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["devtools"] }
+tauri-plugin-log = "2"
+tauri-plugin-clipboard-manager = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-single-instance = "2"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+log = "0.4"
+tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros"] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4"] }
+
+# Local-password unlock — crypto we own (wraps the SDK session key under a
+# local-password-derived key, stored in the OS keychain). See unlock.rs.
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+argon2 = "0.5"
+aes-gcm = "0.10"
+rand = "0.8"
+zeroize = { version = "1", features = ["derive"] }
+base64 = "0.22"
+
+# Bitwarden official SDK (sdk-internal). GPLv3. Pinned by rev because the
+# password-manager SDK is explicitly unstable ("changes without warning").
+# Bumping the rev is a deliberate, reviewed action — never float `main`.
+bitwarden-core = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e" }
+bitwarden-pm = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e" }
+bitwarden-vault = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e" }
+bitwarden-sync = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e" }
+bitwarden-generators = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e" }
+bitwarden-unlock = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e", features = ["cli"] }
+bitwarden-crypto = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e" }
+bitwarden-api-api = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e" }
+
+[features]
+# Real SDK calls require network + a Bitwarden account to exercise. The code
+# path is always compiled; this flag only gates SDK behaviors that need the
+# on-disk state registry (cross-restart local unlock).
+persisted-unlock = []

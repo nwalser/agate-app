@@ -1,0 +1,61 @@
+.unlock {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.unlock-card {
+  width: 320px;
+  text-align: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 28px 24px 16px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+}
+
+.unlock-icon {
+  width: 44px;
+  height: 44px;
+  margin: 0 auto 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--card-hover);
+  color: var(--primary);
+}
+
+.unlock-title {
+  margin: 0 0 4px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.unlock-email {
+  margin: 0 0 18px;
+  font-size: 12px;
+}
+
+.unlock-hint {
+  font-size: 12.5px;
+  margin: 0 0 16px;
+}
+
+.unlock-field {
+  text-align: left;
+}
+
+.unlock-card .full {
+  width: 100%;
+}
+.unlock-card .full + .full {
+  margin-top: 8px;
+}
+
+.unlock-logout {
+  margin-top: 14px;
+  color: var(--muted-foreground);
+}

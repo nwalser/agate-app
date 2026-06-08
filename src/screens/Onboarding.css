@@ -1,0 +1,53 @@
+.onboarding {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.onboarding-card {
+  width: 360px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 26px 24px 18px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+}
+
+.onboarding-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 18px;
+}
+.onboarding-brand svg {
+  color: var(--primary);
+}
+
+.onboarding-sub {
+  margin: 0 0 16px;
+  font-size: 12.5px;
+}
+
+.full {
+  width: 100%;
+  margin-top: 4px;
+}
+
+.send-code {
+  width: 100%;
+  margin-bottom: 14px;
+}
+
+.onboarding-step button.full + button.full {
+  margin-top: 8px;
+}
+
+.onboarding-disclaimer {
+  text-align: center;
+  font-size: 11px;
+  margin: 18px 0 4px;
+}

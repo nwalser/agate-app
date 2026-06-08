@@ -1,0 +1,20 @@
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
+/target
+cargo-check.log
+
+# Local env / secrets — never commit
+.env
+.env.*
+
+# Claude Code workspace
+.claude/
+
+# OS junk
+Thumbs.db
+.DS_Store
+
+# Logs
+*.log

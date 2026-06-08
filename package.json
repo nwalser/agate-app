@@ -1,0 +1,45 @@
+{
+  "name": "agate",
+  "private": true,
+  "version": "0.1.0",
+  "author": "Nathaniel Walser",
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "description": "Agate — an unofficial cross-platform desktop client for Bitwarden, built with Tauri 2 and SolidJS.",
+  "scripts": {
+    "dev": "tauri dev",
+    "tauri": "tauri",
+    "build": "tauri build",
+    "vite:build": "vite build",
+    "vite:dev": "vite",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "lint:rust": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
+    "test:unit": "vitest run",
+    "test:watch": "vitest",
+    "check": "npm run typecheck && npm run lint && npm run test:unit"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@solidjs/testing-library": "^0.8.10",
+    "@tauri-apps/cli": "^2",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@types/node": "^22.10.2",
+    "eslint": "^9.17.0",
+    "globals": "^15.14.0",
+    "jsdom": "^25.0.1",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.1",
+    "vite": "^6.0.5",
+    "vite-plugin-solid": "^2.11.0",
+    "vitest": "^2.1.8"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-clipboard-manager": "^2",
+    "@tauri-apps/plugin-log": "^2",
+    "@tauri-apps/plugin-opener": "^2",
+    "lucide-solid": "^0.469.0",
+    "solid-js": "^1.9.3"
+  }
+}
