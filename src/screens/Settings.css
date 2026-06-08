@@ -74,6 +74,31 @@
   margin: 0 0 14px;
 }
 
+.settings-account {
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+}
+.settings-account-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.settings-account-server {
+  font-size: 11px;
+}
+.settings-account-active {
+  font-size: 11px;
+  color: var(--success);
+  font-weight: 600;
+  padding: 0 6px;
+}
+.add-account {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 12px;
+}
+
 .settings-kv {
   display: flex;
   justify-content: space-between;

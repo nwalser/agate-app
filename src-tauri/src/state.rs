@@ -16,7 +16,15 @@ use tokio::sync::Mutex;
 use crate::dto::{Folder, ServerConfig};
 use crate::error::{AgateError, AgateResult, ErrorKind};
 
-/// Non-secret config persisted across launches.
+/// A known account for fast switching (non-secret: server + email only).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountRef {
+    pub server: ServerConfig,
+    pub email: String,
+}
+
+/// Non-secret config persisted across launches. `server`/`email` are the ACTIVE
+/// account; `accounts` is the set of known accounts the user can switch between.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersistedConfig {
     #[serde(default = "schema_version")]
@@ -28,6 +36,16 @@ pub struct PersistedConfig {
     pub local_unlock_configured: bool,
     #[serde(default)]
     pub hello_configured: bool,
+    #[serde(default)]
+    pub accounts: Vec<AccountRef>,
+}
+
+impl PersistedConfig {
+    /// Record/update an account in the known-accounts list (dedup by email).
+    pub fn upsert_account(&mut self, server: ServerConfig, email: &str) {
+        self.accounts.retain(|a| a.email != email);
+        self.accounts.push(AccountRef { server, email: email.to_string() });
+    }
 }
 
 fn schema_version() -> u32 {
@@ -43,6 +61,7 @@ impl PersistedConfig {
             email: None,
             local_unlock_configured: false,
             hello_configured: false,
+            accounts: Vec::new(),
         }
     }
 }

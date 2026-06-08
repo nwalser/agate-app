@@ -4,6 +4,7 @@
 //! `vault`, `unlock`), and return a typed `AgateResult`. No business logic or
 //! SDK calls live here, and no command panics.
 
+mod accounts;
 mod audit;
 mod auth;
 mod dto;
@@ -21,7 +22,7 @@ use bitwarden_core::{init_host_platform_info, DeviceType, HostPlatformInfo};
 use tauri::Manager;
 
 use dto::{
-    ExposedResult, Folder, ItemDetail, ItemInput, LoginResult, PassphraseGenOptions,
+    AccountSummary, ExposedResult, Folder, ItemDetail, ItemInput, LoginResult, PassphraseGenOptions,
     PasswordGenOptions, ServerConfig, SessionStatus, TotpCode, TwoFactorInput, VaultHealthReport,
     VaultItem,
 };
@@ -170,6 +171,23 @@ async fn delete_items(state: State<'_>, ids: Vec<String>, permanent: bool) -> Ag
 #[tauri::command]
 async fn restore_items(state: State<'_>, ids: Vec<String>) -> AgateResult<()> {
     mutate::restore_items(&state, ids).await
+}
+
+// ---- multiple accounts (accounts.rs) ----
+
+#[tauri::command]
+async fn list_accounts(state: State<'_>) -> AgateResult<Vec<AccountSummary>> {
+    accounts::list_accounts(&state).await
+}
+
+#[tauri::command]
+async fn switch_account(state: State<'_>, email: String) -> AgateResult<()> {
+    accounts::switch_account(&state, email).await
+}
+
+#[tauri::command]
+async fn remove_account(state: State<'_>, email: String) -> AgateResult<()> {
+    accounts::remove_account(&state, email).await
 }
 
 // ---- security audit (audit.rs) ----
@@ -356,6 +374,9 @@ pub fn run() {
             hello_unlock,
             check_update,
             run_update,
+            list_accounts,
+            switch_account,
+            remove_account,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Agate");

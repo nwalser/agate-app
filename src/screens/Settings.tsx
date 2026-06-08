@@ -1,9 +1,9 @@
-import { createSignal, onMount, Show } from 'solid-js';
-import { ArrowLeft, Copy, DownloadCloud, Fingerprint, RefreshCw } from 'lucide-solid';
+import { createSignal, For, onMount, Show } from 'solid-js';
+import { ArrowLeft, Copy, DownloadCloud, Fingerprint, LogIn, RefreshCw, Trash2, UserPlus } from 'lucide-solid';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { ipc } from '../lib/ipc.ts';
-import type { PasswordGenOptions, ServerConfig } from '../lib/types.ts';
-import { refreshSession, server, status } from '../state/session.ts';
+import type { AccountSummary, PasswordGenOptions, ServerConfig } from '../lib/types.ts';
+import { refreshSession, server, setAddingAccount, status } from '../state/session.ts';
 import { pushToast, toastError } from '../state/toast.ts';
 import './Settings.css';
 
@@ -31,6 +31,16 @@ export default function Settings(props: { onBack: () => void }) {
   const [helloAvailable, setHelloAvailable] = createSignal(false);
   const [helloBusy, setHelloBusy] = createSignal(false);
 
+  // ---- accounts ----
+  const [accounts, setAccounts] = createSignal<AccountSummary[]>([]);
+  async function loadAccounts() {
+    try {
+      setAccounts(await ipc.listAccounts());
+    } catch (err) {
+      toastError(err);
+    }
+  }
+
   onMount(() => {
     void (async () => {
       try {
@@ -39,7 +49,28 @@ export default function Settings(props: { onBack: () => void }) {
         toastError(err);
       }
     })();
+    void loadAccounts();
   });
+
+  async function switchTo(email: string) {
+    try {
+      await ipc.switchAccount(email);
+      await refreshSession(); // session cleared → app routes to that account's unlock/login
+    } catch (err) {
+      toastError(err);
+    }
+  }
+
+  async function removeAcct(email: string) {
+    try {
+      await ipc.removeAccount(email);
+      await loadAccounts();
+      await refreshSession();
+      pushToast('success', 'Account removed.');
+    } catch (err) {
+      toastError(err);
+    }
+  }
 
   async function toggleHello() {
     setHelloBusy(true);
@@ -163,6 +194,40 @@ export default function Settings(props: { onBack: () => void }) {
           </div>
           <button class="danger" onClick={() => void (async () => { await ipc.logout(); await refreshSession(); })()}>
             Log out
+          </button>
+        </section>
+
+        <section class="settings-section">
+          <h3>Accounts</h3>
+          <p class="muted settings-help">
+            Switch between accounts (cloud or self-hosted). One is active at a time;
+            switching locks the current vault and unlocks the selected account.
+          </p>
+          <For each={accounts()}>
+            {(acct) => (
+              <div class="settings-row settings-account">
+                <span class="settings-account-info">
+                  <span>{acct.email}</span>
+                  <span class="muted settings-account-server">{acct.serverLabel}</span>
+                </span>
+                <span class="row">
+                  <Show
+                    when={!acct.active}
+                    fallback={<span class="settings-account-active">Active</span>}
+                  >
+                    <button class="ghost icon-btn" title="Switch to this account" onClick={() => void switchTo(acct.email)}>
+                      <LogIn size={14} strokeWidth={1.75} />
+                    </button>
+                  </Show>
+                  <button class="ghost icon-btn" title="Remove account" onClick={() => void removeAcct(acct.email)}>
+                    <Trash2 size={14} strokeWidth={1.75} />
+                  </button>
+                </span>
+              </div>
+            )}
+          </For>
+          <button class="add-account" onClick={() => setAddingAccount(true)}>
+            <UserPlus size={14} strokeWidth={1.75} /> Add account
           </button>
         </section>
 

@@ -5,7 +5,7 @@ import Unlock from './screens/Unlock.tsx';
 import Vault from './screens/Vault.tsx';
 import Settings from './screens/Settings.tsx';
 import { ipc } from './lib/ipc.ts';
-import { ready, refreshSession, screenForStatus, status } from './state/session.ts';
+import { addingAccount, ready, refreshSession, screenForStatus, status } from './state/session.ts';
 import { toastError } from './state/toast.ts';
 import './App.css';
 
@@ -34,6 +34,11 @@ export default function App() {
     <>
       <Show when={ready()} fallback={<div class="app-loading muted">Loading…</div>}>
         <Switch>
+          {/* Adding a new account: blank login while other accounts stay remembered. */}
+          <Match when={addingAccount()}>
+            <Onboarding initialEmail={null} />
+          </Match>
+
           <Match when={base() === 'vault'}>
             <Show when={!showSettings()} fallback={<Settings onBack={() => setShowSettings(false)} />}>
               <Vault onLock={() => void lock()} onOpenSettings={() => setShowSettings(true)} />

@@ -47,6 +47,15 @@ pub enum LoginResult {
     TwoFactorRequired { providers: Vec<TwoFactorKind> },
 }
 
+/// One known account for the account switcher.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountSummary {
+    pub email: String,
+    pub server_label: String,
+    pub active: bool,
+}
+
 /// Overall app/session status the frontend uses to pick a screen.
 #[derive(Debug, Clone, Serialize, Default)]
 #[serde(rename_all = "camelCase")]

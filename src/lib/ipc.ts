@@ -3,6 +3,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import type {
+  AccountSummary,
   ExposedResult,
   Folder,
   ItemDetail,
@@ -108,4 +109,12 @@ export const ipc = {
   checkUpdate: (): Promise<string | null> => invoke('check_update'),
 
   runUpdate: (): Promise<void> => invoke('run_update'),
+
+  // ---- multiple accounts ----
+
+  listAccounts: (): Promise<AccountSummary[]> => invoke('list_accounts'),
+
+  switchAccount: (email: string): Promise<void> => invoke('switch_account', { email }),
+
+  removeAccount: (email: string): Promise<void> => invoke('remove_account', { email }),
 };

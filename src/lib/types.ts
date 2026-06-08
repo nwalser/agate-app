@@ -26,6 +26,12 @@ export interface SessionStatus {
   email: string | null;
 }
 
+export interface AccountSummary {
+  email: string;
+  serverLabel: string;
+  active: boolean;
+}
+
 export type HealthBand = 'critical' | 'poor' | 'fair' | 'good' | 'excellent';
 
 export interface ItemAudit {

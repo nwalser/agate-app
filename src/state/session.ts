@@ -16,14 +16,19 @@ const DEFAULT_STATUS: SessionStatus = {
 const [status, setStatus] = createSignal<SessionStatus>(DEFAULT_STATUS);
 const [server, setServer] = createSignal<ServerConfig>({ region: 'us' });
 const [ready, setReady] = createSignal(false);
+// When true, App shows a blank Onboarding so the user can log into a NEW account
+// while their other accounts remain remembered.
+const [addingAccount, setAddingAccount] = createSignal(false);
 
-export { status, server, ready };
+export { status, server, ready, addingAccount, setAddingAccount };
 
 /** Refresh status + server config from the backend. */
 export async function refreshSession(): Promise<void> {
   const [s, srv] = await Promise.all([ipc.getSessionStatus(), ipc.getServerConfig()]);
   setStatus(s);
   setServer(srv);
+  // A completed refresh ends any add-account flow (login/switch resolved it).
+  setAddingAccount(false);
   setReady(true);
 }
 

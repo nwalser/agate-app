@@ -97,6 +97,7 @@ pub async fn login(
     // Authenticated + unlocked: persist non-secret config and keep the client.
     {
         let mut cfg = state.config.lock().await;
+        cfg.upsert_account(server.clone(), &email);
         cfg.server = server;
         cfg.email = Some(email);
     }
