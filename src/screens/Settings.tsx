@@ -4,21 +4,23 @@
 // Reached from the sidebar.
 
 import { createSignal, For, Match, Switch } from 'solid-js';
-import { ArrowLeft, DownloadCloud, Info, Palette, ShieldAlert, ShieldCheck, Users } from 'lucide-solid';
+import { ArrowLeft, DownloadCloud, Gauge, Info, Palette, ShieldAlert, ShieldCheck, Users } from 'lucide-solid';
 import AppearanceSettings from './settings/AppearanceSettings.tsx';
 import ConnectionsSettings from './settings/ConnectionsSettings.tsx';
 import UnlockSettings from './settings/UnlockSettings.tsx';
+import AuditSettings from './settings/AuditSettings.tsx';
 import UpdatesSettings from './settings/UpdatesSettings.tsx';
 import AboutSettings from './settings/AboutSettings.tsx';
 import SecuritySettings from '../components/SecuritySettings.tsx';
 import './Settings.css';
 
-type Page = 'connections' | 'unlock' | 'security' | 'appearance' | 'updates' | 'about';
+type Page = 'connections' | 'unlock' | 'security' | 'audits' | 'appearance' | 'updates' | 'about';
 
 const PAGES: { id: Page; label: string; icon: typeof Info }[] = [
   { id: 'connections', label: 'Connections', icon: Users },
   { id: 'unlock', label: 'Unlock', icon: ShieldCheck },
   { id: 'security', label: 'Security', icon: ShieldAlert },
+  { id: 'audits', label: 'Audits', icon: Gauge },
   { id: 'appearance', label: 'Appearance', icon: Palette },
   { id: 'updates', label: 'Updates', icon: DownloadCloud },
   { id: 'about', label: 'About', icon: Info },
@@ -68,6 +70,9 @@ export default function Settings(props: { onBack: () => void }) {
               <div class="settings-page">
                 <SecuritySettings />
               </div>
+            </Match>
+            <Match when={page() === 'audits'}>
+              <AuditSettings />
             </Match>
             <Match when={page() === 'appearance'}>
               <AppearanceSettings />

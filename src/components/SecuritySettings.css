@@ -47,3 +47,32 @@
   transform: translateX(16px);
   background: var(--primary-foreground);
 }
+
+/* Sub-section heading inside the Security page (e.g. Clipboard). */
+.sec-subhead {
+  margin-top: 22px;
+}
+
+/* Clipboard auto-clear delay picker -------------------------------------- */
+.clip-options {
+  display: flex;
+  gap: 8px;
+}
+.clip-option {
+  flex: 1;
+  padding: 9px 8px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.clip-option:hover {
+  color: var(--foreground);
+  border-color: var(--border-strong);
+}
+.clip-option.active {
+  color: var(--primary);
+  border-color: var(--primary);
+  font-weight: 600;
+}

@@ -15,6 +15,7 @@ mod error;
 mod hello;
 mod mutate;
 mod proxy;
+mod qrscan;
 mod secrets;
 mod server;
 mod state;
@@ -45,7 +46,6 @@ async fn get_session_status(state: State<'_>) -> AgateResult<SessionStatus> {
     let cfg = state.config.lock().await;
     Ok(SessionStatus {
         app_unlock_configured: cfg.app_unlock_configured,
-        unlock_device_bound: cfg.unlock_device_bound,
         unlocked,
         hello_configured: cfg.hello_configured,
         darkweb_consent: cfg.darkweb_consent,
@@ -67,21 +67,13 @@ async fn set_server_config(state: State<'_>, server: ServerConfig) -> AgateResul
 // ---- app unlock (appunlock.rs) ----
 
 #[tauri::command]
-async fn configure_app_unlock(
-    state: State<'_>,
-    app_password: String,
-    device_bound: bool,
-) -> AgateResult<()> {
-    appunlock::configure(&state, Zeroizing::new(app_password), device_bound).await
+async fn configure_app_unlock(state: State<'_>, app_password: String) -> AgateResult<()> {
+    appunlock::configure(&state, Zeroizing::new(app_password)).await
 }
 
 #[tauri::command]
-async fn change_app_unlock(
-    state: State<'_>,
-    new_password: String,
-    device_bound: bool,
-) -> AgateResult<()> {
-    appunlock::change(&state, Zeroizing::new(new_password), device_bound).await
+async fn change_app_unlock(state: State<'_>, new_password: String) -> AgateResult<()> {
+    appunlock::change(&state, Zeroizing::new(new_password)).await
 }
 
 #[tauri::command]
@@ -218,6 +210,15 @@ async fn item_totp(state: State<'_>, account_email: String, id: String) -> Agate
 }
 
 #[tauri::command]
+async fn scan_totp_qr() -> AgateResult<String> {
+    // Capture + decode is blocking/CPU-bound; keep it off the async runtime's
+    // worker threads. The decoded otpauth URI is a secret — never logged.
+    tokio::task::spawn_blocking(qrscan::scan_totp_qr)
+        .await
+        .map_err(|e| AgateError::internal(format!("Scan task failed: {e}")))?
+}
+
+#[tauri::command]
 async fn generate_password(state: State<'_>, options: PasswordGenOptions) -> AgateResult<String> {
     vault::generate_password(&state, options).await
 }
@@ -287,8 +288,11 @@ async fn delete_folder(state: State<'_>, account_email: String, id: String) -> A
 // ---- security audit (audit.rs) ----
 
 #[tauri::command]
-async fn audit_offline(state: State<'_>) -> AgateResult<VaultHealthReport> {
-    audit::audit_offline(&state).await
+async fn audit_offline(
+    state: State<'_>,
+    config: Option<audit::AuditConfig>,
+) -> AgateResult<VaultHealthReport> {
+    audit::audit_offline(&state, config.unwrap_or_default()).await
 }
 
 #[tauri::command]
@@ -510,6 +514,7 @@ pub fn run() {
             list_folders,
             item_detail,
             item_totp,
+            scan_totp_qr,
             generate_password,
             generate_passphrase,
             save_item,

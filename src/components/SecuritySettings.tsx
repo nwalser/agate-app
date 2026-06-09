@@ -1,11 +1,22 @@
-import { ShieldAlert } from 'lucide-solid';
+import { For } from 'solid-js';
+import { ClipboardCopy, ShieldAlert } from 'lucide-solid';
 import {
   darkwebMonitor,
   exposedCheck,
   setDarkwebMonitor,
   setExposedCheck,
 } from '../state/security.ts';
+import {
+  CLIPBOARD_CLEAR_OPTIONS,
+  clipboardClearSeconds,
+  setClipboardClearSeconds,
+  type ClipboardClearSeconds,
+} from '../state/clipboard.ts';
 import './SecuritySettings.css';
+
+function clearLabel(seconds: ClipboardClearSeconds): string {
+  return seconds === 0 ? 'Never' : `${seconds}s`;
+}
 
 /**
  * Security section for the Settings screen: toggles for the two periodic,
@@ -44,6 +55,29 @@ export default function SecuritySettings() {
           </span>
         </span>
         <Toggle checked={darkwebMonitor()} onChange={(v) => void setDarkwebMonitor(v)} label="Dark-web monitor" />
+      </div>
+
+      <h3 class="sec-subhead">
+        <ClipboardCopy size={14} strokeWidth={1.75} /> Clipboard
+      </h3>
+      <p class="muted settings-help">
+        How long a copied secret (password, TOTP, …) stays on the clipboard before Agate wipes it.
+      </p>
+      <div class="clip-options" role="radiogroup" aria-label="Clipboard auto-clear delay">
+        <For each={CLIPBOARD_CLEAR_OPTIONS}>
+          {(opt) => (
+            <button
+              type="button"
+              role="radio"
+              aria-checked={clipboardClearSeconds() === opt}
+              class="clip-option"
+              classList={{ active: clipboardClearSeconds() === opt }}
+              onClick={() => setClipboardClearSeconds(opt)}
+            >
+              {clearLabel(opt)}
+            </button>
+          )}
+        </For>
       </div>
     </section>
   );

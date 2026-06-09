@@ -48,6 +48,7 @@ import {
   builtinMeta,
   columnKey,
   columns,
+  gridMetrics,
   isFilterable,
   isRevealed,
   MIN_COL_WIDTH,
@@ -90,22 +91,6 @@ function typeIcon(t: ItemType) {
   }
 }
 
-function colWidth(c: ColumnSpec): string {
-  if (c.kind === 'custom') return 'minmax(0, 1fr)';
-  switch (c.id) {
-    case 'type':
-      return '96px';
-    case 'totp':
-      return '120px';
-    case 'folder':
-      return 'minmax(0, 0.8fr)';
-    case 'security':
-      return 'minmax(0, 1.2fr)';
-    default:
-      return 'minmax(0, 1fr)';
-  }
-}
-
 const DETAIL_CONCURRENCY = 6;
 
 export interface VaultListProps {
@@ -131,6 +116,10 @@ export interface VaultListProps {
 
 export default function VaultList(props: VaultListProps) {
   const [menuOpen, setMenuOpen] = createSignal(false);
+  // Trigger element for the column ("display options") popover. The popover is
+  // portaled to <body> and positioned against this rect, so it escapes the
+  // table's overflow-scroll clip and the sticky header's stacking context.
+  let gearBtn: HTMLButtonElement | undefined;
 
   // ---- lazy detail cache (website / password / custom / favicon host) ----
   const [detailCache, setDetailCache] = createSignal<Map<string, ItemDetail>>(new Map());
@@ -242,17 +231,10 @@ export default function VaultList(props: VaultListProps) {
     }
   });
 
-  // A column's track size: a user-set pixel width (drag-resize) wins over the
-  // default flexible width.
-  const widthFor = (key: string, fallback: string): string => {
-    const w = columns().widths[key];
-    return w ? `${w}px` : fallback;
-  };
-  const gridTemplate = createMemo(() => {
-    const nameCol = widthFor(NAME_COL_KEY, 'minmax(0, 1.6fr)');
-    const mid = columns().columns.map((c) => widthFor(columnKey(c), colWidth(c))).join(' ');
-    return `22px ${nameCol}${mid ? ` ${mid}` : ''} 76px`;
-  });
+  // The grid template + the table's minimum width, derived from the visible
+  // columns and any user drag-widths. The min-width is what makes the table
+  // scroll horizontally instead of squashing columns into each other when narrow.
+  const metrics = createMemo(() => gridMetrics(columns().columns, columns().widths));
 
   const folderName = (id: string | null): string => {
     if (!id) return '';
@@ -348,97 +330,108 @@ export default function VaultList(props: VaultListProps) {
       when={props.items.length > 0}
       fallback={<div class="vault-empty muted">{props.emptyMessage}</div>}
     >
-      <div class="vault-table" style={{ '--vault-cols': gridTemplate() }}>
-        <div class="vault-head">
-          <span class="vault-head-cell" />
-          <SortHeader
-            label="Name"
-            colKey={NAME_COL_KEY}
-            active={props.sortKey === 'name'}
-            dir={props.sortDir}
-            onClick={() => props.onSort('name')}
-          />
-          <For each={columns().columns}>
-            {(col) => {
-              const sk = sortKeyOf(col);
-              return sk ? (
-                <SortHeader
-                  label={builtinMeta(col.kind === 'builtin' ? col.id : 'username').label}
-                  colKey={columnKey(col)}
-                  active={props.sortKey === sk}
-                  dir={props.sortDir}
-                  onClick={() => props.onSort(sk)}
-                />
-              ) : (
-                <span class="vault-head-cell vault-head-resizable">
-                  {col.kind === 'builtin' ? builtinMeta(col.id).label : col.field}
-                  <ColResize colKey={columnKey(col)} />
-                </span>
-              );
-            }}
-          </For>
-          <div class="vault-head-cell vault-head-gear">
-            <button
-              class="ghost icon-btn vault-gear-btn"
-              classList={{ 'filter-on': filtersVisible() || hasActiveFilters() }}
-              title="Filter by column"
-              onClick={() => toggleFiltersVisible()}
-            >
-              <Filter size={14} strokeWidth={1.75} />
-            </button>
-            <div class="column-menu-anchor">
-              <button
-                class="ghost icon-btn vault-gear-btn"
-                title="Customize columns"
-                onClick={() => setMenuOpen((v) => !v)}
-              >
-                <SlidersHorizontal size={14} strokeWidth={1.75} />
-              </button>
-              <Show when={menuOpen()}>
-                <ColumnMenu onClose={() => setMenuOpen(false)} />
-              </Show>
-            </div>
-          </div>
-        </div>
-
-        <Show when={filtersVisible()}>
-          <div class="vault-filter-row">
-            <span />
-            <input
-              class="vault-filter-input"
-              placeholder="Filter name…"
-              value={columnFilter(NAME_FILTER_KEY)}
-              onInput={(e) => setColumnFilter(NAME_FILTER_KEY, e.currentTarget.value)}
+      <div
+        class="vault-table"
+        style={{ '--vault-cols': metrics().template, '--vault-min': `${metrics().minWidth}px` }}
+      >
+        {/* Header + filter row are sticky as one block, so they pin vertically
+            yet scroll horizontally in lockstep with the rows (same scroll
+            container + the shared --vault-min keeps every track aligned). */}
+        <div class="vault-thead">
+          <div class="vault-head">
+            <span class="vault-head-cell" />
+            <SortHeader
+              label="Name"
+              colKey={NAME_COL_KEY}
+              active={props.sortKey === 'name'}
+              dir={props.sortDir}
+              onClick={() => props.onSort('name')}
             />
             <For each={columns().columns}>
-              {(col) =>
-                isFilterable(col) ? (
-                  <input
-                    class="vault-filter-input"
-                    placeholder="Filter…"
-                    value={columnFilter(columnKey(col))}
-                    onInput={(e) => setColumnFilter(columnKey(col), e.currentTarget.value)}
+              {(col) => {
+                const sk = sortKeyOf(col);
+                return sk ? (
+                  <SortHeader
+                    label={builtinMeta(col.kind === 'builtin' ? col.id : 'username').label}
+                    colKey={columnKey(col)}
+                    active={props.sortKey === sk}
+                    dir={props.sortDir}
+                    onClick={() => props.onSort(sk)}
                   />
                 ) : (
-                  <span />
-                )
-              }
+                  <span class="vault-head-cell vault-head-resizable">
+                    <span class="vault-head-label">
+                      {col.kind === 'builtin' ? builtinMeta(col.id).label : col.field}
+                    </span>
+                    <ColResize colKey={columnKey(col)} />
+                  </span>
+                );
+              }}
             </For>
-            <span class="vault-filter-clear">
-              <Show when={hasActiveFilters()}>
+            <div class="vault-head-cell vault-head-gear">
+              <button
+                class="ghost icon-btn vault-gear-btn"
+                classList={{ 'filter-on': filtersVisible() || hasActiveFilters() }}
+                title="Filter by column"
+                onClick={() => toggleFiltersVisible()}
+              >
+                <Filter size={14} strokeWidth={1.75} />
+              </button>
+              <div class="column-menu-anchor">
                 <button
+                  ref={gearBtn}
                   class="ghost icon-btn vault-gear-btn"
-                  title="Clear filters"
-                  onClick={() => clearColumnFilters()}
+                  title="Customize columns"
+                  onClick={() => setMenuOpen((v) => !v)}
                 >
-                  <X size={13} strokeWidth={1.75} />
+                  <SlidersHorizontal size={14} strokeWidth={1.75} />
                 </button>
-              </Show>
-            </span>
+                <Show when={menuOpen()}>
+                  <ColumnMenu anchor={gearBtn} onClose={() => setMenuOpen(false)} />
+                </Show>
+              </div>
+            </div>
           </div>
-        </Show>
 
-        <div class="vault-list-scroll">
+          <Show when={filtersVisible()}>
+            <div class="vault-filter-row">
+              <span />
+              <input
+                class="vault-filter-input"
+                placeholder="Filter name…"
+                value={columnFilter(NAME_FILTER_KEY)}
+                onInput={(e) => setColumnFilter(NAME_FILTER_KEY, e.currentTarget.value)}
+              />
+              <For each={columns().columns}>
+                {(col) =>
+                  isFilterable(col) ? (
+                    <input
+                      class="vault-filter-input"
+                      placeholder="Filter…"
+                      value={columnFilter(columnKey(col))}
+                      onInput={(e) => setColumnFilter(columnKey(col), e.currentTarget.value)}
+                    />
+                  ) : (
+                    <span />
+                  )
+                }
+              </For>
+              <span class="vault-filter-clear">
+                <Show when={hasActiveFilters()}>
+                  <button
+                    class="ghost icon-btn vault-gear-btn"
+                    title="Clear filters"
+                    onClick={() => clearColumnFilters()}
+                  >
+                    <X size={13} strokeWidth={1.75} />
+                  </button>
+                </Show>
+              </span>
+            </div>
+          </Show>
+        </div>
+
+        <div class="vault-rows">
           <For each={props.items}>
             {(item) => {
               const Icon = typeIcon(item.itemType);
@@ -497,7 +490,7 @@ function SortHeader(props: {
       classList={{ sorted: props.active }}
       onClick={() => props.onClick()}
     >
-      {props.label}
+      <span class="vault-head-label">{props.label}</span>
       <Show when={props.active}>
         <Show
           when={props.dir === 'asc'}

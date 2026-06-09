@@ -6,6 +6,7 @@ import {
   EyeOff,
   Link as LinkIcon,
   Plus,
+  QrCode,
   Star,
   Trash2,
   X,
@@ -28,7 +29,7 @@ import {
   formatCardNumber,
   linkedOptionsFor,
 } from '../lib/itemFields.ts';
-import { toastError } from '../state/toast.ts';
+import { pushToast, toastError } from '../state/toast.ts';
 import './ItemEditor.css';
 
 // Closed sets as string-literal unions (CLAUDE.md), mapped to backend ints.
@@ -167,6 +168,7 @@ export default function ItemEditor(props: {
   const [revealPw, setRevealPw] = createSignal(false);
   // Prefill the real TOTP secret so an edit preserves it (backend also guards).
   const [totp, setTotp] = createSignal(props.item?.login?.totp ?? '');
+  const [scanningQr, setScanningQr] = createSignal(false);
   const [uris, setUris] = createSignal<UriRow[]>(
     (props.item?.login?.uris ?? []).map((u) => ({
       uri: u.uri ?? '',
@@ -307,6 +309,22 @@ export default function ItemEditor(props: {
       setGenOpen(false);
     } catch (err) {
       toastError(err);
+    }
+  }
+
+  // Grab a TOTP setup QR off the screen (any monitor) and drop its otpauth:// URI
+  // into the field. Capture + decode happen in Rust; we only receive the URI.
+  async function scanTotpQr() {
+    if (scanningQr()) return;
+    setScanningQr(true);
+    try {
+      const uri = await ipc.scanTotpQr();
+      setTotp(uri);
+      pushToast('success', 'TOTP key captured from screen.');
+    } catch (err) {
+      toastError(err);
+    } finally {
+      setScanningQr(false);
     }
   }
 
@@ -626,12 +644,25 @@ export default function ItemEditor(props: {
 
               <div class="field">
                 <label>Authenticator key (TOTP)</label>
-                <input
-                  value={totp()}
-                  onInput={(e) => setTotp(e.currentTarget.value)}
-                  placeholder="otpauth:// or secret"
-                  autocomplete="off"
-                />
+                <div class="row ie-totp-row">
+                  <input
+                    class="ie-grow"
+                    value={totp()}
+                    onInput={(e) => setTotp(e.currentTarget.value)}
+                    placeholder="otpauth:// or secret"
+                    autocomplete="off"
+                  />
+                  <button
+                    type="button"
+                    class="ghost ie-add ie-scan-qr"
+                    disabled={scanningQr()}
+                    onClick={() => void scanTotpQr()}
+                    title="Scan a TOTP QR code shown on your screen"
+                  >
+                    <QrCode size={13} strokeWidth={1.75} />
+                    {scanningQr() ? 'Scanning…' : 'Scan QR'}
+                  </button>
+                </div>
               </div>
 
               <div class="field">

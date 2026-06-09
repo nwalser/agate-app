@@ -23,6 +23,7 @@ import type {
   VaultItem,
   WindowControlsLayout,
 } from './types.ts';
+import { auditConfigPayload } from '../state/auditConfig.ts';
 
 // ── Test-only IPC seam (webdriver e2e) ───────────────────────────────────────
 // Every wrapper below calls the local `invoke`, which routes through a swappable
@@ -71,11 +72,11 @@ export const ipc = {
 
   // ---- app unlock (one secret unlocks every connection) ----
 
-  configureAppUnlock: (appPassword: string, deviceBound: boolean): Promise<void> =>
-    invoke('configure_app_unlock', { appPassword, deviceBound }),
+  configureAppUnlock: (appPassword: string): Promise<void> =>
+    invoke('configure_app_unlock', { appPassword }),
 
-  changeAppUnlock: (newPassword: string, deviceBound: boolean): Promise<void> =>
-    invoke('change_app_unlock', { newPassword, deviceBound }),
+  changeAppUnlock: (newPassword: string): Promise<void> =>
+    invoke('change_app_unlock', { newPassword }),
 
   unlockAll: (appPassword: string): Promise<UnlockOutcome[]> =>
     invoke('unlock_all', { appPassword }),
@@ -151,6 +152,9 @@ export const ipc = {
   itemTotp: (accountEmail: string, id: string): Promise<TotpCode> =>
     invoke('item_totp', { accountEmail, id }),
 
+  /** Capture the screen and decode a TOTP setup QR into its otpauth:// URI. */
+  scanTotpQr: (): Promise<string> => invoke('scan_totp_qr'),
+
   generatePassword: (options: PasswordGenOptions): Promise<string> =>
     invoke('generate_password', { options }),
 
@@ -192,7 +196,11 @@ export const ipc = {
 
   // ---- security audit ----
 
-  auditOffline: (): Promise<VaultHealthReport> => invoke('audit_offline'),
+  // Always sends the current audit config so every audit surface (Security
+  // center, the list's Security column, the sidebar badge) honours which checks
+  // are enabled + their thresholds, without each caller threading it through.
+  auditOffline: (): Promise<VaultHealthReport> =>
+    invoke('audit_offline', { config: auditConfigPayload() }),
 
   auditExposed: (): Promise<ExposedResult[]> => invoke('audit_exposed'),
 

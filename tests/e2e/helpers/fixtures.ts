@@ -22,8 +22,6 @@ export type LoginResult = { status: 'success' } | { status: 'twoFactorRequired';
 
 export interface FakeStatus {
   appUnlockConfigured: boolean;
-  /** Optional in fixtures; the app treats an absent value as false. */
-  unlockDeviceBound?: boolean;
   unlocked: boolean;
   helloConfigured: boolean;
   darkwebConsent: boolean;
@@ -213,7 +211,7 @@ export function sampleConnections(): ConnectionSummary[] {
 function baseConfig(over: Partial<FakeConfig>): FakeConfig {
   return {
     status: {
-      appUnlockConfigured: true, unlockDeviceBound: true, unlocked: true, helloConfigured: false,
+      appUnlockConfigured: true, unlocked: true, helloConfigured: false,
       darkwebConsent: false, connectionCount: 1, liveCount: 1,
     },
     server: { region: 'us' },

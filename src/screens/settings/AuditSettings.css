@@ -1,0 +1,89 @@
+/* One audit check: header row (icon · label/desc · switch) + optional threshold. */
+.audit-check {
+  padding: 11px 0;
+  border-bottom: 1px solid var(--border);
+}
+.audit-check:last-of-type {
+  border-bottom: none;
+}
+.audit-check-head {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+.audit-check-icon {
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+.audit-check.off .audit-check-icon {
+  opacity: 0.5;
+}
+.audit-check-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+.audit-check-label {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.audit-check-desc {
+  font-size: 11px;
+  line-height: 1.35;
+}
+.audit-check-config {
+  margin: 8px 0 2px 27px;
+}
+.audit-threshold {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.audit-threshold select {
+  width: auto;
+  min-width: 120px;
+}
+
+/* Reset link. */
+.audit-reset {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 14px;
+  font-size: 12px;
+}
+
+/* Toggle switch (mirrors the security toggles' look without importing their CSS). */
+.audit-switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 34px;
+  height: 20px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.audit-switch.on {
+  background: var(--primary);
+  border-color: var(--primary);
+}
+.audit-switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--muted-foreground);
+  transition: transform 0.15s, background 0.15s;
+}
+.audit-switch.on .audit-switch-knob {
+  transform: translateX(14px);
+  background: var(--primary-foreground);
+}

@@ -27,6 +27,8 @@ import {
   Lock,
   PanelLeftClose,
   PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
   Pencil,
   Plus,
   RefreshCw,
@@ -41,6 +43,7 @@ import {
   Timer,
   Trash2,
   UserRound,
+  X,
 } from 'lucide-solid';
 import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { openUrl } from '@tauri-apps/plugin-opener';
@@ -84,7 +87,16 @@ import VaultSwitcher from '../components/VaultSwitcher.tsx';
 import GeneratorPage from '../components/GeneratorPage.tsx';
 import { columnKey, columns, isFilterable, TYPE_LABELS, type SortDir, type SortKey } from '../state/columns.ts';
 import { filters, NAME_FILTER_KEY } from '../state/columnFilters.ts';
-import { activeVault, setActiveVault, sidebarCollapsed, toggleSidebar } from '../state/ui.ts';
+import {
+  activeVault,
+  previewCollapsed,
+  rowDensity,
+  setActiveVault,
+  sidebarCollapsed,
+  togglePreview,
+  toggleSidebar,
+} from '../state/ui.ts';
+import { clipboardClearSeconds } from '../state/clipboard.ts';
 import './Vault.css';
 
 function typeIcon(t: ItemType) {
@@ -383,6 +395,9 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
   function clearSelection() {
     setSelectedIds(new Set<string>());
     setAnchorId(null);
+    // The bulk bar stays mounted (hidden), so close its Move dropdown too —
+    // otherwise it re-appears pre-expanded the next time items are selected.
+    setMoveMenuOpen(false);
   }
 
   // Single sync path. `manual` syncs (button / palette) toast on success and
@@ -461,14 +476,18 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
   onMount(() => document.addEventListener('keydown', onGlobalKeyDown));
   onCleanup(() => document.removeEventListener('keydown', onGlobalKeyDown));
 
-  // Seconds before a copied secret is wiped from the clipboard.
-  const CLIPBOARD_CLEAR_SECONDS = 15;
-
   async function copy(label: string, value: string | null | undefined) {
     if (!value) return;
     try {
       await writeText(value);
-      pushToast('success', `${label} copied — clears in ${CLIPBOARD_CLEAR_SECONDS}s.`);
+      // Seconds before a copied secret is wiped from the clipboard (0 = never),
+      // configurable in Settings → Security.
+      const clearSeconds = clipboardClearSeconds();
+      pushToast(
+        'success',
+        clearSeconds > 0 ? `${label} copied — clears in ${clearSeconds}s.` : `${label} copied.`,
+      );
+      if (clearSeconds <= 0) return;
       const copied = value;
       // Auto-clear, but only if the clipboard still holds what we wrote (don't
       // clobber something the user copied afterwards).
@@ -480,7 +499,7 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
             // ignore: clipboard may be unavailable or hold non-text content
           }
         })();
-      }, CLIPBOARD_CLEAR_SECONDS * 1000);
+      }, clearSeconds * 1000);
     } catch (err) {
       toastError(err);
     }
@@ -642,6 +661,9 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
   }
 
   function openEdit(d: ItemDetail) {
+    // No need to un-collapse the preview: the detail-pane <Show> already stays
+    // visible whenever the editor is open (`editor().mode !== 'closed'`), so the
+    // user's "hide details" preference is preserved and restored on close.
     setEditor({ mode: 'edit', item: d });
   }
 
@@ -906,6 +928,51 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
     }
   });
 
+  // ---- folder management (the rail tree owns validation; these run the IPC) ----
+  async function folderCreate(account: string, fullName: string) {
+    try {
+      await ipc.createFolder(account, fullName);
+      await reloadAfterMutation();
+      pushToast('success', 'Folder created.');
+    } catch (err) {
+      toastError(err);
+    }
+  }
+
+  // Apply a batch of folder renames sequentially. A rename/re-parent cascades to
+  // descendants; issuing them in series avoids racing the SDK's folder repository.
+  async function folderApplyRenames(
+    account: string,
+    renames: { id: string; newName: string }[],
+    done: string,
+  ) {
+    try {
+      for (const r of renames) await ipc.renameFolder(account, r.id, r.newName);
+      await reloadAfterMutation();
+      pushToast('success', done);
+    } catch (err) {
+      toastError(err);
+    }
+  }
+
+  // Delete a folder subtree: move its items to "No folder" first (so they survive
+  // even if a later folder delete fails), then delete each folder. Reset the active
+  // filter if it pointed into the now-deleted subtree.
+  async function folderDelete(account: string, folderIds: string[], itemIds: string[]) {
+    try {
+      if (itemIds.length) await ipc.moveItems(account, itemIds, null);
+      for (const id of folderIds) await ipc.deleteFolder(account, id);
+      const f = filter();
+      if (f.kind === 'folder' && f.folderId !== null && folderIds.includes(f.folderId)) {
+        setFilter({ kind: 'all' });
+      }
+      await reloadAfterMutation();
+      pushToast('success', folderIds.length > 1 ? 'Folders deleted.' : 'Folder deleted.');
+    } catch (err) {
+      toastError(err);
+    }
+  }
+
   return (
     <div class="vault">
       <div class="vault-body">
@@ -962,8 +1029,14 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
           <Show when={!sidebarCollapsed()}>
             <FolderTree
               folders={scopedFolders()}
+              items={items()}
               active={view() === 'vault' ? filter() : { kind: 'all' }}
               onSelect={(f) => selectFilter(f)}
+              onCreate={(account, fullName) => void folderCreate(account, fullName)}
+              onRename={(account, renames) => void folderApplyRenames(account, renames, 'Folder renamed.')}
+              onMove={(account, renames) => void folderApplyRenames(account, renames, 'Folder moved.')}
+              onDelete={(account, folderIds, itemIds) => void folderDelete(account, folderIds, itemIds)}
+              defaultAccount={createAccount()}
             />
           </Show>
           <div class="vault-rail-sep" />
@@ -1018,116 +1091,82 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
           </Match>
           <Match when={view() === 'vault'}>
             <>
-        <aside class="vault-list">
-          <Show when={view() === 'vault' && !inTrash()}>
-            <div class="vault-list-head">
-              <Show
-                when={addType()}
-                fallback={
-                  <div class="vault-add-anchor">
+        <aside
+          class="vault-list"
+          classList={{ 'has-selection': selectedCount() > 0, 'list-full': previewCollapsed() }}
+          data-density={rowDensity()}
+        >
+          <div class="vault-list-head">
+            <span class="vault-list-count">
+              {displayed().length} {displayed().length === 1 ? 'item' : 'items'}
+            </span>
+            <div class="vault-list-actions">
+              <button
+                class="ghost icon-btn"
+                aria-expanded={!previewCollapsed()}
+                title={previewCollapsed() ? 'Show details' : 'Hide details'}
+                onClick={() => togglePreview()}
+              >
+                <Show
+                  when={previewCollapsed()}
+                  fallback={<PanelRightClose size={16} strokeWidth={1.6} />}
+                >
+                  <PanelRightOpen size={16} strokeWidth={1.6} />
+                </Show>
+              </button>
+              <Show when={!inTrash()}>
+                <Show
+                  when={addType()}
+                  fallback={
+                    <div class="vault-add-anchor">
+                      <button
+                        class="vault-add"
+                        title="Add item"
+                        onClick={() => setAddMenuOpen((v) => !v)}
+                      >
+                        <Plus size={15} strokeWidth={1.75} /> Add
+                      </button>
+                      <Show when={addMenuOpen()}>
+                        <>
+                          <div class="vault-menu-backdrop" onClick={() => setAddMenuOpen(false)} />
+                          <div class="vault-menu align-right" role="menu">
+                            <For each={CREATE_TYPES}>
+                              {(ct) => {
+                                const Icon = typeIcon(ct.type);
+                                return (
+                                  <button
+                                    class="vault-menu-item"
+                                    role="menuitem"
+                                    onClick={() => {
+                                      setAddMenuOpen(false);
+                                      openCreate(ct.type);
+                                    }}
+                                  >
+                                    <Icon size={14} strokeWidth={1.6} />
+                                    {ct.label}
+                                  </button>
+                                );
+                              }}
+                            </For>
+                          </div>
+                        </>
+                      </Show>
+                    </div>
+                  }
+                >
+                  {(t) => (
                     <button
                       class="vault-add"
-                      title="Add item"
-                      onClick={() => setAddMenuOpen((v) => !v)}
+                      title={`Add ${createLabel(t()).toLowerCase()}`}
+                      onClick={() => openCreate(t())}
                     >
-                      <Plus size={15} strokeWidth={1.75} /> Add
+                      <Plus size={15} strokeWidth={1.75} /> Add {createLabel(t()).toLowerCase()}
                     </button>
-                    <Show when={addMenuOpen()}>
-                      <>
-                        <div class="vault-menu-backdrop" onClick={() => setAddMenuOpen(false)} />
-                        <div class="vault-menu" role="menu">
-                          <For each={CREATE_TYPES}>
-                            {(ct) => {
-                              const Icon = typeIcon(ct.type);
-                              return (
-                                <button
-                                  class="vault-menu-item"
-                                  role="menuitem"
-                                  onClick={() => {
-                                    setAddMenuOpen(false);
-                                    openCreate(ct.type);
-                                  }}
-                                >
-                                  <Icon size={14} strokeWidth={1.6} />
-                                  {ct.label}
-                                </button>
-                              );
-                            }}
-                          </For>
-                        </div>
-                      </>
-                    </Show>
-                  </div>
-                }
-              >
-                {(t) => (
-                  <button
-                    class="vault-add"
-                    title={`Add ${createLabel(t()).toLowerCase()}`}
-                    onClick={() => openCreate(t())}
-                  >
-                    <Plus size={15} strokeWidth={1.75} /> Add {createLabel(t()).toLowerCase()}
-                  </button>
-                )}
+                  )}
+                </Show>
               </Show>
             </div>
-          </Show>
-          <Show when={selectedCount() > 0}>
-            <div class="vault-bulk">
-              <span class="vault-bulk-count">{selectedCount()} selected</span>
-              <span class="spacer" />
-              <Show
-                when={!inTrash()}
-                fallback={
-                  <>
-                    <button class="ghost vault-bulk-btn" title="Restore" onClick={() => void bulkRestore()}>
-                      <RotateCcw size={14} strokeWidth={1.6} /> Restore
-                    </button>
-                    <button
-                      class="danger vault-bulk-btn"
-                      title="Delete permanently"
-                      onClick={() => void bulkDelete(true)}
-                    >
-                      <Trash2 size={14} strokeWidth={1.6} /> Delete
-                    </button>
-                  </>
-                }
-              >
-                <button class="ghost vault-bulk-btn" title="Favorite" onClick={() => void bulkFavorite()}>
-                  <Star size={14} strokeWidth={1.6} /> Favorite
-                </button>
-                <div class="vault-add-anchor">
-                  <button
-                    class="ghost vault-bulk-btn"
-                    title="Move to folder"
-                    onClick={() => setMoveMenuOpen((v) => !v)}
-                  >
-                    <FolderInput size={14} strokeWidth={1.6} /> Move
-                  </button>
-                  <Show when={moveMenuOpen()}>
-                    <>
-                      <div class="vault-menu-backdrop" onClick={() => setMoveMenuOpen(false)} />
-                      <div class="vault-menu" role="menu">
-                        <button class="vault-menu-item" onClick={() => void bulkMove(null)}>
-                          No folder
-                        </button>
-                        <For each={realFolders()}>
-                          {(f) => (
-                            <button class="vault-menu-item" onClick={() => void bulkMove(f.id)}>
-                              {f.name}
-                            </button>
-                          )}
-                        </For>
-                      </div>
-                    </>
-                  </Show>
-                </div>
-                <button class="danger vault-bulk-btn" title="Move to trash" onClick={() => void bulkDelete(false)}>
-                  <Trash2 size={14} strokeWidth={1.6} /> Delete
-                </button>
-              </Show>
-            </div>
-          </Show>
+          </div>
 
           <VaultList
             items={displayed()}
@@ -1145,8 +1184,75 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
             cacheToken={cacheToken()}
             security={health()}
           />
+
+          {/* Floating multi-select action bar. Stays mounted; .is-hidden slides it
+              away so toggling selection never reflows the list (no layout shift). */}
+          <div class="vault-bulk" classList={{ 'is-hidden': selectedCount() === 0 }} role="toolbar" aria-label="Selection actions">
+            <button
+              class="ghost icon-btn vault-bulk-clear"
+              title="Clear selection"
+              onClick={() => clearSelection()}
+            >
+              <X size={15} strokeWidth={1.75} />
+            </button>
+            <span class="vault-bulk-count">{selectedCount()} selected</span>
+            <span class="vault-bulk-sep" />
+            <Show
+              when={!inTrash()}
+              fallback={
+                <>
+                  <button class="ghost vault-bulk-btn" title="Restore" onClick={() => void bulkRestore()}>
+                    <RotateCcw size={14} strokeWidth={1.6} /> Restore
+                  </button>
+                  <button
+                    class="danger vault-bulk-btn"
+                    title="Delete permanently"
+                    onClick={() => void bulkDelete(true)}
+                  >
+                    <Trash2 size={14} strokeWidth={1.6} /> Delete
+                  </button>
+                </>
+              }
+            >
+              <button class="ghost vault-bulk-btn" title="Favorite" onClick={() => void bulkFavorite()}>
+                <Star size={14} strokeWidth={1.6} /> Favorite
+              </button>
+              <div class="vault-add-anchor">
+                <button
+                  class="ghost vault-bulk-btn"
+                  title="Move to folder"
+                  onClick={() => setMoveMenuOpen((v) => !v)}
+                >
+                  <FolderInput size={14} strokeWidth={1.6} /> Move
+                </button>
+                <Show when={moveMenuOpen()}>
+                  <>
+                    <div class="vault-menu-backdrop" onClick={() => setMoveMenuOpen(false)} />
+                    <div class="vault-menu vault-menu-up" role="menu">
+                      <button class="vault-menu-item" onClick={() => void bulkMove(null)}>
+                        No folder
+                      </button>
+                      <For each={realFolders()}>
+                        {(f) => (
+                          <button class="vault-menu-item" onClick={() => void bulkMove(f.id)}>
+                            {f.name}
+                          </button>
+                        )}
+                      </For>
+                    </div>
+                  </>
+                </Show>
+              </div>
+              <button class="danger vault-bulk-btn" title="Move to trash" onClick={() => void bulkDelete(false)}>
+                <Trash2 size={14} strokeWidth={1.6} /> Delete
+              </button>
+            </Show>
+          </div>
         </aside>
 
+        {/* Detail (preview) pane. Hidden when the preview toggle is off, but always
+            shown while the inline editor is open so an edit is never stranded. */}
+        <Show when={!previewCollapsed() || editor().mode !== 'closed'}>
         <section
           class="vault-detail"
           classList={{ 'vault-detail-editing': editor().mode !== 'closed' }}
@@ -1423,6 +1529,7 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
             )}
           </Show>
         </section>
+        </Show>
             </>
           </Match>
         </Switch>

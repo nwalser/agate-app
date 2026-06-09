@@ -8,6 +8,8 @@
 import { createSignal } from 'solid-js';
 
 const COLLAPSE_KEY = 'agate.sidebarCollapsed';
+const PREVIEW_KEY = 'agate.previewCollapsed';
+const DENSITY_KEY = 'agate.rowDensity';
 const ACTIVE_VAULT_KEY = 'agate.activeVault';
 
 function readBool(key: string): boolean {
@@ -29,6 +31,56 @@ export function toggleSidebar() {
   setCollapsedSignal(next);
   try {
     localStorage.setItem(COLLAPSE_KEY, next ? '1' : '0');
+  } catch {
+    // ignore: persistence is best-effort; the in-memory signal still applies
+  }
+}
+
+// ---- detail (preview) pane collapse ----
+// Hides the right-hand detail pane so the item list spans the full width (and can
+// show more columns). Persisted like the sidebar; opening the inline editor forces
+// the pane back so the form is always visible (handled in Vault.tsx).
+
+const [previewCollapsed, setPreviewSignal] = createSignal(readBool(PREVIEW_KEY));
+export { previewCollapsed };
+
+function persistPreview(next: boolean) {
+  setPreviewSignal(next);
+  try {
+    localStorage.setItem(PREVIEW_KEY, next ? '1' : '0');
+  } catch {
+    // ignore: persistence is best-effort; the in-memory signal still applies
+  }
+}
+
+export function togglePreview() {
+  persistPreview(!previewCollapsed());
+}
+
+// ---- list row density ----
+// A global viewing preference (not per-list): how tall the vault rows are. Drives
+// a `data-density` attribute on the list; the CSS adjusts row padding.
+
+/** Closed set of row densities — never a bare string at the trust boundary. */
+export type RowDensity = 'compact' | 'default' | 'comfortable';
+
+function readDensity(): RowDensity {
+  try {
+    const v = localStorage.getItem(DENSITY_KEY);
+    return v === 'compact' || v === 'comfortable' ? v : 'default';
+  } catch {
+    // ignore: storage unavailable → default density
+    return 'default';
+  }
+}
+
+const [rowDensity, setDensitySignal] = createSignal<RowDensity>(readDensity());
+export { rowDensity };
+
+export function setRowDensity(d: RowDensity) {
+  setDensitySignal(d);
+  try {
+    localStorage.setItem(DENSITY_KEY, d);
   } catch {
     // ignore: persistence is best-effort; the in-memory signal still applies
   }

@@ -11,7 +11,7 @@
 
 import { createEffect, createRoot, createSignal } from 'solid-js';
 import { ipc } from '../lib/ipc.ts';
-import type { BreachRecord, DarkWebReport, ExposedResult } from '../lib/types.ts';
+import type { AccountBreaches, BreachRecord, DarkWebReport, ExposedResult } from '../lib/types.ts';
 import { status } from './session.ts';
 import { toastError } from './toast.ts';
 
@@ -101,6 +101,13 @@ export {
   exposedRunAt,
 };
 
+// Checked-email accumulator. The backend scans at most a rotating window per run
+// (provider rate budget), so a single run only covers part of a large vault. We
+// merge each run's results here, keyed by email, so the Security view shows the
+// growing union across runs instead of just the latest window. Cleared when the
+// monitor is switched off. Session-scoped (not persisted): breach data is re-fetched.
+const checkedByEmail = new Map<string, AccountBreaches>();
+
 /** Run the dark-web monitor over every account (no-op if disabled or locked). */
 export async function runDarkwebScan(): Promise<void> {
   if (!darkwebMonitor() || !status().unlocked || darkwebBusy()) return;
@@ -108,7 +115,21 @@ export async function runDarkwebScan(): Promise<void> {
   try {
     // The backend scan refuses unless consent is recorded; keep it in sync.
     await ipc.setDarkwebConsent(true);
-    setDarkwebReport(await ipc.darkwebScanVault());
+    const run = await ipc.darkwebScanVault();
+    // Merge this run's window into the accumulated set (latest result per email wins).
+    for (const acct of run.accounts) checkedByEmail.set(acct.email, acct);
+    const accounts = [...checkedByEmail.values()];
+    // Drop from "pending" anything already checked in an earlier run's window.
+    const checked = new Set(checkedByEmail.keys());
+    const pending = run.pending.filter((e) => !checked.has(e));
+    setDarkwebReport({
+      accounts,
+      errored: run.errored,
+      pending,
+      lockedConnections: run.lockedConnections,
+      totalBreaches: accounts.reduce((n, a) => n + a.breaches.length, 0),
+      clean: accounts.filter((a) => a.breaches.length === 0).length,
+    });
     const at = Date.now();
     setDarkwebRunAt(at);
     writeTime(KEY_DARKWEB_AT, at);
@@ -147,6 +168,7 @@ export async function setDarkwebMonitor(enabled: boolean): Promise<void> {
     } catch (err) {
       toastError(err);
     }
+    checkedByEmail.clear();
     setDarkwebReport(null);
     setDarkwebRunAt(null);
     writeTime(KEY_DARKWEB_AT, null);

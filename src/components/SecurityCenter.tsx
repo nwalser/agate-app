@@ -1,10 +1,12 @@
-import { createSignal, For, onMount, Show } from 'solid-js';
+import { createSignal, For, type JSX, onMount, Show } from 'solid-js';
 import {
   AlertTriangle,
   CheckCircle2,
   Clock,
   Database,
   Globe,
+  Hourglass,
+  Lock,
   Mail,
   RefreshCw,
   Settings as SettingsIcon,
@@ -286,6 +288,27 @@ function ExposedPasswords(props: { onOpenItem: (id: string) => void }) {
 
 // ── Dark web monitor: periodic all-account breach scan (XposedOrNot) ──────────
 
+/** A labelled, collapsible-by-emptiness list of emails not in the checked set. */
+function EmailNotice(props: { icon: JSX.Element; title: string; hint: string; emails: string[] }) {
+  return (
+    <Show when={props.emails.length > 0}>
+      <h4 class="sec-group-label">
+        {props.icon} {props.title} ({props.emails.length})
+      </h4>
+      <p class="muted sec-group-hint">{props.hint}</p>
+      <ul class="sec-notice-list">
+        <For each={props.emails}>
+          {(e) => (
+            <li class="sec-notice-item">
+              <span class="truncate">{e}</span>
+            </li>
+          )}
+        </For>
+      </ul>
+    </Show>
+  );
+}
+
 function DarkWebMonitor() {
   return (
     <section class="sec-card">
@@ -306,20 +329,50 @@ function DarkWebMonitor() {
           {(r) => (
             <>
               <div class="sec-report-summary">
-                <span><strong>{r().accounts.length}</strong> scanned</span>
+                <span><strong>{r().accounts.length}</strong> checked</span>
                 <span class="sec-report-bad"><strong>{r().totalBreaches}</strong> breaches</span>
                 <span class="sec-report-good"><strong>{r().clean}</strong> clean</span>
               </div>
-              <Show when={r().skipped > 0}>
-                <p class="muted sec-help">{r().skipped} more email(s) not scanned this run (rate limit).</p>
-              </Show>
+
               <Show
                 when={r().accounts.length > 0}
                 fallback={<p class="muted sec-empty">No account emails found in your vault.</p>}
               >
+                <h4 class="sec-group-label">
+                  <CheckCircle2 size={12} strokeWidth={1.75} /> Checked emails ({r().accounts.length})
+                </h4>
                 <div class="sec-accounts">
                   <For each={r().accounts}>{(acct) => <AccountResult account={acct} />}</For>
                 </div>
+              </Show>
+
+              <EmailNotice
+                icon={<Lock size={12} strokeWidth={1.75} />}
+                title="Vaults not read — connection locked"
+                hint="Their account email is still checked, but logins/identities stored inside weren't. Unlock the connection (it may need 2FA), then refresh."
+                emails={r().lockedConnections}
+              />
+              <EmailNotice
+                icon={<Hourglass size={12} strokeWidth={1.75} />}
+                title="Not checked yet"
+                hint="More emails than one run's rate-limit budget. These rotate into the next scans — refresh to check the next batch now."
+                emails={r().pending}
+              />
+              <Show when={r().errored.length > 0}>
+                <h4 class="sec-group-label warn">
+                  <AlertTriangle size={12} strokeWidth={1.75} /> Lookup failed ({r().errored.length})
+                </h4>
+                <p class="muted sec-group-hint">Transient — retried on the next scan.</p>
+                <ul class="sec-notice-list">
+                  <For each={r().errored}>
+                    {(e) => (
+                      <li class="sec-notice-item">
+                        <span class="truncate">{e.email}</span>
+                        <span class="muted sec-notice-reason truncate">{e.error}</span>
+                      </li>
+                    )}
+                  </For>
+                </ul>
               </Show>
             </>
           )}

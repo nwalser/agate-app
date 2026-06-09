@@ -5,14 +5,26 @@
   min-height: 0;
 }
 
-/* Per-page toolbar at the top of the item list — holds the context-aware Add.
-   Left-aligned so the Add menu opens within the list (which clips overflow). */
+/* Per-page toolbar at the top of the item list. A muted row count sits on the
+   left; the preview toggle + context-aware Add are pushed to the right. */
 .vault-list-head {
   display: flex;
   align-items: center;
-  justify-content: flex-start;
   gap: 8px;
   padding: 2px 4px 6px;
+  min-height: 32px;
+}
+.vault-list-count {
+  font-size: 12px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+/* Right-aligned cluster: preview-pane toggle, then Add. */
+.vault-list-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .vault-add-anchor {
@@ -35,19 +47,31 @@
 .vault-menu-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 50;
+  z-index: var(--z-menu-backdrop);
 }
 .vault-menu {
   position: absolute;
   top: calc(100% + 6px);
   left: 0;
-  z-index: 51;
+  z-index: var(--z-menu);
   min-width: 180px;
   background: var(--surface-2);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
   padding: 5px;
+}
+/* Right-opening variant for a right-aligned anchor (the Add button). */
+.vault-menu.align-right {
+  left: auto;
+  right: 0;
+}
+/* Upward variant for anchors near the bottom (the floating bulk-bar's Move). */
+.vault-menu.vault-menu-up {
+  top: auto;
+  bottom: calc(100% + 6px);
+  max-height: 40vh;
+  overflow-y: auto;
 }
 .vault-menu-item {
   display: flex;
@@ -239,10 +263,10 @@
   display: none;
 }
 
-/* Column template shared by the header row and every item row so cells line up.
-   Columns: checkbox · type icon · name · username · trailing badges. */
+/* The item-list pane. The grid template (--vault-cols) is set per visible column
+   set on the inner .vault-table (see VaultList). position:relative anchors the
+   floating multi-select action bar. */
 .vault-list {
-  --vault-cols: 22px 18px minmax(0, 1.5fr) minmax(0, 1fr) auto;
   flex: 1.3 1 0;
   min-width: 380px;
   flex-shrink: 0;
@@ -252,6 +276,12 @@
   min-height: 0;
   overflow: hidden;
   padding: 6px;
+  position: relative;
+}
+/* Detail pane hidden → the list spans the full width; drop the now-dangling
+   right border. */
+.vault-list.list-full {
+  border-right: none;
 }
 
 /* Pinned column header above the scrolling rows. */
@@ -292,34 +322,64 @@ button.vault-head-cell.sorted {
   flex-shrink: 0;
 }
 
-.vault-list-scroll {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding-top: 4px;
-}
-
+/* Floating multi-select action bar. Absolutely positioned over the bottom of the
+   list pane (a sibling of the scroller) so showing it never reflows the rows.
+   Stays mounted; the .is-hidden class slides + fades it out of view. */
 .vault-bulk {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translate(-50%, 0);
+  z-index: var(--z-bulk-bar);
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 8px;
-  margin-bottom: 4px;
+  gap: 8px;
+  width: max-content;
+  max-width: calc(100% - 24px);
+  padding: 7px 8px 7px 14px;
   background: var(--surface-2);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
+  border-radius: 999px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18), 0 10px 28px rgba(0, 0, 0, 0.4);
+  transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.15s ease;
+}
+.vault-bulk.is-hidden {
+  transform: translate(-50%, calc(100% + 24px));
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+}
+@media (prefers-reduced-motion: reduce) {
+  .vault-bulk {
+    transition-duration: 0s;
+  }
+  .vault-bulk.is-hidden {
+    transform: translate(-50%, 0);
+  }
 }
 .vault-bulk-count {
   font-size: 12px;
   font-weight: 600;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.vault-bulk-clear {
+  padding: 4px;
+}
+.vault-bulk-sep {
+  width: 1px;
+  align-self: stretch;
+  margin: 2px 2px;
+  background: var(--border);
 }
 .vault-bulk-btn {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 5px 9px;
+  padding: 6px 11px;
   font-size: 12px;
+  border-radius: 999px;
+  white-space: nowrap;
 }
 
 .vault-empty,
@@ -342,6 +402,15 @@ button.vault-head-cell.sorted {
   background: transparent;
   cursor: pointer;
   user-select: none;
+}
+/* Row density (global viewing pref, state/ui.ts) — adjusts vertical padding. */
+.vault-list[data-density='compact'] .vault-row {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+.vault-list[data-density='comfortable'] .vault-row {
+  padding-top: 12px;
+  padding-bottom: 12px;
 }
 .vault-row:hover {
   background: var(--card-hover);
@@ -414,6 +483,10 @@ button.vault-head-cell.sorted {
   padding: 0;
   overflow: hidden;
 }
+
+/* Detail pane hidden (preview toggle off): the section is removed from the tree
+   in Vault.tsx, so the list reclaims the width. No transition needed since the
+   pane unmounts; the list reflows its flexible columns into the new space. */
 
 .detail-head {
   display: flex;
@@ -627,7 +700,7 @@ button.vault-head-cell.sorted {
 /* Right-click context menu on an item row. Positioned at the cursor (fixed). */
 .vault-ctx {
   position: fixed;
-  z-index: 71;
+  z-index: var(--z-ctx);
   min-width: 200px;
   background: var(--surface-2);
   border: 1px solid var(--border-strong);

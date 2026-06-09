@@ -18,7 +18,10 @@ use bitwarden_core::UserId;
 use bitwarden_generators::{PassphraseGeneratorRequest, PasswordGeneratorRequest};
 use bitwarden_pm::PasswordManagerClient;
 use bitwarden_sync::SyncRequest;
-use bitwarden_vault::{generate_totp, Cipher, CipherRepromptType, CipherType, CipherView};
+use bitwarden_vault::{
+    generate_totp, Cipher, CipherRepromptType, CipherType, CipherView, Folder as VaultFolder,
+    FolderView,
+};
 use chrono::Utc;
 
 use crate::dto::{
@@ -92,14 +95,14 @@ pub async fn sync(state: &AppState, force: bool) -> AgateResult<()> {
         return Err(AgateError::not_authenticated());
     }
 
-    let mut results: Vec<(String, Vec<Cipher>)> = Vec::new();
+    let mut results: Vec<(String, Vec<Cipher>, Vec<VaultFolder>)> = Vec::new();
     let mut first_err: Option<AgateError> = None;
     let mut any_ok = false;
     for (email, client) in clients {
         match sync_one(&client, force).await {
-            Ok(ciphers) => {
+            Ok((ciphers, folders)) => {
                 any_ok = true;
-                results.push((email, ciphers));
+                results.push((email, ciphers, folders));
             }
             Err(e) => {
                 log::warn!("sync failed for a connection: {}", e.message);
@@ -112,10 +115,10 @@ pub async fn sync(state: &AppState, force: bool) -> AgateResult<()> {
 
     {
         let mut session = state.session.lock().await;
-        for (email, ciphers) in results {
+        for (email, ciphers, folders) in results {
             if let Some(conn) = session.connections.get_mut(&email) {
                 conn.ciphers = ciphers;
-                conn.folders = Vec::new();
+                conn.folders = folders;
             }
         }
     }
@@ -149,7 +152,10 @@ async fn adopt_user_id(client: &PasswordManagerClient, profile_id: Option<uuid::
     }
 }
 
-async fn sync_one(client: &PasswordManagerClient, force: bool) -> AgateResult<Vec<Cipher>> {
+async fn sync_one(
+    client: &PasswordManagerClient,
+    force: bool,
+) -> AgateResult<(Vec<Cipher>, Vec<VaultFolder>)> {
     let response = client
         .sync()
         .sync(SyncRequest { force, exclude_subdomains: None })
@@ -190,7 +196,19 @@ async fn sync_one(client: &PasswordManagerClient, force: bool) -> AgateResult<Ve
         Err(e) => log::warn!("no cipher repository registered; edits may be limited: {e}"),
     }
 
-    Ok(ciphers)
+    // Folders, like ciphers, are NOT materialized into a repository by the SDK
+    // (and Agate registers none), so we decode the sync response's folders into
+    // domain `Folder`s here and cache them on the connection — `list_folders`
+    // decrypts straight from that cache, mirroring the cipher read path.
+    let mut folders: Vec<VaultFolder> = Vec::new();
+    for model in response.folders.unwrap_or_default() {
+        match VaultFolder::try_from(model) {
+            Ok(f) => folders.push(f),
+            Err(e) => log::warn!("skipping folder that failed to decode: {e}"),
+        }
+    }
+
+    Ok((ciphers, folders))
 }
 
 /// Decrypt every unlocked connection's cached ciphers into one unified list,
@@ -369,32 +387,38 @@ pub(crate) async fn decrypt_one(
 }
 
 /// List decrypted folders across every unlocked connection, stamped by account.
+/// Reads from each connection's cached folders (populated by `sync`) and decrypts
+/// them locally — the SDK's repository-backed `folders().list()` returns nothing
+/// because no folder repository is registered (same reason `list_items` decrypts
+/// the cached ciphers itself).
 pub async fn list_folders(state: &AppState) -> AgateResult<Vec<Folder>> {
     let labels = label_map(state).await;
-    let clients: Vec<(String, PasswordManagerClient)> = {
+    let snapshot: Vec<(String, PasswordManagerClient, Vec<VaultFolder>)> = {
         let session = state.session.lock().await;
         session
             .connections
             .iter()
-            .map(|(email, c)| (email.clone(), PasswordManagerClient(c.client.0.clone())))
+            .map(|(email, c)| {
+                (email.clone(), PasswordManagerClient(c.client.0.clone()), c.folders.clone())
+            })
             .collect()
     };
 
     let mut out = Vec::new();
-    for (email, client) in clients {
+    for (email, client, folders) in snapshot {
         let label = label_for(&labels, &email);
-        match client.vault().folders().list().await {
-            Ok(views) => {
-                for v in views {
-                    out.push(Folder {
-                        id: v.id.map(|i| i.to_string()),
-                        name: v.name,
-                        account_email: email.clone(),
-                        account_label: label.clone(),
-                    });
-                }
+        let key_store = client.0.internal.get_key_store();
+        for folder in &folders {
+            let decrypted: Result<FolderView, _> = key_store.decrypt(folder);
+            match decrypted {
+                Ok(view) => out.push(Folder {
+                    id: view.id.map(|i| i.to_string()),
+                    name: view.name,
+                    account_email: email.clone(),
+                    account_label: label.clone(),
+                }),
+                Err(e) => log::warn!("skipping folder that failed to decrypt: {e}"),
             }
-            Err(e) => log::warn!("folder list failed for a connection: {e}"),
         }
     }
     Ok(out)

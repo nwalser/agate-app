@@ -3,11 +3,12 @@
   display: inline-flex;
 }
 
+/* Portaled to <body> and fixed-positioned (top/right set inline from the gear
+   button's rect) so it escapes the table's overflow scroll-clip and the sticky
+   header's stacking context — same pattern as .vault-ctx. */
 .column-menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: 51;
+  position: fixed;
+  z-index: var(--z-menu);
   width: 252px;
   max-height: 70vh;
   overflow-y: auto;
@@ -44,18 +45,63 @@
   width: auto;
   accent-color: var(--primary);
 }
+/* Segmented control for row density. */
+.column-menu-seg {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  margin: 0 2px 2px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.column-menu-seg-btn {
+  flex: 1;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  padding: 5px 6px;
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+}
+.column-menu-seg-btn:hover {
+  background: var(--card-hover);
+  color: var(--foreground);
+}
+.column-menu-seg-btn.active {
+  background: var(--card-hover);
+  color: var(--foreground);
+  font-weight: 600;
+}
+
 .column-menu-row {
   display: flex;
   align-items: center;
   gap: 2px;
   padding: 3px 4px;
   border-radius: var(--radius-sm);
+  border: 1px solid transparent;
 }
 .column-menu-row:hover {
   background: var(--card-hover);
 }
 .column-menu-fixed {
   opacity: 0.65;
+}
+/* Drag-reorder affordances. */
+.column-menu-grip {
+  display: inline-flex;
+  align-items: center;
+  color: var(--subtle-foreground);
+  cursor: grab;
+  flex-shrink: 0;
+}
+.column-menu-row.dragging {
+  opacity: 0.5;
+}
+.column-menu-row.dropover {
+  border-color: var(--primary);
+  background: var(--card-hover);
 }
 .column-menu-name {
   flex: 1;
@@ -99,4 +145,25 @@
 .column-menu-customadd input {
   font-size: 12px;
   padding: 6px 8px;
+}
+
+.column-menu-reset {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  padding: 7px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.column-menu-reset:hover {
+  background: var(--card-hover);
+  color: var(--foreground);
+}
+.column-menu-reset svg {
+  flex-shrink: 0;
 }

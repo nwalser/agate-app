@@ -13,7 +13,7 @@
 //! to `None`); edit round-trips the decrypted `CipherView` through JSON so fields
 //! we don't enumerate (key, password_history, dates…) are preserved.
 
-use bitwarden_api_api::models::CipherRequestModel;
+use bitwarden_api_api::models::{CipherRequestModel, FolderRequestModel};
 use bitwarden_pm::PasswordManagerClient;
 use bitwarden_vault::{Cipher, CipherId, CipherView, FolderAddEditRequest, FolderId};
 use serde::de::DeserializeOwned;
@@ -339,21 +339,47 @@ pub async fn restore_items(state: &AppState, account_email: &str, ids: Vec<Strin
     Ok(())
 }
 
+/// Encrypt a folder name and create (no id) or rename (with id) it via the raw
+/// `folders_api()`, returning the server's folder id. We bypass the SDK's
+/// high-level `FoldersClient::{create,edit}` because both are repository-backed
+/// (`repository.require()` / `get`), and Agate registers no folder repository —
+/// so they'd error even when the server write succeeded. This mirrors how cipher
+/// writes go straight through `ciphers_api()` in `encrypt_and_push`.
+async fn push_folder(
+    client: &PasswordManagerClient,
+    id: Option<&str>,
+    name: &str,
+) -> AgateResult<Option<String>> {
+    let internal = &client.0.internal;
+    let key_store = internal.get_key_store();
+    let model: FolderRequestModel = key_store
+        .encrypt(FolderAddEditRequest { name: name.to_string() })
+        .map_err(|e| op_err(ErrorKind::Crypto, "encrypt folder", e))?;
+    let api = internal.get_api_configurations();
+    let folders_api = api.api_client.folders_api();
+    let resp = match id {
+        Some(id) => folders_api
+            .put(id, Some(model))
+            .await
+            .map_err(|e| op_err(ErrorKind::Network, "Rename folder failed", e))?,
+        None => folders_api
+            .post(Some(model))
+            .await
+            .map_err(|e| op_err(ErrorKind::Network, "Create folder failed", e))?,
+    };
+    Ok(resp.id.map(|i| i.to_string()))
+}
+
 /// Create a personal folder in one account.
 pub async fn create_folder(state: &AppState, account_email: &str, name: String) -> AgateResult<Folder> {
     if name.trim().is_empty() {
         return Err(AgateError::bad_request("Folder name is required."));
     }
     let client = client_for(state, account_email).await?;
-    let view = client
-        .vault()
-        .folders()
-        .create(FolderAddEditRequest { name })
-        .await
-        .map_err(|e| op_err(ErrorKind::Network, "Create folder failed", e))?;
+    let id = push_folder(&client, None, &name).await?;
     Ok(Folder {
-        id: view.id.map(|i| i.to_string()),
-        name: view.name,
+        id,
+        name,
         account_email: account_email.to_string(),
         account_label: account_label(state, account_email).await,
     })
@@ -386,16 +412,14 @@ pub async fn rename_folder(state: &AppState, account_email: &str, id: &str, name
     if name.trim().is_empty() {
         return Err(AgateError::bad_request("Folder name is required."));
     }
+    // Validate the id shape before touching the network.
+    let _: FolderId = parse_id(id)?;
     let client = client_for(state, account_email).await?;
-    let view = client
-        .vault()
-        .folders()
-        .edit(parse_id::<FolderId>(id)?, FolderAddEditRequest { name })
-        .await
-        .map_err(|e| op_err(ErrorKind::Network, "Rename folder failed", e))?;
+    push_folder(&client, Some(id), &name).await?;
     Ok(Folder {
-        id: view.id.map(|i| i.to_string()),
-        name: view.name,
+        // A rename keeps the same id; echo the caller's (the response repeats it).
+        id: Some(id.to_string()),
+        name,
         account_email: account_email.to_string(),
         account_label: account_label(state, account_email).await,
     })

@@ -47,3 +47,55 @@ describe('ui state — sidebar + active vault', () => {
     expect(m.activeVault()).toBe('x@y.com');
   });
 });
+
+describe('ui state — preview (detail) pane', () => {
+  beforeEach(() => localStorage.clear());
+
+  it('defaults to expanded (preview shown)', async () => {
+    const m = await freshUi();
+    expect(m.previewCollapsed()).toBe(false);
+  });
+
+  it('togglePreview flips and persists', async () => {
+    const m = await freshUi();
+    m.togglePreview();
+    expect(m.previewCollapsed()).toBe(true);
+    expect(localStorage.getItem('agate.previewCollapsed')).toBe('1');
+    m.togglePreview();
+    expect(m.previewCollapsed()).toBe(false);
+    expect(localStorage.getItem('agate.previewCollapsed')).toBe('0');
+  });
+
+  it('reads the persisted collapsed state at load', async () => {
+    const m = await freshUi({ 'agate.previewCollapsed': '1' });
+    expect(m.previewCollapsed()).toBe(true);
+  });
+});
+
+describe('ui state — row density', () => {
+  beforeEach(() => localStorage.clear());
+
+  it('defaults to "default"', async () => {
+    const m = await freshUi();
+    expect(m.rowDensity()).toBe('default');
+  });
+
+  it('setRowDensity persists a valid value', async () => {
+    const m = await freshUi();
+    m.setRowDensity('compact');
+    expect(m.rowDensity()).toBe('compact');
+    expect(localStorage.getItem('agate.rowDensity')).toBe('compact');
+    m.setRowDensity('comfortable');
+    expect(m.rowDensity()).toBe('comfortable');
+  });
+
+  it('reads a persisted density at load', async () => {
+    const m = await freshUi({ 'agate.rowDensity': 'comfortable' });
+    expect(m.rowDensity()).toBe('comfortable');
+  });
+
+  it('falls back to "default" on a bogus persisted value', async () => {
+    const m = await freshUi({ 'agate.rowDensity': 'huge' });
+    expect(m.rowDensity()).toBe('default');
+  });
+});

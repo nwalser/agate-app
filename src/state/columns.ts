@@ -118,6 +118,81 @@ export function isFilterable(c: ColumnSpec): boolean {
   return c.id === 'username' || c.id === 'website' || c.id === 'folder' || c.id === 'type';
 }
 
+// ---- grid track metrics -------------------------------------------------------
+// The list is a CSS grid whose `grid-template-columns` and total minimum width
+// are derived from the visible column set. Every column has a hard FLOOR (px) so
+// tracks can never collapse to zero and overlap their neighbours when the pane is
+// narrow — instead the table reaches its minimum width and scrolls horizontally.
+// A user-set drag width overrides both the flexible track and its floor.
+
+/** Gap between grid tracks (px) — mirrors `gap` in the .vault-head/.vault-row CSS. */
+export const COL_GAP = 10;
+/** Fixed leading checkbox column (px). */
+export const CHECK_COL_PX = 22;
+/** Fixed trailing column for the favorite star / row affordances (px). */
+export const END_COL_PX = 76;
+/** Floor + flexible track for the always-on Name column. */
+const NAME_COL_FLOOR = 150;
+const NAME_COL_TRACK = `minmax(${NAME_COL_FLOOR}px, 1.6fr)`;
+
+interface Track {
+  /** A single `grid-template-columns` entry. */
+  template: string;
+  /** The smallest width this track can occupy (px) — feeds the table min-width. */
+  min: number;
+}
+
+/** The default track (template + floor) for a configurable column. */
+export function columnTrack(c: ColumnSpec): Track {
+  if (c.kind === 'custom') return { template: 'minmax(120px, 1fr)', min: 120 };
+  switch (c.id) {
+    case 'type':
+      return { template: '96px', min: 96 };
+    case 'totp':
+      return { template: '120px', min: 120 };
+    case 'username':
+      return { template: 'minmax(120px, 1fr)', min: 120 };
+    case 'website':
+      return { template: 'minmax(130px, 1fr)', min: 130 };
+    case 'folder':
+      return { template: 'minmax(110px, 0.8fr)', min: 110 };
+    case 'password':
+      return { template: 'minmax(120px, 1fr)', min: 120 };
+    case 'security':
+      return { template: 'minmax(130px, 1.2fr)', min: 130 };
+  }
+}
+
+/** Resolve one column's track, honouring a user drag-width override. */
+function resolveTrack(c: ColumnSpec, widths: Record<string, number>): Track {
+  const w = widths[columnKey(c)];
+  if (w) return { template: `${w}px`, min: w };
+  return columnTrack(c);
+}
+
+export interface GridMetrics {
+  /** Value for the `--vault-cols` custom property (grid-template-columns). */
+  template: string;
+  /** Total minimum width of the table (px): all track floors + the gaps. */
+  minWidth: number;
+}
+
+/**
+ * Build the grid template and the table's minimum width from the visible columns
+ * (plus the fixed checkbox/name/end tracks). The min-width is what lets the table
+ * scroll horizontally instead of squashing columns into each other.
+ */
+export function gridMetrics(cols: ColumnSpec[], widths: Record<string, number>): GridMetrics {
+  const tracks: Track[] = [{ template: `${CHECK_COL_PX}px`, min: CHECK_COL_PX }];
+  const nameW = widths[NAME_COL_KEY];
+  tracks.push(nameW ? { template: `${nameW}px`, min: nameW } : { template: NAME_COL_TRACK, min: NAME_COL_FLOOR });
+  for (const c of cols) tracks.push(resolveTrack(c, widths));
+  tracks.push({ template: `${END_COL_PX}px`, min: END_COL_PX });
+  const template = tracks.map((t) => t.template).join(' ');
+  const minWidth = tracks.reduce((sum, t) => sum + t.min, 0) + (tracks.length - 1) * COL_GAP;
+  return { template, minWidth };
+}
+
 const STORAGE_KEY = 'agate.columns';
 
 const DEFAULT: ColumnConfig = {
@@ -237,6 +312,25 @@ export function moveColumn(index: number, dir: -1 | 1) {
   if (index < 0 || index >= cur.length || j < 0 || j >= cur.length) return;
   [cur[index], cur[j]] = [cur[j], cur[index]];
   persist({ ...columns(), columns: cur });
+}
+
+/** Move the column at `from` to position `to` (drag-and-drop reorder). */
+export function reorderColumn(from: number, to: number) {
+  const cur = columns().columns.slice();
+  if (from < 0 || from >= cur.length || to < 0 || to >= cur.length || from === to) return;
+  const [moved] = cur.splice(from, 1);
+  cur.splice(to, 0, moved);
+  persist({ ...columns(), columns: cur });
+}
+
+/** Restore the default visible set, order, reveal state, favicons, and widths. */
+export function resetColumns() {
+  persist({
+    columns: DEFAULT.columns.map((c) => ({ ...c })),
+    revealed: [],
+    favicons: DEFAULT.favicons,
+    widths: {},
+  });
 }
 
 export function isRevealed(key: string): boolean {

@@ -1,12 +1,48 @@
-/* Table shell. Reuses .vault-head / .vault-row / .vault-list-scroll / .vault-row-*
-   from Vault.css (loaded globally); only list-table-specific bits live here. The
-   grid template (--vault-cols) is set inline per the visible column set. */
+/* Table shell. Reuses .vault-head / .vault-row / .vault-row-* from Vault.css
+   (loaded globally); only list-table-specific bits live here. The grid template
+   (--vault-cols) and the table's min-width (--vault-min) are set inline per the
+   visible column set (see gridMetrics in state/columns.ts). */
 
+/* The single scroll container for BOTH axes. Columns have hard px floors (see
+   gridMetrics in state/columns.ts), so when the pane is too narrow the grid
+   reaches its --vault-min and scrolls horizontally instead of squashing columns
+   into each other. The header pins via position:sticky inside this same
+   scroller, so it scrolls horizontally with the rows but stays put vertically. */
 .vault-table {
   flex: 1;
   min-height: 0;
-  display: flex;
-  flex-direction: column;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+
+/* Sticky header block (column titles + optional filter row). Opaque background
+   so scrolling rows don't bleed through; min-width matches the rows so every
+   track lines up at any horizontal scroll offset. */
+.vault-thead {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-list-sticky);
+  min-width: var(--vault-min);
+  background: var(--background);
+}
+
+.vault-rows {
+  min-width: var(--vault-min);
+  padding-top: 4px;
+}
+/* When rows are multi-selected the floating action bar overlays the bottom of
+   the pane — reserve scroll space so it never hides the last row's controls. */
+.vault-list.has-selection .vault-rows {
+  padding-bottom: 64px;
+}
+
+/* Header label truncates on its own span — never the cell, whose overflow must
+   stay visible for the absolutely-positioned resize handle to show. */
+.vault-head-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .vault-name-cell {
@@ -90,9 +126,15 @@
 }
 
 /* Drag handle on a header cell's right edge to resize the column. Sits in the
-   grid gap; double-click resets the column to its default width. */
+   grid gap; double-click resets the column to its default width. The cell is a
+   flex row so its label span can truncate while the sort icon / resize handle
+   stay put (overflow stays visible here for the absolute handle). */
 .vault-head-resizable {
   position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
 }
 .vault-col-resize {
   position: absolute;

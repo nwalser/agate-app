@@ -44,6 +44,13 @@ rand = "0.8"
 zeroize = { version = "1", features = ["derive"] }
 base64 = "0.22"
 
+# Scan a TOTP setup QR off the screen: capture every monitor (xcap) and decode
+# any otpauth:// QR (rqrr). See qrscan.rs. We feed rqrr greyscale bytes via its
+# closure constructor, so there's no coupling to the `image` crate version the
+# SDK already pulls in.
+xcap = "0.9"
+rqrr = "0.10"
+
 # Bitwarden official SDK (sdk-internal). GPLv3. Pinned by rev because the
 # password-manager SDK is explicitly unstable ("changes without warning").
 # Bumping the rev is a deliberate, reviewed action — never float `main`.
@@ -75,3 +82,9 @@ windows = { version = "0.58", features = [
     "Win32_System_Com",
     "Win32_UI_WindowsAndMessaging",
 ] }
+
+[dev-dependencies]
+# Render a known otpauth:// QR in-process to test the decode path without a real
+# screen capture (qrscan::decode_otpauth_from_rgba).
+qrcode = "0.14"
+image = "0.25"

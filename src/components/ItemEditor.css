@@ -114,6 +114,19 @@
 .item-editor .ie-multi-row {
   margin-bottom: 8px;
 }
+
+/* TOTP field: input grows, scan button hugs its content on the right. */
+.item-editor .ie-totp-row {
+  align-items: stretch;
+}
+.item-editor .ie-scan-qr {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.item-editor .ie-scan-qr:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
 .item-editor .ie-match,
 .item-editor .ie-fieldkind {
   width: auto;

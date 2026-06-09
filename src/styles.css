@@ -8,6 +8,14 @@
   --radius: 8px;
   --radius-sm: 6px;
 
+  /* z-index scale — reference these, never bare literals (CLAUDE.md). Ordered:
+     sticky table chrome < floating selection bar < dropdown menus < context
+     menu < toasts. */
+  --z-list-sticky: 5;
+  --z-bulk-bar: 40;
+  --z-menu-backdrop: 50;
+  --z-menu: 51;
+  --z-ctx: 71;
   --z-toast: 1000;
 }
 

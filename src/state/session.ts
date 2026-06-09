@@ -7,7 +7,6 @@ import type { ServerConfig, SessionStatus } from '../lib/types.ts';
 
 const DEFAULT_STATUS: SessionStatus = {
   appUnlockConfigured: false,
-  unlockDeviceBound: false,
   unlocked: false,
   helloConfigured: false,
   darkwebConsent: false,

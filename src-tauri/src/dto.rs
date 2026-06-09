@@ -98,8 +98,6 @@ pub struct UnlockOutcome {
 pub struct SessionStatus {
     /// An app-unlock password has been configured (the unified unlock secret).
     pub app_unlock_configured: bool,
-    /// The app unlock is bound to this machine (device pepper mixed into the AUK).
-    pub unlock_device_bound: bool,
     /// The app is unlocked (the App Unlock Key is held; the vault is visible).
     pub unlocked: bool,
     /// Windows Hello unlock has been enabled (app-wide; Windows only).
@@ -446,19 +444,36 @@ pub struct AccountBreaches {
     pub risk_score: Option<i64>,
 }
 
+/// One email whose breach lookup failed this run (network / provider error). Kept
+/// apart from clean results so a transient failure is never read as "clean"; it is
+/// retried on the next scan. `error` is the secret-free `AgateError` message.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmailError {
+    pub email: String,
+    pub error: String,
+}
+
 /// Aggregate dark-web report across every account email found in the vault.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DarkWebReport {
-    /// Every email actually scanned, including clean ones (empty `breaches`).
+    /// Every email actually checked this run, including clean ones (empty `breaches`).
     pub accounts: Vec<AccountBreaches>,
-    /// Total breaches across all scanned emails.
+    /// Emails whose lookup failed this run; retried on the next scan.
+    pub errored: Vec<EmailError>,
+    /// Emails harvested but not scanned this run (per-run cap, to respect the
+    /// provider's daily rate limit). Rotated into a later run so coverage is
+    /// eventually complete — never silently dropped.
+    pub pending: Vec<String>,
+    /// Configured connections that aren't currently unlocked, so their vault items
+    /// (and any emails inside them) couldn't be read this run. The connection's own
+    /// account email is still scanned; this flags only the unread vault contents.
+    pub locked_connections: Vec<String>,
+    /// Total breaches across all checked emails.
     pub total_breaches: usize,
-    /// How many scanned emails came back clean.
+    /// How many checked emails came back clean.
     pub clean: usize,
-    /// Emails found in the vault but NOT scanned (per-run cap, to respect the
-    /// provider's daily rate limit). Surfaced so coverage is never silently lost.
-    pub skipped: usize,
 }
 
 /// One create-or-edit payload for any item type.
@@ -694,9 +709,11 @@ mod mirror_tests {
                     risk_label: None,
                     risk_score: None,
                 }],
+                errored: vec![EmailError { email: "c@d.com".into(), error: "rate limit".into() }],
+                pending: vec!["e@f.com".into()],
+                locked_connections: vec!["g@h.com".into()],
                 total_breaches: 1,
                 clean: 0,
-                skipped: 0,
             },
         );
         camel(
@@ -736,5 +753,18 @@ mod mirror_tests {
             serde_json::to_value(&f).unwrap(),
             json!({ "name": null, "value": null, "fieldType": "linked", "linkedId": 7 })
         );
+        // UnlockStatus wire values (mirror the `UnlockOutcome` union in types.ts) —
+        // pin the unit-variant strings so a rename can't silently drift the contract.
+        let status_of = |s: UnlockStatus| {
+            serde_json::to_value(UnlockOutcome {
+                email: "a@b.com".into(),
+                server_label: "EU".into(),
+                status: s,
+            })
+            .unwrap()["status"]
+                .clone()
+        };
+        assert_eq!(status_of(UnlockStatus::Unlocked), json!("unlocked"));
+        assert_eq!(status_of(UnlockStatus::ManualUnlock), json!("manualUnlock"));
     }
 }

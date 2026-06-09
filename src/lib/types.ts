@@ -32,8 +32,6 @@ export type LoginResult =
 export interface SessionStatus {
   /** An app-unlock password has been configured (the unified unlock secret). */
   appUnlockConfigured: boolean;
-  /** The app unlock is bound to this machine (device pepper mixed into the AUK). */
-  unlockDeviceBound: boolean;
   /** The app is unlocked (the VMK is held; the vault is visible). */
   unlocked: boolean;
   helloConfigured: boolean;
@@ -117,12 +115,23 @@ export interface AccountBreaches {
   riskScore: number | null;
 }
 
+/** One email whose breach lookup failed this run (retried next run). */
+export interface EmailError {
+  email: string;
+  error: string;
+}
+
 export interface DarkWebReport {
+  /** Every email checked this run (or, in the merged store view, ever checked). */
   accounts: AccountBreaches[];
+  /** Emails whose lookup failed; retried next run. */
+  errored: EmailError[];
+  /** Emails harvested but not yet checked (rotated into a later run). */
+  pending: string[];
+  /** Configured connections not unlocked, so their vault items weren't read. */
+  lockedConnections: string[];
   totalBreaches: number;
   clean: number;
-  /** Vault emails found but not scanned this run (per-run cap / rate limit). */
-  skipped: number;
 }
 
 export type ItemType =

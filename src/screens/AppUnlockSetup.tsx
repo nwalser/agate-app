@@ -1,5 +1,5 @@
 import { createSignal } from 'solid-js';
-import { Laptop, ShieldCheck } from 'lucide-solid';
+import { Check, Laptop, ShieldCheck } from 'lucide-solid';
 import { ipc } from '../lib/ipc.ts';
 import { refreshSession } from '../state/session.ts';
 import { pushToast, toastError } from '../state/toast.ts';
@@ -9,9 +9,6 @@ import './Onboarding.css';
 export default function AppUnlockSetup() {
   const [pw, setPw] = createSignal('');
   const [confirm, setConfirm] = createSignal('');
-  // Bind the unlock to this machine by default — strictly stronger, and the blob
-  // can't be opened if copied to another device.
-  const [deviceBound, setDeviceBound] = createSignal(true);
   const [busy, setBusy] = createSignal(false);
 
   async function create() {
@@ -25,7 +22,7 @@ export default function AppUnlockSetup() {
     }
     setBusy(true);
     try {
-      await ipc.configureAppUnlock(pw(), deviceBound());
+      await ipc.configureAppUnlock(pw());
       setPw('');
       setConfirm('');
       await refreshSession();
@@ -70,22 +67,17 @@ export default function AppUnlockSetup() {
             />
           </div>
 
-          <button
-            type="button"
-            class="unlock-method"
-            classList={{ active: deviceBound() }}
-            onClick={() => setDeviceBound((v) => !v)}
-          >
+          <div class="unlock-method active">
             <Laptop size={18} strokeWidth={1.6} />
             <span class="unlock-method-text">
-              <span class="unlock-method-title">Bind to this computer</span>
+              <span class="unlock-method-title">Bound to this computer</span>
               <span class="muted unlock-method-sub">
-                Mix a device key into the unlock so your vault can only be opened on this machine —
-                even with the password, the data is useless if copied elsewhere.
+                A device key is mixed into the unlock, so your vault can only be opened on this
+                machine — even with the password, the data is useless if copied elsewhere.
               </span>
             </span>
-            <input type="checkbox" checked={deviceBound()} tabindex={-1} />
-          </button>
+            <Check size={18} strokeWidth={2} />
+          </div>
 
           <button class="primary full" disabled={busy()} onClick={() => void create()}>
             {busy() ? 'Setting up…' : 'Set app password'}

@@ -2,9 +2,11 @@
 //!
 //! Offline checks (`audit_offline`) run entirely on decrypted `CipherView`s and
 //! send nothing anywhere: reused passwords (grouped by a SHA-1 hash, never the
-//! plaintext), weak passwords (zxcvbn score < 3), old passwords (revision-date
-//! age), insecure http:// URIs, and logins missing TOTP. A 0–100 health score
-//! summarizes them.
+//! plaintext), weak passwords (zxcvbn score below a threshold), old passwords
+//! (revision-date age), insecure http:// URIs, and logins missing TOTP. A 0–100
+//! health score summarizes them. Each check can be turned off and its threshold
+//! tuned via `AuditConfig` (Settings › Audits); the values quoted here are just
+//! the defaults (weak < 3, older than 365 days, shared by ≥ 2 logins).
 //!
 //! The exposed-password check (`audit_exposed`) is opt-in and privacy-preserving:
 //! it uses HIBP's Pwned Passwords k-anonymity range API — only the first 5 hex
@@ -15,6 +17,7 @@ use std::collections::HashMap;
 
 use bitwarden_vault::{Cipher, CipherType, CipherView};
 use chrono::Utc;
+use serde::Deserialize;
 use sha1::{Digest, Sha1};
 use zeroize::Zeroizing;
 
@@ -24,6 +27,63 @@ use crate::state::AppState;
 
 const OLD_PASSWORD_DAYS: i64 = 365;
 const HIBP_RANGE_URL: &str = "https://api.pwnedpasswords.com/range/";
+
+/// Which offline checks run, and their thresholds — chosen by the user in the
+/// audit settings. Defined here (not dto.rs) because it is audit-specific input;
+/// mirrors `AuditConfig` in `src/state/auditConfig.ts`. Every field has a
+/// `serde(default)` so an older/partial payload still deserializes to the
+/// historical behaviour (all checks on, original thresholds).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuditConfig {
+    #[serde(default = "enabled")]
+    pub reused: bool,
+    #[serde(default = "enabled")]
+    pub weak: bool,
+    #[serde(default = "enabled")]
+    pub old: bool,
+    #[serde(default = "enabled")]
+    pub insecure_uri: bool,
+    #[serde(default = "enabled")]
+    pub no_totp: bool,
+    /// A password scoring below this zxcvbn strength (0–4) counts as weak.
+    #[serde(default = "default_weak_max_score")]
+    pub weak_max_score: u8,
+    /// A password older than this many days counts as old.
+    #[serde(default = "default_old_days")]
+    pub old_days: i64,
+    /// A password shared by at least this many logins counts as reused.
+    #[serde(default = "default_reuse_min")]
+    pub reuse_min: usize,
+}
+
+fn enabled() -> bool {
+    true
+}
+fn default_weak_max_score() -> u8 {
+    3
+}
+fn default_old_days() -> i64 {
+    OLD_PASSWORD_DAYS
+}
+fn default_reuse_min() -> usize {
+    2
+}
+
+impl Default for AuditConfig {
+    fn default() -> Self {
+        Self {
+            reused: true,
+            weak: true,
+            old: true,
+            insecure_uri: true,
+            no_totp: true,
+            weak_max_score: default_weak_max_score(),
+            old_days: default_old_days(),
+            reuse_min: default_reuse_min(),
+        }
+    }
+}
 
 /// A decrypted login distilled to the fields the audit needs. `password` is a
 /// `Zeroizing<String>` so the plaintext is scrubbed on every drop — including
@@ -35,7 +95,9 @@ struct LoginAudit {
     username: Option<String>,
     uris: Vec<String>,
     has_totp: bool,
-    old: bool,
+    /// Age of the password (days since its revision date) — the "old" threshold is
+    /// applied later so it stays configurable.
+    age_days: i64,
 }
 
 fn uppercase_sha1_hex(input: &[u8]) -> String {
@@ -91,7 +153,7 @@ async fn collect_logins(state: &AppState) -> AgateResult<Vec<LoginAudit>> {
                 .map(|us| us.iter().filter_map(|u| u.uri.clone()).collect())
                 .unwrap_or_default();
             let revision = login.password_revision_date.unwrap_or(view.revision_date);
-            let old = (now - revision).num_days() > OLD_PASSWORD_DAYS;
+            let age_days = (now - revision).num_days();
             out.push(LoginAudit {
                 id: view.id.map(|i| i.to_string()).unwrap_or_default(),
                 name: view.name.clone(),
@@ -99,7 +161,7 @@ async fn collect_logins(state: &AppState) -> AgateResult<Vec<LoginAudit>> {
                 username: login.username.clone(),
                 uris,
                 has_totp: login.totp.as_ref().map(|t| !t.is_empty()).unwrap_or(false),
-                old,
+                age_days,
             });
         }
     }
@@ -131,8 +193,10 @@ fn band_for(score: u8) -> HealthBand {
     }
 }
 
-/// Run all offline checks and produce a vault-health report.
-pub async fn audit_offline(state: &AppState) -> AgateResult<VaultHealthReport> {
+/// Run the enabled offline checks (with the configured thresholds) and produce a
+/// vault-health report. Disabled checks contribute nothing to the counts, the
+/// at-risk list, or the score.
+pub async fn audit_offline(state: &AppState, config: AuditConfig) -> AgateResult<VaultHealthReport> {
     let logins = collect_logins(state).await?;
 
     // Reuse: group by SHA-1 of the password (hash, not plaintext).
@@ -146,7 +210,8 @@ pub async fn audit_offline(state: &AppState) -> AgateResult<VaultHealthReport> {
     let mut at_risk: Vec<ItemAudit> = Vec::new();
 
     for l in &logins {
-        let is_reused = groups.get(&uppercase_sha1_hex(l.password.as_bytes())).copied().unwrap_or(0) > 1;
+        let share_count = groups.get(&uppercase_sha1_hex(l.password.as_bytes())).copied().unwrap_or(0);
+        let is_reused = config.reused && share_count >= config.reuse_min;
 
         // zxcvbn with item context so e.g. password==username scores low.
         let mut inputs: Vec<&str> = Vec::new();
@@ -157,9 +222,11 @@ pub async fn audit_offline(state: &AppState) -> AgateResult<VaultHealthReport> {
             inputs.push(uri.as_str());
         }
         let score = u8::from(zxcvbn::zxcvbn(l.password.as_str(), &inputs).score());
-        let is_weak = score < 3;
-        let is_insecure = l.uris.iter().any(|u| u.trim().to_lowercase().starts_with("http://"));
-        let is_no_totp = !l.has_totp;
+        let is_weak = config.weak && score < config.weak_max_score;
+        let is_old = config.old && l.age_days > config.old_days;
+        let is_insecure = config.insecure_uri
+            && l.uris.iter().any(|u| u.trim().to_lowercase().starts_with("http://"));
+        let is_no_totp = config.no_totp && !l.has_totp;
 
         if is_reused {
             reused += 1;
@@ -167,7 +234,7 @@ pub async fn audit_offline(state: &AppState) -> AgateResult<VaultHealthReport> {
         if is_weak {
             weak += 1;
         }
-        if l.old {
+        if is_old {
             old += 1;
         }
         if is_insecure {
@@ -177,14 +244,14 @@ pub async fn audit_offline(state: &AppState) -> AgateResult<VaultHealthReport> {
             no_totp += 1;
         }
 
-        if is_reused || is_weak || l.old || is_insecure {
+        if is_reused || is_weak || is_old || is_insecure {
             at_risk.push(ItemAudit {
                 id: l.id.clone(),
                 name: l.name.clone(),
                 reused: is_reused,
                 weak: is_weak,
                 weak_score: Some(score),
-                old: l.old,
+                old: is_old,
                 insecure_uri: is_insecure,
                 no_totp: is_no_totp,
             });
@@ -286,6 +353,28 @@ mod tests {
         assert_eq!(hibp_count_for_suffix(body, "AAAA"), 0);
         // Absent suffix → not breached.
         assert_eq!(hibp_count_for_suffix(body, "DEADBEEF"), 0);
+    }
+
+    #[test]
+    fn audit_config_defaults_and_partial_deserialize() {
+        let d = AuditConfig::default();
+        assert!(d.reused && d.weak && d.old && d.insecure_uri && d.no_totp);
+        assert_eq!(d.weak_max_score, 3);
+        assert_eq!(d.old_days, OLD_PASSWORD_DAYS);
+        assert_eq!(d.reuse_min, 2);
+
+        // An empty payload deserializes to the historical behaviour (all on).
+        let empty: AuditConfig = serde_json::from_str("{}").expect("deserialize");
+        assert!(empty.reused && empty.weak && empty.old && empty.insecure_uri && empty.no_totp);
+        assert_eq!(empty.weak_max_score, 3);
+
+        // camelCase field names from the frontend; unspecified fields keep defaults.
+        let partial: AuditConfig =
+            serde_json::from_str(r#"{"weak":false,"oldDays":30,"weakMaxScore":2}"#).expect("deserialize");
+        assert!(!partial.weak);
+        assert!(partial.reused); // unspecified -> default true
+        assert_eq!(partial.old_days, 30);
+        assert_eq!(partial.weak_max_score, 2);
     }
 
     #[test]

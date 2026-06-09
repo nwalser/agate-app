@@ -47,13 +47,11 @@ pub struct PersistedConfig {
     #[serde(default)]
     pub server: ServerConfig,
     pub device_id: String,
-    /// A single app password (App Unlock Key) is configured.
+    /// A single app password (App Unlock Key) is configured. Unlock is always bound
+    /// to this machine (a device pepper mixes into the AUK, so the stored blob is
+    /// unusable on another device); there is no unbound mode.
     #[serde(default)]
     pub app_unlock_configured: bool,
-    /// The app unlock is bound to this machine (a device pepper mixes into the AUK,
-    /// so the stored blob is unusable on another device). Non-secret status flag.
-    #[serde(default)]
-    pub unlock_device_bound: bool,
     /// Windows Hello unlock is enabled (app-wide).
     #[serde(default)]
     pub hello_configured: bool,
@@ -61,6 +59,12 @@ pub struct PersistedConfig {
     /// third-party breach API). Default false; a non-secret preference.
     #[serde(default)]
     pub darkweb_consent: bool,
+    /// Rotating start index for the dark-web vault scan. When the vault holds more
+    /// emails than one run's rate-budget cap, the scan walks a window from here and
+    /// advances it each run so every email is eventually covered rather than the
+    /// tail being permanently dropped. Non-secret; default 0.
+    #[serde(default)]
+    pub darkweb_scan_offset: usize,
     #[serde(default)]
     pub accounts: Vec<AccountRef>,
 }
@@ -95,9 +99,9 @@ impl PersistedConfig {
             server: ServerConfig::default(),
             device_id: uuid::Uuid::new_v4().to_string(),
             app_unlock_configured: false,
-            unlock_device_bound: false,
             hello_configured: false,
             darkweb_consent: false,
+            darkweb_scan_offset: 0,
             accounts: Vec::new(),
         }
     }
@@ -210,7 +214,6 @@ fn migrate(cfg: &mut PersistedConfig) {
         let _ = crate::secrets::delete_key(&acct.email); // ignore: best-effort cleanup
     }
     cfg.app_unlock_configured = false;
-    cfg.unlock_device_bound = false;
     cfg.hello_configured = false;
     cfg.schema_version = 2;
     log::info!("migrated config v1 → v2 (app-unlock); {} connection(s) kept", cfg.accounts.len());

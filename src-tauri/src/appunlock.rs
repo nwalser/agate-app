@@ -82,30 +82,30 @@ pub(crate) async fn current_vmk(state: &AppState) -> AgateResult<Zeroizing<[u8; 
         .ok_or_else(|| AgateError::new(ErrorKind::Locked, "Unlock the app first."))
 }
 
-fn build_blob(salt: &[u8], device_bound: bool, sealed_vmk: secrets::SealedBlob) -> AppUnlockBlob {
+fn build_blob(salt: &[u8], sealed_vmk: secrets::SealedBlob) -> AppUnlockBlob {
     AppUnlockBlob {
         version: BLOB_VERSION,
         kdf_salt: secrets::encode_b64(salt),
         m_cost: ARGON_M_COST,
         t_cost: ARGON_T_COST,
         p_cost: ARGON_P_COST,
-        device_bound,
+        // Unlock is always machine-bound (see `configure` / `change`).
+        device_bound: true,
         sealed_vmk,
     }
 }
 
-/// Resolve the device pepper for a requested binding: reuse an existing one,
-/// generate + store a fresh one when turning binding on, or `None` when off.
-fn resolve_pepper(device_bound: bool) -> AgateResult<Option<Zeroizing<Vec<u8>>>> {
-    if !device_bound {
-        return Ok(None);
-    }
+/// Resolve the device pepper, reusing this machine's existing one or generating +
+/// storing a fresh one on first use. Unlock is always machine-bound, so this never
+/// returns `None`; the keychain-protected pepper is what ties the wrapped VMK to
+/// this device.
+fn ensure_pepper() -> AgateResult<Zeroizing<Vec<u8>>> {
     if let Some(p) = secrets::load_device_pepper()? {
-        return Ok(Some(p));
+        return Ok(p);
     }
     let p = secrets::fresh_pepper();
     secrets::store_device_pepper(&*p)?;
-    Ok(Some(Zeroizing::new(p.to_vec())))
+    Ok(Zeroizing::new(p.to_vec()))
 }
 
 fn check_password_len(password: &Zeroizing<String>) -> AgateResult<()> {
@@ -122,14 +122,10 @@ fn check_password_len(password: &Zeroizing<String>) -> AgateResult<()> {
 // ---------------------------------------------------------------------------
 
 /// First-time setup: generate the VMK, wrap it under a freshly derived AUK, and
-/// hold the VMK in the session so connections can be added immediately. When
-/// `device_bound`, a fresh device pepper is generated and mixed into the AUK so the
-/// stored blob can only be unlocked on this machine.
-pub async fn configure(
-    state: &AppState,
-    app_password: Zeroizing<String>,
-    device_bound: bool,
-) -> AgateResult<()> {
+/// hold the VMK in the session so connections can be added immediately. Unlock is
+/// always machine-bound — a device pepper is mixed into the AUK so the stored blob
+/// can only be unlocked on this machine, even with the right app password.
+pub async fn configure(state: &AppState, app_password: Zeroizing<String>) -> AgateResult<()> {
     check_password_len(&app_password)?;
     if state.config.lock().await.app_unlock_configured {
         return Err(AgateError::bad_request("App unlock is already configured."));
@@ -137,48 +133,35 @@ pub async fn configure(
 
     let vmk = fresh_vmk();
     let salt = secrets::fresh_salt();
-    let pepper = resolve_pepper(device_bound)?;
-    let auk = derive_auk(&app_password, salt, ARGON_M_COST, ARGON_T_COST, ARGON_P_COST, pepper).await?;
-    let aad = secrets::app_unlock_aad(ARGON_M_COST, ARGON_T_COST, ARGON_P_COST, device_bound);
+    let pepper = ensure_pepper()?;
+    let auk =
+        derive_auk(&app_password, salt, ARGON_M_COST, ARGON_T_COST, ARGON_P_COST, Some(pepper))
+            .await?;
+    let aad = secrets::app_unlock_aad(ARGON_M_COST, ARGON_T_COST, ARGON_P_COST, true);
     let sealed_vmk = secrets::seal_with_key(&auk, &*vmk, &aad)?;
-    secrets::store_app_unlock(&build_blob(&salt, device_bound, sealed_vmk))?;
+    secrets::store_app_unlock(&build_blob(&salt, sealed_vmk))?;
 
     state.session.lock().await.vmk = Some(vmk);
-    {
-        let mut cfg = state.config.lock().await;
-        cfg.app_unlock_configured = true;
-        cfg.unlock_device_bound = device_bound;
-    }
+    state.config.lock().await.app_unlock_configured = true;
     state.save_config().await
 }
 
-/// Change the app password and/or the device binding: re-wrap the VMK under a new
-/// AUK. A single keychain write commits it; the per-connection credential blobs
-/// never move, so this can never half-rekey the store. Requires the app to be
-/// unlocked. Windows Hello stores the VMK directly, so it is unaffected.
-///
-/// `device_bound` is the *requested* binding — turning it on generates/reuses the
-/// device pepper, turning it off drops it (only after the new blob is committed, so
-/// a failure can't strand a bound blob with no pepper).
-pub async fn change(
-    state: &AppState,
-    new_password: Zeroizing<String>,
-    device_bound: bool,
-) -> AgateResult<()> {
+/// Change the app password: re-wrap the VMK under a new AUK. A single keychain write
+/// commits it; the per-connection credential blobs never move, so this can never
+/// half-rekey the store. Requires the app to be unlocked. The new blob stays
+/// machine-bound to this device's pepper. Windows Hello stores the VMK directly, so
+/// it is unaffected.
+pub async fn change(state: &AppState, new_password: Zeroizing<String>) -> AgateResult<()> {
     check_password_len(&new_password)?;
     let vmk = current_vmk(state).await?;
     let salt = secrets::fresh_salt();
-    let pepper = resolve_pepper(device_bound)?;
-    let auk = derive_auk(&new_password, salt, ARGON_M_COST, ARGON_T_COST, ARGON_P_COST, pepper).await?;
-    let aad = secrets::app_unlock_aad(ARGON_M_COST, ARGON_T_COST, ARGON_P_COST, device_bound);
+    let pepper = ensure_pepper()?;
+    let auk =
+        derive_auk(&new_password, salt, ARGON_M_COST, ARGON_T_COST, ARGON_P_COST, Some(pepper))
+            .await?;
+    let aad = secrets::app_unlock_aad(ARGON_M_COST, ARGON_T_COST, ARGON_P_COST, true);
     let sealed_vmk = secrets::seal_with_key(&auk, &*vmk, &aad)?;
-    secrets::store_app_unlock(&build_blob(&salt, device_bound, sealed_vmk))?;
-
-    if !device_bound {
-        secrets::delete_device_pepper()?;
-    }
-    state.config.lock().await.unlock_device_bound = device_bound;
-    state.save_config().await
+    secrets::store_app_unlock(&build_blob(&salt, sealed_vmk))
 }
 
 // ---------------------------------------------------------------------------

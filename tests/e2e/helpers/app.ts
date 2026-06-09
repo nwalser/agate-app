@@ -92,8 +92,25 @@ export async function installFakeBackend(cfg: FakeConfig): Promise<void> {
     const fxEmail = state.connections[0]?.email ?? state.items[0]?.accountEmail ?? 'tester@example.com';
     const fxLabel = state.items[0]?.accountLabel ?? state.connections[0]?.serverLabel ?? 'Bitwarden — US';
     const findItem = (id: string) => state.items.find((x) => x.id === id);
+    // Human server label, mirroring the real backend's server::server_label.
+    const labelFor = (s: Any): string =>
+      s?.region === 'eu'
+        ? 'Bitwarden — EU'
+        : s?.region === 'selfHosted'
+          ? (s.baseUrl as string) || 'Self-hosted'
+          : 'Bitwarden — US';
+    // Mirror appunlock::finish_unlock: stored connections auto-unlock; manual ones
+    // (storeCredentials === false) stay locked and report 'manualUnlock'.
     const outcomes = () =>
-      state.connections.map((cn) => ({ email: cn.email, serverLabel: cn.serverLabel, status: 'unlocked' }));
+      state.connections.map((cn) => ({
+        email: cn.email,
+        serverLabel: cn.serverLabel,
+        status: cn.storeCredentials === false ? 'manualUnlock' : 'unlocked',
+      }));
+    const unlockStored = () => {
+      for (const cn of state.connections) if (cn.storeCredentials !== false) cn.unlocked = true;
+      state.status.liveCount = state.connections.filter((cn) => cn.unlocked).length;
+    };
 
     w.__agateInvoke.setInvoke(async (cmd, rawArgs) => {
       const a = (rawArgs ?? {}) as Record<string, Any>;
@@ -110,11 +127,9 @@ export async function installFakeBackend(cfg: FakeConfig): Promise<void> {
         // ── app unlock ──
         case 'configure_app_unlock':
           state.status.appUnlockConfigured = true;
-          state.status.unlockDeviceBound = !!a.deviceBound;
           state.status.unlocked = true;
           return null;
         case 'change_app_unlock':
-          state.status.unlockDeviceBound = !!a.deviceBound;
           return null;
         case 'unlock_all': {
           if (c.twoFactor && state.connections.length > 0) {
@@ -122,8 +137,7 @@ export async function installFakeBackend(cfg: FakeConfig): Promise<void> {
             return [{ email: cn.email, serverLabel: cn.serverLabel, status: 'twoFactorRequired', providers: ['authenticator', 'email'] }];
           }
           state.status.unlocked = true;
-          state.status.liveCount = state.connections.length;
-          for (const cn of state.connections) cn.unlocked = true;
+          unlockStored();
           return outcomes();
         }
         case 'unlock_connection_2fa': {
@@ -136,8 +150,7 @@ export async function installFakeBackend(cfg: FakeConfig): Promise<void> {
         case 'send_connection_email_code': return null;
         case 'hello_unlock':
           state.status.unlocked = true;
-          state.status.liveCount = state.connections.length;
-          for (const cn of state.connections) cn.unlocked = true;
+          unlockStored();
           return outcomes();
 
         // ── connections ──
@@ -150,7 +163,7 @@ export async function installFakeBackend(cfg: FakeConfig): Promise<void> {
           const email = (a.email as string) ?? `new-${seq++}@example.com`;
           if (!state.connections.some((x) => x.email === email)) {
             state.connections.push({
-              email, serverLabel: 'Bitwarden — US', server: a.server, unlocked: true,
+              email, serverLabel: labelFor(a.server), server: a.server, unlocked: true,
               storeCredentials: a.storeCredentials !== false,
             });
             state.status.connectionCount = state.connections.length;
@@ -262,6 +275,10 @@ export async function installFakeBackend(cfg: FakeConfig): Promise<void> {
           const f = state.folders.find((x) => x.id === a.id);
           if (f) f.name = a.name as string;
           return f ?? { id: a.id, name: a.name, accountEmail: a.accountEmail, accountLabel: fxLabel };
+        }
+        case 'delete_folder': {
+          state.folders = state.folders.filter((x) => x.id !== a.id);
+          return null;
         }
 
         // ── generators ──

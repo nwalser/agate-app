@@ -59,3 +59,154 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* Header row: the "Folders" / per-account label plus a "New folder" button, and
+   the top-level drag-and-drop target. */
+.folder-tree-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-right: 6px;
+  border-radius: var(--radius-sm);
+}
+.folder-tree-head .folder-tree-label,
+.folder-tree-head .folder-conn-name {
+  flex: 1;
+  min-width: 0;
+}
+.folder-conn-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.folder-add-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  color: var(--subtle-foreground);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.folder-tree-head:hover .folder-add-btn {
+  opacity: 1;
+}
+.folder-add-btn:hover {
+  background: var(--card-hover);
+  color: var(--foreground);
+}
+
+/* Drag-and-drop re-parent: dragged row dims; valid drop target is outlined. */
+.folder-row {
+  cursor: default;
+}
+.folder-row.dragging {
+  opacity: 0.5;
+}
+.folder-row.drop-target,
+.folder-tree-head.drop-target {
+  background: color-mix(in srgb, var(--primary) 18%, transparent);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+
+/* Inline create / rename input row. */
+.folder-edit-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+}
+.folder-edit-input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--foreground);
+  border-radius: var(--radius-sm);
+  padding: 3px 6px;
+  font-size: 12.5px;
+}
+.folder-edit-input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+.folder-edit-confirm,
+.folder-edit-cancel {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  color: var(--muted-foreground);
+}
+.folder-edit-confirm:hover {
+  background: var(--card-hover);
+  color: var(--primary);
+}
+.folder-edit-cancel:hover {
+  background: var(--card-hover);
+  color: var(--foreground);
+}
+
+/* "Move to…" candidate list inside the context menu — scroll when long. */
+.folder-move-list {
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+/* Subtree-delete confirmation dialog. */
+.folder-confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+  padding: 24px;
+}
+.folder-confirm {
+  width: 340px;
+  max-width: 100%;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+  padding: 18px;
+}
+.folder-confirm-title {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.folder-confirm-body {
+  font-size: 12.5px;
+  color: var(--muted-foreground);
+  line-height: 1.5;
+}
+.folder-confirm-body p {
+  margin: 0 0 6px;
+}
+.folder-confirm-warn {
+  color: var(--destructive);
+}
+.folder-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+.folder-confirm-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}

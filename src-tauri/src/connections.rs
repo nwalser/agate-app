@@ -288,7 +288,6 @@ pub async fn logout(state: &AppState) -> AgateResult<()> {
         cfg.app_unlock_configured = false;
         cfg.hello_configured = false;
         cfg.darkweb_consent = false;
-        cfg.unlock_device_bound = false;
     }
     state.save_config().await
 }

@@ -1,8 +1,7 @@
 // Settings › Unlock — manage the app-unlock methods:
 //   * App password (always on) — change it.
-//   * This device (machine binding) — mix a device key into the unlock so the
-//     stored data can't be opened on another machine. Toggled here; applying it
-//     re-derives the key, so it needs the password entered above.
+//   * This device (machine binding) — always on: a device key is mixed into the
+//     unlock so the stored data can't be opened on another machine.
 //   * Windows Hello — biometric/PIN unlock (Windows only).
 
 import { createSignal, onMount, Show } from 'solid-js';
@@ -14,15 +13,12 @@ import { pushToast, toastError } from '../../state/toast.ts';
 export default function UnlockSettings() {
   const [newPw, setNewPw] = createSignal('');
   const [confirmPw, setConfirmPw] = createSignal('');
-  // Reflects the current binding; editable, applied on "Update app unlock".
-  const [deviceBound, setDeviceBound] = createSignal(status().unlockDeviceBound);
   const [busy, setBusy] = createSignal(false);
 
   const [helloAvailable, setHelloAvailable] = createSignal(false);
   const [helloBusy, setHelloBusy] = createSignal(false);
 
   onMount(() => {
-    setDeviceBound(status().unlockDeviceBound);
     void (async () => {
       try {
         setHelloAvailable(await ipc.helloAvailable());
@@ -43,7 +39,7 @@ export default function UnlockSettings() {
     }
     setBusy(true);
     try {
-      await ipc.changeAppUnlock(newPw(), deviceBound());
+      await ipc.changeAppUnlock(newPw());
       setNewPw('');
       setConfirmPw('');
       await refreshSession();
@@ -82,8 +78,8 @@ export default function UnlockSettings() {
           How Agate is unlocked on this device. One app secret opens every connection.
         </p>
         <MethodRow icon={KeyRound} label="App password" on subtitle="Always required" />
-        <MethodRow icon={Laptop} label="This device" on={status().unlockDeviceBound}
-          subtitle="Bind the unlock to this machine" />
+        <MethodRow icon={Laptop} label="This device" on
+          subtitle="Always bound to this machine" />
         <MethodRow
           icon={Fingerprint}
           label="Windows Hello"
@@ -98,8 +94,8 @@ export default function UnlockSettings() {
           <KeyRound size={14} strokeWidth={1.75} /> App password
         </h3>
         <p class="muted settings-help">
-          Change the single app password, or toggle device binding below. Enter the password (new or
-          current) to apply — stored master passwords are re-protected automatically.
+          Change the single app password. Enter the new password twice to apply — stored master
+          passwords are re-protected automatically and stay bound to this machine.
         </p>
         <div class="field">
           <label>App password</label>
@@ -119,18 +115,6 @@ export default function UnlockSettings() {
             onInput={(e) => setConfirmPw(e.currentTarget.value)}
           />
         </div>
-        <label class="checkbox settings-bind">
-          <input
-            type="checkbox"
-            checked={deviceBound()}
-            onChange={(e) => setDeviceBound(e.currentTarget.checked)}
-          />
-          Bind unlock to this computer
-        </label>
-        <p class="muted settings-help settings-bind-help">
-          When on, your vault can only be unlocked on this machine — the stored data is useless if
-          copied to another device, even with the password.
-        </p>
         <button class="primary" disabled={busy()} onClick={() => void changeAppPw()}>
           Update app unlock
         </button>

@@ -361,6 +361,56 @@
   flex-direction: column;
   gap: 12px;
 }
+
+/* Coverage groups: checked / locked / pending / errored ------------------- */
+
+.sec-group-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 18px 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.sec-group-label svg {
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+.sec-group-label.warn,
+.sec-group-label.warn svg {
+  color: var(--warning);
+}
+.sec-group-hint {
+  font-size: 11.5px;
+  margin: 0 0 8px;
+  line-height: 1.5;
+}
+.sec-notice-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.sec-notice-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 12px;
+  padding: 6px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.sec-notice-reason {
+  margin-left: auto;
+  font-size: 11px;
+  flex-shrink: 0;
+  max-width: 50%;
+}
 .sec-account {
   background: var(--surface);
   border: 1px solid var(--border);
