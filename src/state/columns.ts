@@ -4,7 +4,6 @@
 // favicons are fetched. Validated at the storage boundary (no `any`).
 
 import { createSignal } from 'solid-js';
-import type { ItemType } from '../lib/types.ts';
 
 /** Built-in columns the list knows how to render without configuration. */
 export type BuiltinColumnId =
@@ -53,15 +52,9 @@ export const ALL_BUILTINS: BuiltinColumnId[] = [
   'security',
 ];
 
-/** Display labels for item types (Type column + type filter input). */
-export const TYPE_LABELS: Record<ItemType, string> = {
-  login: 'Login',
-  secureNote: 'Secure note',
-  card: 'Card',
-  identity: 'Identity',
-  sshKey: 'SSH key',
-  unknown: 'Item',
-};
+/** Display labels for item types — single source in `lib/labels.ts`, re-exported
+ *  here for the column/list importers that already pull it from this module. */
+export { TYPE_LABELS } from '../lib/labels.ts';
 
 interface ColumnMeta {
   label: string;

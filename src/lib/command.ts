@@ -3,8 +3,7 @@
 // (components/Titlebar.tsx), so the matching/highlighting behaves identically in
 // both. Pure (no IPC, no DOM) — unit-tested in command.test.ts.
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type IconComponent = any;
+import type { IconComponent } from './icon.ts';
 
 export interface Command {
   id: string;

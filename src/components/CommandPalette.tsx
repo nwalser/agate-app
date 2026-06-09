@@ -102,9 +102,14 @@ export default function CommandPalette(props: CommandPaletteProps) {
                       onClick={() => runAt(index())}
                     >
                       <Show when={Icon}>
-                        <span class="cmdp-icon">
-                          <Icon size={15} strokeWidth={1.5} />
-                        </span>
+                        {(IconC) => {
+                          const ResolvedIcon = IconC();
+                          return (
+                            <span class="cmdp-icon">
+                              <ResolvedIcon size={15} strokeWidth={1.5} />
+                            </span>
+                          );
+                        }}
                       </Show>
                       <span class="cmdp-label">
                         <For each={entry.spans}>

@@ -16,25 +16,10 @@
 
 import { createMemo, createSignal, For, Match, onCleanup, onMount, Show, Switch } from 'solid-js';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import {
-  Copy,
-  CreditCard,
-  File,
-  KeyRound,
-  Lock,
-  Minus,
-  Monitor,
-  Moon,
-  Search,
-  Square,
-  StickyNote,
-  Sun,
-  Terminal,
-  UserRound,
-  X,
-} from 'lucide-solid';
+import { Copy, Lock, Minus, Monitor, Moon, Search, Square, Sun, Terminal, X } from 'lucide-solid';
 import { ipc } from '../lib/ipc.ts';
-import type { ItemType, VaultItem, WindowControl, WindowControlsLayout } from '../lib/types.ts';
+import type { VaultItem, WindowControl, WindowControlsLayout } from '../lib/types.ts';
+import { typeIcon } from '../lib/vaultIcons.ts';
 import {
   type Command,
   commandTerm,
@@ -77,24 +62,13 @@ const DEFAULT_LAYOUT: WindowControlsLayout = {
 // How many preview rows the search dropdown shows at once.
 const RESULT_LIMIT = 8;
 
-// Item type → preview-row icon (mirrors the vault list's typeIcon).
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const ITEM_ICON: Record<ItemType, any> = {
-  login: KeyRound,
-  card: CreditCard,
-  identity: UserRound,
-  secureNote: StickyNote,
-  sshKey: Terminal,
-  unknown: File,
-};
-
 // Wrap a vault item as a runnable command for the normal-search preview.
 function itemCommand(it: VaultItem, openItem: (id: string) => void): Command {
   return {
     id: it.id,
     label: it.name,
     hint: it.username ?? undefined,
-    icon: ITEM_ICON[it.itemType],
+    icon: typeIcon(it.itemType),
     run: () => openItem(it.id),
   };
 }
@@ -284,9 +258,14 @@ export default function Titlebar(props: { showSearch: boolean; onLock: () => voi
                           onClick={() => activate(index())}
                         >
                           <Show when={Icon}>
-                            <span class="titlebar-result-icon">
-                              <Icon size={15} strokeWidth={1.5} />
-                            </span>
+                            {(IconC) => {
+                              const ResolvedIcon = IconC();
+                              return (
+                                <span class="titlebar-result-icon">
+                                  <ResolvedIcon size={15} strokeWidth={1.5} />
+                                </span>
+                              );
+                            }}
                           </Show>
                           <span class="titlebar-result-label">
                             <For each={entry.spans}>
