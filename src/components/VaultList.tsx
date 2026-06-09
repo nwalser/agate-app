@@ -2,96 +2,38 @@
 //
 // Columns come from the columns store (state/columns.ts). The always-on Name
 // cell shows a website favicon for logins. Columns that need decrypted content
-// (website, password, TOTP, custom fields) read from a small per-row detail
-// cache that is filled lazily and only when such a column is actually shown —
-// and secret columns (password/TOTP/hidden custom) stay masked, never fetched,
-// until that column is revealed. Sorting (Name/Username/Folder/Type) is driven
-// by the parent so it can stay in sync with selection order.
+// (website, password, TOTP, custom fields) read from small per-row caches that
+// fill lazily and only when such a column is actually shown — and secret columns
+// (password/TOTP/hidden custom) stay masked, never fetched, until that column is
+// revealed. Sorting (Name/Username/Folder/Type) is driven by the parent so it can
+// stay in sync with selection order.
+//
+// This component is a thin orchestrator: it owns the lazy caches (detailCache /
+// totpCache), wires the "what to fetch" effects to the visible column set, and
+// renders the header (VaultListHeader), filter row (FilterRow) and the row loop —
+// each cell delegating its content to the pure cellContent + VaultListCell.
 
-import {
-  createEffect,
-  createMemo,
-  createSignal,
-  For,
-  on,
-  onCleanup,
-  Show,
-  type JSX,
-} from 'solid-js';
-import {
-  ChevronDown,
-  ChevronUp,
-  CreditCard,
-  File,
-  Filter,
-  KeyRound,
-  ShieldCheck,
-  SlidersHorizontal,
-  Star,
-  StickyNote,
-  Terminal,
-  UserRound,
-  X,
-} from 'lucide-solid';
-import { ipc } from '../lib/ipc.ts';
-import type {
-  Folder,
-  ItemAudit,
-  ItemDetail,
-  ItemType,
-  TotpCode,
-  VaultHealthReport,
-  VaultItem,
-} from '../lib/types.ts';
-import { itemAuditChips } from '../lib/audit.ts';
+import { createEffect, createMemo, For, on, Show } from 'solid-js';
+import { Star } from 'lucide-solid';
+import type { Folder, ItemAudit, VaultHealthReport, VaultItem } from '../lib/types.ts';
+import { typeIcon } from '../lib/vaultIcons.ts';
+import { cellContent, type CellContext } from '../lib/cellRendering.ts';
 import {
   builtinMeta,
   columnKey,
   columns,
   gridMetrics,
-  isFilterable,
   isRevealed,
-  MIN_COL_WIDTH,
-  NAME_COL_KEY,
-  resetColumnWidth,
-  setColumnWidth,
-  sortKeyOf,
-  TYPE_LABELS,
-  type ColumnSpec,
   type SortDir,
   type SortKey,
 } from '../state/columns.ts';
-import {
-  clearColumnFilters,
-  columnFilter,
-  filtersVisible,
-  hasActiveFilters,
-  NAME_FILTER_KEY,
-  setColumnFilter,
-  toggleFiltersVisible,
-} from '../state/columnFilters.ts';
+import { createDetailCache } from '../state/detailCache.ts';
+import { createTotpCache } from '../state/totpCache.ts';
 import Favicon from './Favicon.tsx';
-import ColumnMenu from './ColumnMenu.tsx';
+import VaultListHeader from './VaultListHeader.tsx';
+import FilterRow from './FilterRow.tsx';
+import VaultListCell from './VaultListCell.tsx';
 import './VaultList.css';
-
-function typeIcon(t: ItemType) {
-  switch (t) {
-    case 'login':
-      return KeyRound;
-    case 'secureNote':
-      return StickyNote;
-    case 'card':
-      return CreditCard;
-    case 'identity':
-      return UserRound;
-    case 'sshKey':
-      return Terminal;
-    default:
-      return File;
-  }
-}
-
-const DETAIL_CONCURRENCY = 6;
 
 export interface VaultListProps {
   /** Already filtered + sorted, in the exact order rows render. */
@@ -115,86 +57,17 @@ export interface VaultListProps {
 }
 
 export default function VaultList(props: VaultListProps) {
-  const [menuOpen, setMenuOpen] = createSignal(false);
-  // Trigger element for the column ("display options") popover. The popover is
-  // portaled to <body> and positioned against this rect, so it escapes the
-  // table's overflow-scroll clip and the sticky header's stacking context.
-  let gearBtn: HTMLButtonElement | undefined;
-
-  // ---- lazy detail cache (website / password / custom / favicon host) ----
-  const [detailCache, setDetailCache] = createSignal<Map<string, ItemDetail>>(new Map());
-  const detailPending = new Set<string>();
-  let detailQueue: { email: string; id: string }[] = [];
-  let detailActive = 0;
-
-  function pumpDetail() {
-    while (detailActive < DETAIL_CONCURRENCY && detailQueue.length > 0) {
-      const next = detailQueue.shift();
-      if (next === undefined) break;
-      const { email, id } = next;
-      detailActive++;
-      void ipc
-        .itemDetail(email, id)
-        .then((d) => setDetailCache((m) => new Map(m).set(id, d)))
-        .catch(() => {
-          // ignore: detail is best-effort for list cells; the cell shows blank
-        })
-        .finally(() => {
-          detailActive--;
-          detailPending.delete(id);
-          pumpDetail();
-        });
-    }
-  }
-  function ensureDetail(email: string, id: string) {
-    if (detailCache().has(id) || detailPending.has(id)) return;
-    detailPending.add(id);
-    detailQueue.push({ email, id });
-    pumpDetail();
-  }
-
-  // ---- lazy TOTP cache (only when the TOTP column is revealed) ----
-  const [totpCache, setTotpCache] = createSignal<Map<string, TotpCode>>(new Map());
-  const totpPending = new Set<string>();
-  function ensureTotp(email: string, id: string, force = false) {
-    if (!force && (totpCache().has(id) || totpPending.has(id))) return;
-    totpPending.add(id);
-    void ipc
-      .itemTotp(email, id)
-      .then((c) => setTotpCache((m) => new Map(m).set(id, c)))
-      .catch(() => {
-        // ignore: TOTP is best-effort for the list cell
-      })
-      .finally(() => totpPending.delete(id));
-  }
-
-  // Single ticker: count down cached codes; refetch the ones that roll over.
-  const ticker = setInterval(() => {
-    const m = totpCache();
-    if (m.size === 0) return;
-    const next = new Map(m);
-    let changed = false;
-    for (const [id, code] of next) {
-      if (code.remaining <= 1) {
-        const email = props.items.find((it) => it.id === id)?.accountEmail;
-        if (email) ensureTotp(email, id, true);
-      } else {
-        next.set(id, { ...code, remaining: code.remaining - 1 });
-        changed = true;
-      }
-    }
-    if (changed) setTotpCache(next);
-  }, 1000);
-  onCleanup(() => clearInterval(ticker));
+  // Lazy caches (website / password / custom detail, and live TOTP codes).
+  const detail = createDetailCache();
+  const totp = createTotpCache((id) => props.items.find((it) => it.id === id)?.accountEmail);
 
   // Drop caches when the parent signals the vault changed.
   createEffect(
     on(
       () => props.cacheToken,
       () => {
-        setDetailCache(new Map());
-        setTotpCache(new Map());
-        detailQueue = [];
+        detail.reset();
+        totp.reset();
       },
       { defer: true },
     ),
@@ -226,8 +99,8 @@ export default function VaultList(props: VaultListProps) {
     const need = detailNeeded();
     const wantTotp = totpRevealed();
     for (const it of its) {
-      if (need) ensureDetail(it.accountEmail, it.id);
-      if (wantTotp && it.hasTotp) ensureTotp(it.accountEmail, it.id);
+      if (need) detail.ensure(it.accountEmail, it.id);
+      if (wantTotp && it.hasTotp) totp.ensure(it.accountEmail, it.id);
     }
   });
 
@@ -250,80 +123,15 @@ export default function VaultList(props: VaultListProps) {
     return map;
   });
 
-  // ---- cell content per column ----
-  function cell(item: VaultItem, col: ColumnSpec): JSX.Element {
-    if (col.kind === 'custom') return customCell(item, col.field, columnKey(col));
-    switch (col.id) {
-      case 'username':
-        return <span class="vault-cell truncate">{item.username ?? ''}</span>;
-      case 'website':
-        return <span class="vault-cell truncate muted">{item.uri ?? ''}</span>;
-      case 'folder':
-        return <span class="vault-cell truncate muted">{folderName(item.folderId)}</span>;
-      case 'type':
-        return <span class="vault-cell vault-type-badge">{TYPE_LABELS[item.itemType]}</span>;
-      case 'totp':
-        return totpCell(item, columnKey(col));
-      case 'password':
-        return passwordCell(item, columnKey(col));
-      case 'security':
-        return securityCell(item);
-    }
-  }
-
-  function securityCell(item: VaultItem): JSX.Element {
-    // The audit covers logins only; show nothing for other types or before the
-    // first report arrives.
-    if (item.itemType !== 'login' || !props.security) return <span class="vault-cell" />;
-    const audit = securityById().get(item.id);
-    if (!audit) {
-      return (
-        <span class="vault-cell vault-sec-ok" title="No known security issues">
-          <ShieldCheck size={13} strokeWidth={1.75} />
-        </span>
-      );
-    }
-    const chips = itemAuditChips(audit);
-    return (
-      <span class="vault-cell vault-sec-cell" title={chips.map((c) => c.label).join(', ')}>
-        <For each={chips}>
-          {(c) => <span class="vault-sec-chip" classList={{ severe: c.severe }}>{c.label}</span>}
-        </For>
-      </span>
-    );
-  }
-
-  function passwordCell(item: VaultItem, key: string): JSX.Element {
-    if (item.itemType !== 'login') return <span class="vault-cell" />;
-    if (!isRevealed(key)) return <span class="vault-cell vault-secret">••••••••</span>;
-    const pw = detailCache().get(item.id)?.login?.password;
-    return <span class="vault-cell mono truncate">{pw ?? '…'}</span>;
-  }
-
-  function totpCell(item: VaultItem, key: string): JSX.Element {
-    if (!item.hasTotp) return <span class="vault-cell" />;
-    if (!isRevealed(key)) return <span class="vault-cell vault-secret">••• •••</span>;
-    const code = totpCache().get(item.id);
-    return (
-      <span class="vault-cell mono totp-code">
-        {code ? code.code : '…'}
-        <Show when={code}>
-          <small class="totp-remaining">{code!.remaining}s</small>
-        </Show>
-      </span>
-    );
-  }
-
-  function customCell(item: VaultItem, field: string, key: string): JSX.Element {
-    const d = detailCache().get(item.id);
-    if (!d) return <span class="vault-cell muted">…</span>;
-    const f = d.fields.find((x) => x.name === field);
-    if (!f || f.value === null) return <span class="vault-cell" />;
-    if (f.fieldType === 'hidden' && !isRevealed(key)) {
-      return <span class="vault-cell vault-secret">••••••</span>;
-    }
-    return <span class="vault-cell truncate">{f.value}</span>;
-  }
+  // The lookups the pure cell logic needs from the surrounding list.
+  const cellCtx = (): CellContext => ({
+    isRevealed,
+    detail: (id) => detail.cache().get(id),
+    totp: (id) => totp.cache().get(id),
+    folderName,
+    audit: (id) => securityById().get(id),
+    hasSecurityReport: props.security !== null,
+  });
 
   return (
     <Show
@@ -338,97 +146,8 @@ export default function VaultList(props: VaultListProps) {
             yet scroll horizontally in lockstep with the rows (same scroll
             container + the shared --vault-min keeps every track aligned). */}
         <div class="vault-thead">
-          <div class="vault-head">
-            <span class="vault-head-cell" />
-            <SortHeader
-              label="Name"
-              colKey={NAME_COL_KEY}
-              active={props.sortKey === 'name'}
-              dir={props.sortDir}
-              onClick={() => props.onSort('name')}
-            />
-            <For each={columns().columns}>
-              {(col) => {
-                const sk = sortKeyOf(col);
-                return sk ? (
-                  <SortHeader
-                    label={builtinMeta(col.kind === 'builtin' ? col.id : 'username').label}
-                    colKey={columnKey(col)}
-                    active={props.sortKey === sk}
-                    dir={props.sortDir}
-                    onClick={() => props.onSort(sk)}
-                  />
-                ) : (
-                  <span class="vault-head-cell vault-head-resizable">
-                    <span class="vault-head-label">
-                      {col.kind === 'builtin' ? builtinMeta(col.id).label : col.field}
-                    </span>
-                    <ColResize colKey={columnKey(col)} />
-                  </span>
-                );
-              }}
-            </For>
-            <div class="vault-head-cell vault-head-gear">
-              <button
-                class="ghost icon-btn vault-gear-btn"
-                classList={{ 'filter-on': filtersVisible() || hasActiveFilters() }}
-                title="Filter by column"
-                onClick={() => toggleFiltersVisible()}
-              >
-                <Filter size={14} strokeWidth={1.75} />
-              </button>
-              <div class="column-menu-anchor">
-                <button
-                  ref={gearBtn}
-                  class="ghost icon-btn vault-gear-btn"
-                  title="Customize columns"
-                  onClick={() => setMenuOpen((v) => !v)}
-                >
-                  <SlidersHorizontal size={14} strokeWidth={1.75} />
-                </button>
-                <Show when={menuOpen()}>
-                  <ColumnMenu anchor={gearBtn} onClose={() => setMenuOpen(false)} />
-                </Show>
-              </div>
-            </div>
-          </div>
-
-          <Show when={filtersVisible()}>
-            <div class="vault-filter-row">
-              <span />
-              <input
-                class="vault-filter-input"
-                placeholder="Filter name…"
-                value={columnFilter(NAME_FILTER_KEY)}
-                onInput={(e) => setColumnFilter(NAME_FILTER_KEY, e.currentTarget.value)}
-              />
-              <For each={columns().columns}>
-                {(col) =>
-                  isFilterable(col) ? (
-                    <input
-                      class="vault-filter-input"
-                      placeholder="Filter…"
-                      value={columnFilter(columnKey(col))}
-                      onInput={(e) => setColumnFilter(columnKey(col), e.currentTarget.value)}
-                    />
-                  ) : (
-                    <span />
-                  )
-                }
-              </For>
-              <span class="vault-filter-clear">
-                <Show when={hasActiveFilters()}>
-                  <button
-                    class="ghost icon-btn vault-gear-btn"
-                    title="Clear filters"
-                    onClick={() => clearColumnFilters()}
-                  >
-                    <X size={13} strokeWidth={1.75} />
-                  </button>
-                </Show>
-              </span>
-            </div>
-          </Show>
+          <VaultListHeader sortKey={props.sortKey} sortDir={props.sortDir} onSort={props.onSort} />
+          <FilterRow />
         </div>
 
         <div class="vault-rows">
@@ -461,7 +180,9 @@ export default function VaultList(props: VaultListProps) {
                     </Show>
                     <span class="vault-row-name truncate">{item.name}</span>
                   </span>
-                  <For each={columns().columns}>{(col) => cell(item, col)}</For>
+                  <For each={columns().columns}>
+                    {(col) => <VaultListCell content={cellContent(item, col, cellCtx())} />}
+                  </For>
                   <span class="vault-row-end">
                     <Show when={item.favorite}>
                       <Star size={13} strokeWidth={1.75} class="vault-row-fav" />
@@ -474,73 +195,5 @@ export default function VaultList(props: VaultListProps) {
         </div>
       </div>
     </Show>
-  );
-}
-
-function SortHeader(props: {
-  label: string;
-  colKey?: string;
-  active: boolean;
-  dir: SortDir;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      class="vault-head-cell sortable vault-head-resizable"
-      classList={{ sorted: props.active }}
-      onClick={() => props.onClick()}
-    >
-      <span class="vault-head-label">{props.label}</span>
-      <Show when={props.active}>
-        <Show
-          when={props.dir === 'asc'}
-          fallback={<ChevronDown size={12} class="vault-head-sort" />}
-        >
-          <ChevronUp size={12} class="vault-head-sort" />
-        </Show>
-      </Show>
-      <Show when={props.colKey}>{(k) => <ColResize colKey={k()} />}</Show>
-    </button>
-  );
-}
-
-// A thin drag handle on a header cell's right edge: drag to resize the column,
-// double-click to reset it to its default width. Captures the pointer so the
-// drag tracks smoothly and never triggers the header's sort click.
-function ColResize(props: { colKey: string }) {
-  let startX = 0;
-  let startW = 0;
-
-  function onMove(e: PointerEvent) {
-    setColumnWidth(props.colKey, startW + (e.clientX - startX));
-  }
-  function onUp(e: PointerEvent) {
-    const h = e.currentTarget as HTMLElement;
-    h.releasePointerCapture(e.pointerId);
-    h.removeEventListener('pointermove', onMove);
-    h.removeEventListener('pointerup', onUp);
-  }
-  function onDown(e: PointerEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    const h = e.currentTarget as HTMLElement;
-    const cell = h.parentElement as HTMLElement;
-    startX = e.clientX;
-    startW = Math.max(MIN_COL_WIDTH, cell.getBoundingClientRect().width);
-    h.setPointerCapture(e.pointerId);
-    h.addEventListener('pointermove', onMove);
-    h.addEventListener('pointerup', onUp);
-  }
-
-  return (
-    <span
-      class="vault-col-resize"
-      onPointerDown={onDown}
-      onClick={(e) => e.stopPropagation()}
-      onDblClick={(e) => {
-        e.stopPropagation();
-        resetColumnWidth(props.colKey);
-      }}
-    />
   );
 }

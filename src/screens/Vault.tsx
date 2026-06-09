@@ -1,187 +1,105 @@
-import {
-  createEffect,
-  createMemo,
-  createSignal,
-  For,
-  type JSX,
-  Match,
-  on,
-  onCleanup,
-  onMount,
-  Show,
-  Switch,
-} from 'solid-js';
-import {
-  Check,
-  Cloud,
-  Copy,
-  CreditCard,
-  Dices,
-  ExternalLink,
-  Eye,
-  EyeOff,
-  File,
-  FolderInput,
-  KeyRound,
-  Link as LinkIcon,
-  Lock,
-  PanelLeftClose,
-  PanelLeftOpen,
-  PanelRightClose,
-  PanelRightOpen,
-  Pencil,
-  Plus,
-  RefreshCw,
-  RotateCcw,
-  Settings as SettingsIcon,
-  Shield,
-  ShieldAlert,
-  ShieldCheck,
-  Star,
-  StickyNote,
-  Terminal,
-  Timer,
-  Trash2,
-  UserRound,
-  X,
-} from 'lucide-solid';
-import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
-import { openUrl } from '@tauri-apps/plugin-opener';
-import { ipc } from '../lib/ipc.ts';
-import { filterItems, type VaultFilter } from '../lib/search.ts';
-import { itemAuditChips } from '../lib/audit.ts';
-import type {
-  CardInput,
-  ConnectionSummary,
-  CustomField,
-  Folder,
-  HealthBand,
-  ItemDetail,
-  ItemType,
-  TotpCode,
-  VaultHealthReport,
-  VaultItem,
-} from '../lib/types.ts';
-import {
-  cardExpiry,
-  detectCardBrand,
-  formatCardNumber,
-  identityFields,
-  isLinkedSecret,
-  linkedLabel,
-  maskCardNumber,
-  resolveLinkedValue,
-} from '../lib/itemFields.ts';
-import { query, setQuery } from '../state/search.ts';
-import { clearPaletteSource, setPaletteSource } from '../state/palette.ts';
-import { isCommandQuery } from '../lib/command.ts';
-import { pushToast, toastError } from '../state/toast.ts';
-import { lastSync, setLastSync, setSyncState, syncRequest, syncState } from '../state/sync.ts';
-import ItemEditor from '../components/ItemEditor.tsx';
-import SecurityCenter from '../components/SecurityCenter.tsx';
-import SyncStatus, { SyncIcon } from '../components/SyncStatus.tsx';
-import CommandPalette, { type Command } from '../components/CommandPalette.tsx';
-import VaultList from '../components/VaultList.tsx';
-import FolderTree from '../components/FolderTree.tsx';
-import VaultSwitcher from '../components/VaultSwitcher.tsx';
-import GeneratorPage from '../components/GeneratorPage.tsx';
-import { columnKey, columns, isFilterable, TYPE_LABELS, type SortDir, type SortKey } from '../state/columns.ts';
-import { filters, NAME_FILTER_KEY } from '../state/columnFilters.ts';
+// Vault screen — the thin orchestrator. It owns only the transient UI state that
+// no hook needs to share (which main view is up, the inline-editor open-state, the
+// add/move/palette/context menus, the open-item selection) and wires together the
+// data, selection, filtering, detail, mutation, and command hooks. The heavy
+// lifting lives in src/hooks/* and the VaultRailMenu / VaultDetailPane /
+// VaultContextMenu subcomponents; this file switches views and threads props.
+
+import { For, createMemo, createSignal, onCleanup, onMount, Match, Show, Switch } from 'solid-js';
+import { Plus, PanelRightClose, PanelRightOpen, RotateCcw, Star, Trash2, X, FolderInput } from 'lucide-solid';
+import type { VaultItem } from '../lib/types.ts';
+import type { VaultFilter } from '../lib/search.ts';
+import { lastSync, syncState } from '../state/sync.ts';
 import {
   activeVault,
   previewCollapsed,
   rowDensity,
   setActiveVault,
   sidebarCollapsed,
-  togglePreview,
   toggleSidebar,
+  togglePreview,
 } from '../state/ui.ts';
-import { clipboardClearSeconds } from '../state/clipboard.ts';
+import {
+  AUTO_SYNC_MS,
+  CREATE_TYPES,
+  type EditorState,
+  type VaultView,
+  createLabel,
+} from '../lib/vaultConfig.ts';
+import { useVaultData } from '../hooks/useVaultData.ts';
+import { useVaultFiltering } from '../hooks/useVaultFiltering.ts';
+import { useVaultSelection } from '../hooks/useVaultSelection.ts';
+import { useItemDetail } from '../hooks/useItemDetail.ts';
+import { useBulkActions } from '../hooks/useBulkActions.ts';
+import { useVaultCommands } from '../hooks/useVaultCommands.ts';
+import ItemEditor from '../components/ItemEditor.tsx';
+import SecurityCenter from '../components/SecurityCenter.tsx';
+import SyncStatus from '../components/SyncStatus.tsx';
+import CommandPalette from '../components/CommandPalette.tsx';
+import VaultList from '../components/VaultList.tsx';
+import GeneratorPage from '../components/GeneratorPage.tsx';
+import VaultRailMenu from '../components/VaultRailMenu.tsx';
+import VaultDetailPane from '../components/VaultDetailPane.tsx';
+import VaultContextMenu, { type CtxMenuTarget } from '../components/VaultContextMenu.tsx';
+import { typeIcon } from '../lib/vaultIcons.ts';
+import { ipc } from '../lib/ipc.ts';
 import './Vault.css';
 
-function typeIcon(t: ItemType) {
-  switch (t) {
-    case 'login':
-      return KeyRound;
-    case 'secureNote':
-      return StickyNote;
-    case 'card':
-      return CreditCard;
-    case 'identity':
-      return UserRound;
-    case 'sshKey':
-      return Terminal;
-    default:
-      return File;
-  }
-}
-
-// Item types offered in the "Add" menu and command palette (excludes 'unknown').
-const CREATE_TYPES: { type: ItemType; label: string }[] = [
-  { type: 'login', label: 'Login' },
-  { type: 'card', label: 'Card' },
-  { type: 'identity', label: 'Identity' },
-  { type: 'secureNote', label: 'Secure note' },
-  { type: 'sshKey', label: 'SSH key' },
-];
-
-// Singular create label for a type (e.g. the per-page "Add login" button).
-const createLabel = (t: ItemType): string =>
-  CREATE_TYPES.find((c) => c.type === t)?.label ?? 'item';
-
-// Left-rail filters. `unknown` items only appear under "All items".
-const TYPE_FILTERS: { type: ItemType; label: string }[] = [
-  { type: 'login', label: 'Logins' },
-  { type: 'card', label: 'Cards' },
-  { type: 'identity', label: 'Identities' },
-  { type: 'secureNote', label: 'Secure notes' },
-  { type: 'sshKey', label: 'SSH keys' },
-];
-
-function filterEq(a: VaultFilter, b: VaultFilter): boolean {
-  if (a.kind !== b.kind) return false;
-  if (a.kind === 'type' && b.kind === 'type') return a.itemType === b.itemType;
-  if (a.kind === 'folder' && b.kind === 'folder') return a.folderId === b.folderId;
-  return true;
-}
-
-// Editor open-state: closed, creating a fresh item, or editing an existing one.
-type EditorState =
-  | { mode: 'closed' }
-  | { mode: 'create'; createType: ItemType }
-  | { mode: 'edit'; item: ItemDetail };
-
 export default function Vault(props: { onLock: () => void; onOpenSettings: () => void }) {
-  const [items, setItems] = createSignal<VaultItem[]>([]);
-  const [folders, setFolders] = createSignal<Folder[]>([]);
-  const [connections, setConnections] = createSignal<ConnectionSummary[]>([]);
-  // Offline vault-health audit, summarised as a badge on the Security rail item.
-  // Best-effort: recomputed after every sync; null until the first run.
-  const [health, setHealth] = createSignal<VaultHealthReport | null>(null);
-  // `query` is the shared titlebar search signal (state/search.ts) — the search
-  // field now lives in the custom window titlebar, not this header.
-  const [filter, setFilter] = createSignal<VaultFilter>({ kind: 'all' });
+  // The open item (detail pane). Lives here because selection, detail, and the
+  // mutation hooks all read/write it.
   const [selectedId, setSelectedId] = createSignal<string | null>(null);
-  const [detail, setDetail] = createSignal<ItemDetail | null>(null);
-  const [revealed, setRevealed] = createSignal(false);
-  const [totp, setTotp] = createSignal<TotpCode | null>(null);
-  // Sync status (syncState / lastSync) now lives in state/sync.ts so the titlebar
-  // can show the cloud icon and trigger a manual sync; this screen still owns the
-  // actual sync logic (it reloads items/folders/health) — see the syncRequest
-  // effect below.
 
-  // Multi-select state. `anchor` is the last clicked row for shift-range select.
-  const [selectedIds, setSelectedIds] = createSignal<Set<string>>(new Set());
-  const [anchorId, setAnchorId] = createSignal<string | null>(null);
+  // Which main view occupies the body: the vault list/detail, the security center,
+  // sync status, or the generator. The rail stays visible in every view.
+  const [view, setView] = createSignal<VaultView>('vault');
 
-  // Which main view occupies the body: the vault list/detail, or the security
-  // center (reached from the left rail). The rail stays visible in both.
-  const [view, setView] = createSignal<'vault' | 'security' | 'sync' | 'generator'>('vault');
+  // Editor (rendered inline in the detail pane) + menus.
+  const [editor, setEditor] = createSignal<EditorState>({ mode: 'closed' });
+  const [addMenuOpen, setAddMenuOpen] = createSignal(false);
+  const [moveMenuOpen, setMoveMenuOpen] = createSignal(false);
+  const [paletteOpen, setPaletteOpen] = createSignal(false);
+
+  // Right-click context menu: the target item plus the cursor anchor, or null.
+  const [ctxMenu, setCtxMenu] = createSignal<CtxMenuTarget | null>(null);
+
+  // ---- hooks: data → filtering → selection → detail → mutations → commands ----
+  const data = useVaultData();
+  const filtering = useVaultFiltering({ items: data.items, folders: data.folders });
+  const selection = useVaultSelection({
+    displayed: filtering.displayed,
+    setSelectedId,
+    closeMoveMenu: () => setMoveMenuOpen(false),
+  });
+  const detailState = useItemDetail({
+    selectedId,
+    accountFor: data.accountFor,
+    health: data.health,
+    inTrash: filtering.inTrash,
+  });
+  const actions = useBulkActions({
+    items: data.items,
+    folders: data.folders,
+    accountFor: data.accountFor,
+    groupByAccount: data.groupByAccount,
+    runSync: data.runSync,
+    selectedIds: selection.selectedIds,
+    clearSelection: selection.clearSelection,
+    setMoveMenuOpen,
+    selectedId,
+    setSelectedId,
+    setDetail: detailState.setDetail,
+    filter: filtering.filter,
+    setFilter: filtering.setFilter,
+    editor,
+    setEditor,
+    showVaultView: () => setView('vault'),
+  });
 
   // Switch a rail filter and return to the vault view in one step.
   function selectFilter(f: VaultFilter) {
     setView('vault');
-    setFilter(f);
+    filtering.setFilter(f);
   }
 
   // Switch which connection the list is scoped to (null = all vaults merged).
@@ -191,16 +109,33 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
     setActiveVault(email);
     setView('vault');
     // A folder filter belongs to one account, so switching vaults invalidates it.
-    if (filter().kind === 'folder') setFilter({ kind: 'all' });
-    clearSelection();
+    if (filtering.filter().kind === 'folder') filtering.setFilter({ kind: 'all' });
+    selection.clearSelection();
     setSelectedId(null);
-    if (email) void ipc.setActiveConnection(email).catch(() => {
-      // ignore: a locked connection can't be the active target; filter still applies
-    });
+    if (email)
+      void ipc.setActiveConnection(email).catch(() => {
+        // ignore: a locked connection can't be the active target; filter still applies
+      });
   }
 
-  // Editor (rendered inline in the detail pane) + menus.
-  const [editor, setEditor] = createSignal<EditorState>({ mode: 'closed' });
+  // Reveal a single item: switch to the all-items vault view and select it.
+  // Shared by the command palette, the titlebar search, and the security center.
+  function openItem(id: string) {
+    selectFilter({ kind: 'all' });
+    selection.clearSelection();
+    setSelectedId(id);
+  }
+
+  const commands = useVaultCommands({
+    items: data.items,
+    openCreate: actions.openCreate,
+    setView,
+    sync: data.sync,
+    openItem,
+    onLock: props.onLock,
+    onOpenSettings: props.onOpenSettings,
+  });
+
   // Resolved props for the inline editor, or null when closed. A fresh object on
   // every open/switch makes the keyed <Show> remount the form so its field
   // signals re-init (e.g. editing item A then item B).
@@ -210,115 +145,14 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
     return {
       item: s.mode === 'edit' ? s.item : null,
       createType: s.mode === 'create' ? s.createType : undefined,
-      accountEmail: s.mode === 'edit' ? s.item.accountEmail : createAccount(),
+      accountEmail: s.mode === 'edit' ? s.item.accountEmail : data.createAccount(),
     };
   });
-  const [addMenuOpen, setAddMenuOpen] = createSignal(false);
-  const [moveMenuOpen, setMoveMenuOpen] = createSignal(false);
-  const [paletteOpen, setPaletteOpen] = createSignal(false);
 
   // The current list page's type, if it's a type page (Logins/Cards/…). Drives
   // the per-page Add button: a type page adds that type directly; All / Favorites
   // / folders fall back to the type-picker menu.
-  const addType = createMemo<ItemType | null>(() => {
-    const f = filter();
-    return f.kind === 'type' ? f.itemType : null;
-  });
-
-  // Column sort. `displayed` is the filtered list in the sorted order the rows
-  // actually render in — selection (shift-range) and the For both key off it so
-  // visual order and logical order never diverge.
-  const [sortKey, setSortKey] = createSignal<SortKey>('name');
-  const [sortDir, setSortDir] = createSignal<SortDir>('asc');
-  // Bumped after a vault mutation so the list drops stale cached row detail.
-  const [cacheToken, setCacheToken] = createSignal(0);
-
-  // Right-click context menu: the target item plus the cursor anchor, or null.
-  const [ctxMenu, setCtxMenu] = createSignal<{ item: VaultItem; x: number; y: number } | null>(
-    null,
-  );
-
-  const inTrash = createMemo(() => filter().kind === 'trash');
-
-  // Per-item security audit for the open detail, read off the offline health
-  // report (logins only). 'risk' carries the flags to show; 'ok' means audited
-  // and clean; null = not a login, in trash, or not yet audited (render nothing).
-  const selectedSecurity = createMemo<
-    { kind: 'risk'; chips: { label: string; severe: boolean }[] } | { kind: 'ok' } | null
-  >(() => {
-    const d = detail();
-    const h = health();
-    if (!d || !d.login || inTrash() || !h) return null;
-    const audit = h.atRisk.find((x) => x.id === d.id);
-    return audit ? { kind: 'risk', chips: itemAuditChips(audit) } : { kind: 'ok' };
-  });
-
-  const folderNameOf = (id: string | null): string =>
-    id ? folders().find((f) => f.id === id)?.name ?? '' : '';
-  const filtered = createMemo(() => {
-    const av = activeVault();
-    // A `/`-prefixed query is a command, not a list filter — don't let it hide rows.
-    const term = isCommandQuery(query()) ? '' : query();
-    let base = filterItems(items(), term, filter());
-    // Scope to the selected vault (connection), if any. null = all merged.
-    if (av) base = base.filter((it) => it.accountEmail === av);
-    const active = filters();
-    if (Object.keys(active).length === 0) return base;
-    // Per-column filters. Build extractors only for the Name column and the
-    // currently-visible filterable columns, so a stale filter on a hidden
-    // column can't silently hide rows with no visible input to clear it.
-    const extractors = new Map<string, (it: VaultItem) => string>();
-    extractors.set(NAME_FILTER_KEY, (it) => it.name);
-    for (const col of columns().columns) {
-      if (col.kind !== 'builtin' || !isFilterable(col)) continue;
-      const k = columnKey(col);
-      if (col.id === 'username') extractors.set(k, (it) => it.username ?? '');
-      else if (col.id === 'website') extractors.set(k, (it) => it.uri ?? '');
-      else if (col.id === 'folder') extractors.set(k, (it) => folderNameOf(it.folderId));
-      else if (col.id === 'type') extractors.set(k, (it) => TYPE_LABELS[it.itemType]);
-    }
-    const applicable = Object.keys(active)
-      .filter((k) => extractors.has(k) && active[k])
-      .map((k) => ({ needle: active[k].toLowerCase(), get: extractors.get(k)! }));
-    if (applicable.length === 0) return base;
-    return base.filter((it) => applicable.every((f) => f.get(it).toLowerCase().includes(f.needle)));
-  });
-  const displayed = createMemo(() => {
-    const dir = sortDir() === 'asc' ? 1 : -1;
-    const key = sortKey();
-    const val = (it: VaultItem): string => {
-      switch (key) {
-        case 'name':
-          return it.name;
-        case 'username':
-          return it.username ?? '';
-        case 'folder':
-          return folderNameOf(it.folderId);
-        case 'type':
-          return it.itemType;
-      }
-    };
-    // Stable, case-insensitive, locale-aware; empty values sort last.
-    return [...filtered()].sort((a, b) => {
-      const av = val(a);
-      const bv = val(b);
-      if (!av && bv) return 1;
-      if (av && !bv) return -1;
-      return dir * av.localeCompare(bv, undefined, { sensitivity: 'base' });
-    });
-  });
-  const selectedCount = createMemo(() => selectedIds().size);
-
-  // Click a column header: toggle direction if already sorted by it, else switch
-  // to it ascending.
-  function toggleSort(key: SortKey) {
-    if (sortKey() === key) {
-      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
-    } else {
-      setSortKey(key);
-      setSortDir('asc');
-    }
-  }
+  const addType = filtering.addType;
 
   // Hover text for the header cloud icon — state plus last-success clock time.
   const syncTooltip = createMemo(() => {
@@ -330,134 +164,18 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
     return `Live — click to sync now${when}`;
   });
 
-  async function loadItems() {
-    try {
-      setItems(await ipc.listItems());
-    } catch (err) {
-      toastError(err);
-    }
+  // ---- row context-menu open/close (positioning owned here) ----
+  function openCtxMenu(item: VaultItem, e: MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    // Clamp to the viewport so the menu never opens off-screen near an edge.
+    const MENU_W = 210;
+    const MENU_H = 360;
+    const x = Math.min(e.clientX, window.innerWidth - MENU_W);
+    const y = Math.min(e.clientY, window.innerHeight - MENU_H);
+    setCtxMenu({ item, x: Math.max(8, x), y: Math.max(8, y) });
   }
-
-  async function loadFolders() {
-    try {
-      setFolders(await ipc.listFolders());
-    } catch (err) {
-      toastError(err);
-    }
-  }
-
-  async function loadConnections() {
-    try {
-      setConnections(await ipc.listConnections());
-    } catch (err) {
-      toastError(err);
-    }
-  }
-
-  // Refresh the offline health audit behind the Security rail badge. Best-effort:
-  // the Security center surfaces real errors, so a failure here just leaves the
-  // last badge in place rather than toasting on every background sync.
-  async function loadHealth() {
-    try {
-      setHealth(await ipc.auditOffline());
-    } catch {
-      // ignore: rail badge is advisory; Security center reports audit failures
-    }
-  }
-
-  // The connection a freshly created item goes into: the scoped vault when one is
-  // active and unlocked, otherwise any unlocked connection.
-  const createAccount = () => {
-    const av = activeVault();
-    if (av && connections().some((c) => c.email === av && c.unlocked)) return av;
-    return connections().find((c) => c.unlocked)?.email ?? connections()[0]?.email ?? '';
-  };
-
-  // Map an item id to its owning connection (the unified list mixes accounts).
-  function accountFor(id: string): string {
-    return items().find((it) => it.id === id)?.accountEmail ?? '';
-  }
-
-  // Group selected ids by owning connection, so bulk ops route per account.
-  function groupByAccount(ids: string[]): Map<string, string[]> {
-    const byId = new Map(items().map((it) => [it.id, it] as const));
-    const groups = new Map<string, string[]>();
-    for (const id of ids) {
-      const acct = byId.get(id)?.accountEmail;
-      if (!acct) continue;
-      const arr = groups.get(acct) ?? [];
-      arr.push(id);
-      groups.set(acct, arr);
-    }
-    return groups;
-  }
-
-  function clearSelection() {
-    setSelectedIds(new Set<string>());
-    setAnchorId(null);
-    // The bulk bar stays mounted (hidden), so close its Move dropdown too —
-    // otherwise it re-appears pre-expanded the next time items are selected.
-    setMoveMenuOpen(false);
-  }
-
-  // Single sync path. `manual` syncs (button / palette) toast on success and
-  // surface errors loudly; background syncs (mount, interval, post-mutation)
-  // stay quiet — the cloud status icon already reflects success/failure, so the
-  // interval can't spam toasts. Overlapping runs are skipped.
-  async function runSync(manual: boolean) {
-    if (syncState() === 'syncing') return;
-    setSyncState('syncing');
-    try {
-      await ipc.syncVault(false);
-      await Promise.all([loadItems(), loadFolders()]);
-      setLastSync(Date.now());
-      setSyncState('idle');
-      // Recompute the security badge off the freshly synced vault (offline, cheap).
-      void loadHealth();
-      if (manual) pushToast('success', 'Vault synced.');
-    } catch (err) {
-      setSyncState('error');
-      if (manual) toastError(err);
-    }
-  }
-
-  const sync = () => runSync(true);
-
-  // The titlebar's sync button can't reach runSync (it holds the reload logic),
-  // so it bumps syncRequest and we run a manual sync here. Deferred so the
-  // initial mount value doesn't trigger a sync.
-  createEffect(on(syncRequest, () => void runSync(true), { defer: true }));
-
-  // Re-sync + reload after any vault mutation, then clear selection.
-  async function reloadAfterMutation() {
-    await runSync(false);
-    clearSelection();
-    setCacheToken((t) => t + 1);
-  }
-
-  // Automatic background sync: once on open, then on a fixed interval. The cloud
-  // icon in the header is the visible status.
-  const AUTO_SYNC_MS = 5 * 60 * 1000;
-  let autoSyncTimer: ReturnType<typeof setInterval> | undefined;
-  onMount(() => {
-    // Start each vault session with a clean search so a stale query (the field
-    // now lives in the persistent titlebar) can't hide items on entry.
-    setQuery('');
-    // Show cached items immediately (instant on re-mounts / after a prior sync),
-    // then refresh in the background — avoids a blank-then-populate flicker.
-    void (async () => {
-      await Promise.all([loadItems(), loadFolders(), loadConnections()]);
-      // Seed the security badge off the cached vault so it shows even if the
-      // first background sync fails; runSync refreshes it once sync completes.
-      void loadHealth();
-      await runSync(false);
-    })();
-    autoSyncTimer = setInterval(() => void runSync(false), AUTO_SYNC_MS);
-  });
-  onCleanup(() => {
-    if (autoSyncTimer) clearInterval(autoSyncTimer);
-    autoSyncTimer = undefined;
-  });
+  const closeCtxMenu = () => setCtxMenu(null);
 
   // Ctrl/Cmd-K toggles the command palette.
   function onGlobalKeyDown(e: KeyboardEvent) {
@@ -476,603 +194,31 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
   onMount(() => document.addEventListener('keydown', onGlobalKeyDown));
   onCleanup(() => document.removeEventListener('keydown', onGlobalKeyDown));
 
-  async function copy(label: string, value: string | null | undefined) {
-    if (!value) return;
-    try {
-      await writeText(value);
-      // Seconds before a copied secret is wiped from the clipboard (0 = never),
-      // configurable in Settings → Security.
-      const clearSeconds = clipboardClearSeconds();
-      pushToast(
-        'success',
-        clearSeconds > 0 ? `${label} copied — clears in ${clearSeconds}s.` : `${label} copied.`,
-      );
-      if (clearSeconds <= 0) return;
-      const copied = value;
-      // Auto-clear, but only if the clipboard still holds what we wrote (don't
-      // clobber something the user copied afterwards).
-      setTimeout(() => {
-        void (async () => {
-          try {
-            if ((await readText()) === copied) await writeText('');
-          } catch {
-            // ignore: clipboard may be unavailable or hold non-text content
-          }
-        })();
-      }, clearSeconds * 1000);
-    } catch (err) {
-      toastError(err);
-    }
-  }
-
-  // ---- selection handling (single-click selects; modifiers multi-select) ----
-  function onRowClick(item: VaultItem, e: MouseEvent) {
-    const visible = displayed();
-    if (e.shiftKey && anchorId()) {
-      const anchorIdx = visible.findIndex((it) => it.id === anchorId());
-      const clickIdx = visible.findIndex((it) => it.id === item.id);
-      if (anchorIdx !== -1 && clickIdx !== -1) {
-        const [lo, hi] = anchorIdx < clickIdx ? [anchorIdx, clickIdx] : [clickIdx, anchorIdx];
-        const next = new Set(selectedIds());
-        for (let i = lo; i <= hi; i++) next.add(visible[i].id);
-        setSelectedIds(next);
-        return;
-      }
-    }
-    if (e.ctrlKey || e.metaKey) {
-      const next = new Set(selectedIds());
-      if (next.has(item.id)) next.delete(item.id);
-      else next.add(item.id);
-      setSelectedIds(next);
-      setAnchorId(item.id);
-      return;
-    }
-    // Plain click: open the item and reset any multi-selection.
-    clearSelection();
-    setSelectedId(item.id);
-  }
-
-  function onCheckboxToggle(item: VaultItem, checked: boolean) {
-    const next = new Set(selectedIds());
-    if (checked) next.add(item.id);
-    else next.delete(item.id);
-    setSelectedIds(next);
-    setAnchorId(item.id);
-  }
-
-  // ---- bulk actions ----
-  async function bulkFavorite() {
-    const ids = [...selectedIds()];
-    if (ids.length === 0) return;
-    try {
-      // Favorite every selected item that isn't already a favorite.
-      const byId = new Map(items().map((it) => [it.id, it]));
-      await Promise.all(
-        ids.map((id) => {
-          const it = byId.get(id);
-          return it ? ipc.setFavorite(it.accountEmail, id, !it.favorite) : Promise.resolve();
-        }),
-      );
-      await reloadAfterMutation();
-      pushToast('success', `Updated ${ids.length} item${ids.length === 1 ? '' : 's'}.`);
-    } catch (err) {
-      toastError(err);
-    }
-  }
-
-  async function bulkMove(folderId: string | null) {
-    const ids = [...selectedIds()];
-    if (ids.length === 0) return;
-    setMoveMenuOpen(false);
-    try {
-      if (folderId === null) {
-        for (const [acct, gids] of groupByAccount(ids)) {
-          await ipc.moveItems(acct, gids, null);
-        }
-      } else {
-        // A folder belongs to one account; only move that account's selected items.
-        const acct = folders().find((f) => f.id === folderId)?.accountEmail ?? '';
-        const own = ids.filter((id) => accountFor(id) === acct);
-        if (own.length === 0) {
-          pushToast('error', 'Pick a folder in the same account as the items.');
-          return;
-        }
-        await ipc.moveItems(acct, own, folderId);
-      }
-      await reloadAfterMutation();
-      pushToast('success', `Moved ${ids.length} item${ids.length === 1 ? '' : 's'}.`);
-    } catch (err) {
-      toastError(err);
-    }
-  }
-
-  async function bulkDelete(permanent: boolean) {
-    const ids = [...selectedIds()];
-    if (ids.length === 0) return;
-    try {
-      for (const [acct, gids] of groupByAccount(ids)) {
-        await ipc.deleteItems(acct, gids, permanent);
-      }
-      if (ids.includes(selectedId() ?? '')) setSelectedId(null);
-      await reloadAfterMutation();
-      pushToast('success', permanent ? `Deleted ${ids.length} permanently.` : `Trashed ${ids.length}.`);
-    } catch (err) {
-      toastError(err);
-    }
-  }
-
-  async function bulkRestore() {
-    const ids = [...selectedIds()];
-    if (ids.length === 0) return;
-    try {
-      for (const [acct, gids] of groupByAccount(ids)) {
-        await ipc.restoreItems(acct, gids);
-      }
-      await reloadAfterMutation();
-      pushToast('success', `Restored ${ids.length} item${ids.length === 1 ? '' : 's'}.`);
-    } catch (err) {
-      toastError(err);
-    }
-  }
-
-  // ---- single-item detail actions ----
-  async function detailClone(id: string) {
-    try {
-      await ipc.cloneItem(accountFor(id), id);
-      await reloadAfterMutation();
-      pushToast('success', 'Item cloned.');
-    } catch (err) {
-      toastError(err);
-    }
-  }
-
-  async function detailFavorite(d: ItemDetail) {
-    try {
-      await ipc.setFavorite(d.accountEmail, d.id, !d.favorite);
-      await reloadAfterMutation();
-      // Refresh the open detail so the toggle reflects the new state.
-      setDetail(await ipc.itemDetail(d.accountEmail, d.id));
-    } catch (err) {
-      toastError(err);
-    }
-  }
-
-  async function detailDelete(id: string, permanent: boolean) {
-    try {
-      await ipc.deleteItems(accountFor(id), [id], permanent);
-      setSelectedId(null);
-      await reloadAfterMutation();
-      pushToast('success', permanent ? 'Item permanently deleted.' : 'Moved to trash.');
-    } catch (err) {
-      toastError(err);
-    }
-  }
-
-  async function detailRestore(id: string) {
-    try {
-      const acct = accountFor(id);
-      await ipc.restoreItems(acct, [id]);
-      await reloadAfterMutation();
-      setDetail(await ipc.itemDetail(acct, id));
-      pushToast('success', 'Item restored.');
-    } catch (err) {
-      toastError(err);
-    }
-  }
-
-  function openEdit(d: ItemDetail) {
-    // No need to un-collapse the preview: the detail-pane <Show> already stays
-    // visible whenever the editor is open (`editor().mode !== 'closed'`), so the
-    // user's "hide details" preference is preserved and restored on close.
-    setEditor({ mode: 'edit', item: d });
-  }
-
-  // The editor renders inline in the vault detail pane, so creating from another
-  // view (generator/security/…) must return to the vault view first.
-  function openCreate(createType: ItemType) {
-    setView('vault');
-    setEditor({ mode: 'create', createType });
-  }
-
-  // Reveal a single item: switch to the all-items vault view and select it.
-  // Shared by the command palette, the titlebar search, and the security center.
-  function openItem(id: string) {
-    selectFilter({ kind: 'all' });
-    clearSelection();
-    setSelectedId(id);
-  }
-
-  // ---- row context-menu actions (operate on a single right-clicked item) ----
-  // The list row only carries username/type; secrets live in the full detail, so
-  // copy-password/-totp/-uri fetch the detail (or live code) on demand.
-  function openCtxMenu(item: VaultItem, e: MouseEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    // Clamp to the viewport so the menu never opens off-screen near an edge.
-    const MENU_W = 210;
-    const MENU_H = 360;
-    const x = Math.min(e.clientX, window.innerWidth - MENU_W);
-    const y = Math.min(e.clientY, window.innerHeight - MENU_H);
-    setCtxMenu({ item, x: Math.max(8, x), y: Math.max(8, y) });
-  }
-
-  const closeCtxMenu = () => setCtxMenu(null);
-
-  async function rowFavorite(item: VaultItem) {
-    closeCtxMenu();
-    try {
-      await ipc.setFavorite(item.accountEmail, item.id, !item.favorite);
-      await reloadAfterMutation();
-      if (selectedId() === item.id) setDetail(await ipc.itemDetail(item.accountEmail, item.id));
-    } catch (err) {
-      toastError(err);
-    }
-  }
-
-  async function rowEdit(item: VaultItem) {
-    closeCtxMenu();
-    try {
-      openEdit(await ipc.itemDetail(item.accountEmail, item.id));
-    } catch (err) {
-      toastError(err);
-    }
-  }
-
-  async function copyPasswordFor(item: VaultItem) {
-    closeCtxMenu();
-    try {
-      const d = await ipc.itemDetail(item.accountEmail, item.id);
-      if (!d.login?.password) {
-        pushToast('error', 'No password on this item.');
-        return;
-      }
-      await copy('Password', d.login.password);
-    } catch (err) {
-      toastError(err);
-    }
-  }
-
-  async function copyTotpFor(item: VaultItem) {
-    closeCtxMenu();
-    try {
-      const code = await ipc.itemTotp(item.accountEmail, item.id);
-      await copy('Code', code.code);
-    } catch (err) {
-      toastError(err);
-    }
-  }
-
-  // First populated URI on the item, shared by "copy website" and "open website".
-  async function firstUri(item: VaultItem): Promise<string | null> {
-    const d = await ipc.itemDetail(item.accountEmail, item.id);
-    return d.login?.uris.find((u) => u.uri)?.uri ?? null;
-  }
-
-  async function copyUriFor(item: VaultItem) {
-    closeCtxMenu();
-    try {
-      const uri = await firstUri(item);
-      if (!uri) {
-        pushToast('error', 'No website on this item.');
-        return;
-      }
-      await copy('URL', uri);
-    } catch (err) {
-      toastError(err);
-    }
-  }
-
-  async function openSiteFor(item: VaultItem) {
-    closeCtxMenu();
-    try {
-      const uri = await firstUri(item);
-      if (!uri) {
-        pushToast('error', 'No website on this item.');
-        return;
-      }
-      await openUrl(uri);
-    } catch (err) {
-      toastError(err);
-    }
-  }
-
-  // After the editor saves, close it and refresh.
-  async function onEditorSaved() {
-    const state = editor();
-    const wasEditing = state.mode === 'edit' ? state.item : null;
-    setEditor({ mode: 'closed' });
-    await reloadAfterMutation();
-    if (wasEditing && selectedId() === wasEditing.id) {
-      try {
-        setDetail(await ipc.itemDetail(wasEditing.accountEmail, wasEditing.id));
-      } catch (err) {
-        toastError(err);
-      }
-    }
-    pushToast('success', 'Item saved.');
-  }
-
-  // Load detail + TOTP whenever selection changes.
-  let totpTimer: ReturnType<typeof setInterval> | undefined;
-  function stopTotp() {
-    if (totpTimer) clearInterval(totpTimer);
-    totpTimer = undefined;
-    setTotp(null);
-  }
-  onCleanup(stopTotp);
-
-  async function refreshTotp(id: string) {
-    try {
-      setTotp(await ipc.itemTotp(accountFor(id), id));
-    } catch (err) {
-      toastError(err);
-    }
-  }
-
-  createEffect(
-    on(selectedId, async (id) => {
-      stopTotp();
-      setRevealed(false);
-      setDetail(null);
-      if (!id) return;
-      try {
-        const d = await ipc.itemDetail(accountFor(id), id);
-        setDetail(d);
-        if (d.login?.hasTotp) {
-          await refreshTotp(id);
-          totpTimer = setInterval(() => {
-            const current = totp();
-            if (!current) return;
-            if (current.remaining <= 1) {
-              void refreshTotp(id);
-            } else {
-              setTotp({ ...current, remaining: current.remaining - 1 });
-            }
-          }, 1000);
-        }
-      } catch (err) {
-        toastError(err);
-      }
-    }),
-  );
-
-  // ---- command palette commands ----
-  // Action commands only (no go-to-item entries). These are what the titlebar
-  // search shows in `/` command mode; the Ctrl-K palette appends go-to-item
-  // entries below (items are reachable by plain text there).
-  const actionCommands = createMemo<Command[]>(() => {
-    const list: Command[] = [];
-    for (const ct of CREATE_TYPES) {
-      list.push({
-        id: `new-${ct.type}`,
-        label: `New ${ct.label.toLowerCase()}`,
-        hint: 'Create',
-        icon: Plus,
-        run: () => openCreate(ct.type),
-      });
-    }
-    list.push({
-      id: 'security',
-      label: 'Open Security center',
-      icon: Shield,
-      run: () => setView('security'),
-    });
-    list.push({
-      id: 'sync',
-      label: 'Sync now',
-      icon: RefreshCw,
-      run: () => void sync(),
-    });
-    list.push({
-      id: 'sync-status',
-      label: 'Open Sync status',
-      icon: Cloud,
-      run: () => setView('sync'),
-    });
-    list.push({
-      id: 'lock',
-      label: 'Lock vault',
-      icon: Lock,
-      run: () => props.onLock(),
-    });
-    list.push({
-      id: 'settings',
-      label: 'Open Settings',
-      icon: SettingsIcon,
-      run: () => props.onOpenSettings(),
-    });
-    return list;
-  });
-
-  // The Ctrl-K palette's full list: actions plus a go-to entry per live item.
-  const commands = createMemo<Command[]>(() => {
-    const list = [...actionCommands()];
-    for (const it of items()) {
-      if (it.deleted) continue;
-      list.push({
-        id: `goto-${it.id}`,
-        label: `Go to ${it.name}`,
-        hint: it.username ?? undefined,
-        icon: typeIcon(it.itemType),
-        run: () => openItem(it.id),
-      });
-    }
-    return list;
-  });
-
-  // Publish commands + items so the titlebar search (outside this tree, in
-  // App.tsx) can preview items and run commands. Cleared when the Vault unmounts.
-  createEffect(() => {
-    setPaletteSource({
-      commands: actionCommands(),
-      items: items().filter((it) => !it.deleted),
-      openItem,
-    });
-  });
-  onCleanup(clearPaletteSource);
-
-  // Folders scoped to the active vault (all folders when no vault is selected) —
-  // drives the rail folder tree and the bulk "move to folder" targets.
-  const scopedFolders = createMemo(() => {
-    const av = activeVault();
-    return av ? folders().filter((f) => f.accountEmail === av) : folders();
-  });
-  const realFolders = createMemo(() => scopedFolders().filter((f) => f.id !== null));
-
-  // If the scoped vault was removed (e.g. in Settings), fall back to all vaults so
-  // the list can't silently show nothing with no way to recover.
-  createEffect(() => {
-    const av = activeVault();
-    if (av && connections().length > 0 && !connections().some((c) => c.email === av)) {
-      setActiveVault(null);
-    }
-  });
-
-  // ---- folder management (the rail tree owns validation; these run the IPC) ----
-  async function folderCreate(account: string, fullName: string) {
-    try {
-      await ipc.createFolder(account, fullName);
-      await reloadAfterMutation();
-      pushToast('success', 'Folder created.');
-    } catch (err) {
-      toastError(err);
-    }
-  }
-
-  // Apply a batch of folder renames sequentially. A rename/re-parent cascades to
-  // descendants; issuing them in series avoids racing the SDK's folder repository.
-  async function folderApplyRenames(
-    account: string,
-    renames: { id: string; newName: string }[],
-    done: string,
-  ) {
-    try {
-      for (const r of renames) await ipc.renameFolder(account, r.id, r.newName);
-      await reloadAfterMutation();
-      pushToast('success', done);
-    } catch (err) {
-      toastError(err);
-    }
-  }
-
-  // Delete a folder subtree: move its items to "No folder" first (so they survive
-  // even if a later folder delete fails), then delete each folder. Reset the active
-  // filter if it pointed into the now-deleted subtree.
-  async function folderDelete(account: string, folderIds: string[], itemIds: string[]) {
-    try {
-      if (itemIds.length) await ipc.moveItems(account, itemIds, null);
-      for (const id of folderIds) await ipc.deleteFolder(account, id);
-      const f = filter();
-      if (f.kind === 'folder' && f.folderId !== null && folderIds.includes(f.folderId)) {
-        setFilter({ kind: 'all' });
-      }
-      await reloadAfterMutation();
-      pushToast('success', folderIds.length > 1 ? 'Folders deleted.' : 'Folder deleted.');
-    } catch (err) {
-      toastError(err);
-    }
-  }
-
   return (
     <div class="vault">
       <div class="vault-body">
-        <nav class="vault-rail" classList={{ collapsed: sidebarCollapsed() }}>
-          <button
-            class="vault-rail-collapse"
-            title={sidebarCollapsed() ? 'Expand sidebar' : 'Collapse sidebar'}
-            onClick={() => toggleSidebar()}
-          >
-            <Show when={sidebarCollapsed()} fallback={<PanelLeftClose size={16} strokeWidth={1.6} />}>
-              <PanelLeftOpen size={16} strokeWidth={1.6} />
-            </Show>
-          </button>
-
-          <Show when={connections().length > 1}>
-            <VaultSwitcher
-              connections={connections()}
-              active={activeVault()}
-              collapsed={sidebarCollapsed()}
-              onSelect={switchVault}
-            />
-          </Show>
-
-          <FilterButton
-            label="All items"
-            icon={File}
-            active={view() === 'vault' && filterEq(filter(), { kind: 'all' })}
-            onClick={() => selectFilter({ kind: 'all' })}
-          />
-          <FilterButton
-            label="Favorites"
-            icon={Star}
-            active={view() === 'vault' && filterEq(filter(), { kind: 'favorites' })}
-            onClick={() => selectFilter({ kind: 'favorites' })}
-          />
-          <FilterButton
-            label="Trash"
-            icon={Trash2}
-            active={view() === 'vault' && filterEq(filter(), { kind: 'trash' })}
-            onClick={() => selectFilter({ kind: 'trash' })}
-          />
-          <div class="vault-rail-sep" />
-          <For each={TYPE_FILTERS}>
-            {(tf) => (
-              <FilterButton
-                label={tf.label}
-                icon={typeIcon(tf.type)}
-                active={view() === 'vault' && filterEq(filter(), { kind: 'type', itemType: tf.type })}
-                onClick={() => selectFilter({ kind: 'type', itemType: tf.type })}
-              />
-            )}
-          </For>
-          {/* Folders need their labels to be useful — hide the tree when collapsed. */}
-          <Show when={!sidebarCollapsed()}>
-            <FolderTree
-              folders={scopedFolders()}
-              items={items()}
-              active={view() === 'vault' ? filter() : { kind: 'all' }}
-              onSelect={(f) => selectFilter(f)}
-              onCreate={(account, fullName) => void folderCreate(account, fullName)}
-              onRename={(account, renames) => void folderApplyRenames(account, renames, 'Folder renamed.')}
-              onMove={(account, renames) => void folderApplyRenames(account, renames, 'Folder moved.')}
-              onDelete={(account, folderIds, itemIds) => void folderDelete(account, folderIds, itemIds)}
-              defaultAccount={createAccount()}
-            />
-          </Show>
-          <div class="vault-rail-sep" />
-          <FilterButton
-            label="Generator"
-            icon={Dices}
-            active={view() === 'generator'}
-            onClick={() => setView('generator')}
-          />
-          <FilterButton
-            label="Security"
-            icon={Shield}
-            active={view() === 'security'}
-            onClick={() => setView('security')}
-            badge={<SecurityRailBadge report={health()} />}
-          />
-          <button
-            class="vault-rail-btn"
-            classList={{ active: view() === 'sync' }}
-            title={sidebarCollapsed() ? 'Sync' : syncTooltip()}
-            onClick={() => setView('sync')}
-          >
-            <SyncIcon state={syncState()} lastSync={lastSync()} />
-            <span>Sync</span>
-          </button>
-
-          {/* Push Settings to the bottom of the rail. */}
-          <div class="vault-rail-spacer" />
-          <div class="vault-rail-sep" />
-          <FilterButton
-            label="Settings"
-            icon={SettingsIcon}
-            active={false}
-            onClick={() => props.onOpenSettings()}
-          />
-        </nav>
+        <VaultRailMenu
+          view={view()}
+          filter={filtering.filter()}
+          sidebarCollapsed={sidebarCollapsed()}
+          toggleSidebar={() => toggleSidebar()}
+          connections={data.connections()}
+          activeVault={activeVault()}
+          switchVault={switchVault}
+          selectFilter={selectFilter}
+          scopedFolders={filtering.scopedFolders()}
+          items={data.items()}
+          folderCreate={(account, fullName) => void actions.folderCreate(account, fullName)}
+          folderApplyRenames={(account, renames, done) => void actions.folderApplyRenames(account, renames, done)}
+          folderDelete={(account, folderIds, itemIds) => void actions.folderDelete(account, folderIds, itemIds)}
+          defaultAccount={data.createAccount()}
+          health={data.health()}
+          setView={setView}
+          syncState={syncState()}
+          lastSync={lastSync()}
+          syncTooltip={syncTooltip()}
+          onOpenSettings={() => props.onOpenSettings()}
+        />
 
         <Switch>
           <Match when={view() === 'security'}>
@@ -1083,7 +229,7 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
               state={syncState()}
               lastSync={lastSync()}
               autoSyncMs={AUTO_SYNC_MS}
-              onSync={() => void sync()}
+              onSync={() => void data.sync()}
             />
           </Match>
           <Match when={view() === 'generator'}>
@@ -1091,805 +237,236 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
           </Match>
           <Match when={view() === 'vault'}>
             <>
-        <aside
-          class="vault-list"
-          classList={{ 'has-selection': selectedCount() > 0, 'list-full': previewCollapsed() }}
-          data-density={rowDensity()}
-        >
-          <div class="vault-list-head">
-            <span class="vault-list-count">
-              {displayed().length} {displayed().length === 1 ? 'item' : 'items'}
-            </span>
-            <div class="vault-list-actions">
-              <button
-                class="ghost icon-btn"
-                aria-expanded={!previewCollapsed()}
-                title={previewCollapsed() ? 'Show details' : 'Hide details'}
-                onClick={() => togglePreview()}
+              <aside
+                class="vault-list"
+                classList={{ 'has-selection': selection.selectedCount() > 0, 'list-full': previewCollapsed() }}
+                data-density={rowDensity()}
               >
-                <Show
-                  when={previewCollapsed()}
-                  fallback={<PanelRightClose size={16} strokeWidth={1.6} />}
+                <div class="vault-list-head">
+                  <span class="vault-list-count">
+                    {filtering.displayed().length} {filtering.displayed().length === 1 ? 'item' : 'items'}
+                  </span>
+                  <div class="vault-list-actions">
+                    <button
+                      class="ghost icon-btn"
+                      aria-expanded={!previewCollapsed()}
+                      title={previewCollapsed() ? 'Show details' : 'Hide details'}
+                      onClick={() => togglePreview()}
+                    >
+                      <Show when={previewCollapsed()} fallback={<PanelRightClose size={16} strokeWidth={1.6} />}>
+                        <PanelRightOpen size={16} strokeWidth={1.6} />
+                      </Show>
+                    </button>
+                    <Show when={!filtering.inTrash()}>
+                      <Show
+                        when={addType()}
+                        fallback={
+                          <div class="vault-add-anchor">
+                            <button class="vault-add" title="Add item" onClick={() => setAddMenuOpen((v) => !v)}>
+                              <Plus size={15} strokeWidth={1.75} /> Add
+                            </button>
+                            <Show when={addMenuOpen()}>
+                              <>
+                                <div class="vault-menu-backdrop" onClick={() => setAddMenuOpen(false)} />
+                                <div class="vault-menu align-right" role="menu">
+                                  <For each={CREATE_TYPES}>
+                                    {(ct) => {
+                                      const Icon = typeIcon(ct.type);
+                                      return (
+                                        <button
+                                          class="vault-menu-item"
+                                          role="menuitem"
+                                          onClick={() => {
+                                            setAddMenuOpen(false);
+                                            actions.openCreate(ct.type);
+                                          }}
+                                        >
+                                          <Icon size={14} strokeWidth={1.6} />
+                                          {ct.label}
+                                        </button>
+                                      );
+                                    }}
+                                  </For>
+                                </div>
+                              </>
+                            </Show>
+                          </div>
+                        }
+                      >
+                        {(t) => (
+                          <button
+                            class="vault-add"
+                            title={`Add ${createLabel(t()).toLowerCase()}`}
+                            onClick={() => actions.openCreate(t())}
+                          >
+                            <Plus size={15} strokeWidth={1.75} /> Add {createLabel(t()).toLowerCase()}
+                          </button>
+                        )}
+                      </Show>
+                    </Show>
+                  </div>
+                </div>
+
+                <VaultList
+                  items={filtering.displayed()}
+                  folders={data.folders()}
+                  sortKey={filtering.sortKey()}
+                  sortDir={filtering.sortDir()}
+                  onSort={filtering.toggleSort}
+                  selectedId={selectedId()}
+                  selectedCount={selection.selectedCount()}
+                  isSelected={selection.isSelected}
+                  onRowClick={selection.onRowClick}
+                  onRowContextMenu={openCtxMenu}
+                  onCheckboxToggle={selection.onCheckboxToggle}
+                  emptyMessage={data.items().length === 0 ? 'Vault is empty or not synced.' : 'No matches.'}
+                  cacheToken={actions.cacheToken()}
+                  security={data.health()}
+                />
+
+                {/* Floating multi-select action bar. Stays mounted; .is-hidden slides it
+                    away so toggling selection never reflows the list (no layout shift). */}
+                <div
+                  class="vault-bulk"
+                  classList={{ 'is-hidden': selection.selectedCount() === 0 }}
+                  role="toolbar"
+                  aria-label="Selection actions"
                 >
-                  <PanelRightOpen size={16} strokeWidth={1.6} />
-                </Show>
-              </button>
-              <Show when={!inTrash()}>
-                <Show
-                  when={addType()}
-                  fallback={
+                  <button
+                    class="ghost icon-btn vault-bulk-clear"
+                    title="Clear selection"
+                    onClick={() => selection.clearSelection()}
+                  >
+                    <X size={15} strokeWidth={1.75} />
+                  </button>
+                  <span class="vault-bulk-count">{selection.selectedCount()} selected</span>
+                  <span class="vault-bulk-sep" />
+                  <Show
+                    when={!filtering.inTrash()}
+                    fallback={
+                      <>
+                        <button class="ghost vault-bulk-btn" title="Restore" onClick={() => void actions.bulkRestore()}>
+                          <RotateCcw size={14} strokeWidth={1.6} /> Restore
+                        </button>
+                        <button
+                          class="danger vault-bulk-btn"
+                          title="Delete permanently"
+                          onClick={() => void actions.bulkDelete(true)}
+                        >
+                          <Trash2 size={14} strokeWidth={1.6} /> Delete
+                        </button>
+                      </>
+                    }
+                  >
+                    <button class="ghost vault-bulk-btn" title="Favorite" onClick={() => void actions.bulkFavorite()}>
+                      <Star size={14} strokeWidth={1.6} /> Favorite
+                    </button>
                     <div class="vault-add-anchor">
                       <button
-                        class="vault-add"
-                        title="Add item"
-                        onClick={() => setAddMenuOpen((v) => !v)}
+                        class="ghost vault-bulk-btn"
+                        title="Move to folder"
+                        onClick={() => setMoveMenuOpen((v) => !v)}
                       >
-                        <Plus size={15} strokeWidth={1.75} /> Add
+                        <FolderInput size={14} strokeWidth={1.6} /> Move
                       </button>
-                      <Show when={addMenuOpen()}>
+                      <Show when={moveMenuOpen()}>
                         <>
-                          <div class="vault-menu-backdrop" onClick={() => setAddMenuOpen(false)} />
-                          <div class="vault-menu align-right" role="menu">
-                            <For each={CREATE_TYPES}>
-                              {(ct) => {
-                                const Icon = typeIcon(ct.type);
-                                return (
-                                  <button
-                                    class="vault-menu-item"
-                                    role="menuitem"
-                                    onClick={() => {
-                                      setAddMenuOpen(false);
-                                      openCreate(ct.type);
-                                    }}
-                                  >
-                                    <Icon size={14} strokeWidth={1.6} />
-                                    {ct.label}
-                                  </button>
-                                );
-                              }}
+                          <div class="vault-menu-backdrop" onClick={() => setMoveMenuOpen(false)} />
+                          <div class="vault-menu vault-menu-up" role="menu">
+                            <button class="vault-menu-item" onClick={() => void actions.bulkMove(null)}>
+                              No folder
+                            </button>
+                            <For each={filtering.realFolders()}>
+                              {(f) => (
+                                <button class="vault-menu-item" onClick={() => void actions.bulkMove(f.id)}>
+                                  {f.name}
+                                </button>
+                              )}
                             </For>
                           </div>
                         </>
                       </Show>
                     </div>
-                  }
-                >
-                  {(t) => (
                     <button
-                      class="vault-add"
-                      title={`Add ${createLabel(t()).toLowerCase()}`}
-                      onClick={() => openCreate(t())}
+                      class="danger vault-bulk-btn"
+                      title="Move to trash"
+                      onClick={() => void actions.bulkDelete(false)}
                     >
-                      <Plus size={15} strokeWidth={1.75} /> Add {createLabel(t()).toLowerCase()}
+                      <Trash2 size={14} strokeWidth={1.6} /> Delete
                     </button>
-                  )}
-                </Show>
-              </Show>
-            </div>
-          </div>
-
-          <VaultList
-            items={displayed()}
-            folders={folders()}
-            sortKey={sortKey()}
-            sortDir={sortDir()}
-            onSort={toggleSort}
-            selectedId={selectedId()}
-            selectedCount={selectedCount()}
-            isSelected={(id) => selectedIds().has(id)}
-            onRowClick={onRowClick}
-            onRowContextMenu={openCtxMenu}
-            onCheckboxToggle={onCheckboxToggle}
-            emptyMessage={items().length === 0 ? 'Vault is empty or not synced.' : 'No matches.'}
-            cacheToken={cacheToken()}
-            security={health()}
-          />
-
-          {/* Floating multi-select action bar. Stays mounted; .is-hidden slides it
-              away so toggling selection never reflows the list (no layout shift). */}
-          <div class="vault-bulk" classList={{ 'is-hidden': selectedCount() === 0 }} role="toolbar" aria-label="Selection actions">
-            <button
-              class="ghost icon-btn vault-bulk-clear"
-              title="Clear selection"
-              onClick={() => clearSelection()}
-            >
-              <X size={15} strokeWidth={1.75} />
-            </button>
-            <span class="vault-bulk-count">{selectedCount()} selected</span>
-            <span class="vault-bulk-sep" />
-            <Show
-              when={!inTrash()}
-              fallback={
-                <>
-                  <button class="ghost vault-bulk-btn" title="Restore" onClick={() => void bulkRestore()}>
-                    <RotateCcw size={14} strokeWidth={1.6} /> Restore
-                  </button>
-                  <button
-                    class="danger vault-bulk-btn"
-                    title="Delete permanently"
-                    onClick={() => void bulkDelete(true)}
-                  >
-                    <Trash2 size={14} strokeWidth={1.6} /> Delete
-                  </button>
-                </>
-              }
-            >
-              <button class="ghost vault-bulk-btn" title="Favorite" onClick={() => void bulkFavorite()}>
-                <Star size={14} strokeWidth={1.6} /> Favorite
-              </button>
-              <div class="vault-add-anchor">
-                <button
-                  class="ghost vault-bulk-btn"
-                  title="Move to folder"
-                  onClick={() => setMoveMenuOpen((v) => !v)}
-                >
-                  <FolderInput size={14} strokeWidth={1.6} /> Move
-                </button>
-                <Show when={moveMenuOpen()}>
-                  <>
-                    <div class="vault-menu-backdrop" onClick={() => setMoveMenuOpen(false)} />
-                    <div class="vault-menu vault-menu-up" role="menu">
-                      <button class="vault-menu-item" onClick={() => void bulkMove(null)}>
-                        No folder
-                      </button>
-                      <For each={realFolders()}>
-                        {(f) => (
-                          <button class="vault-menu-item" onClick={() => void bulkMove(f.id)}>
-                            {f.name}
-                          </button>
-                        )}
-                      </For>
-                    </div>
-                  </>
-                </Show>
-              </div>
-              <button class="danger vault-bulk-btn" title="Move to trash" onClick={() => void bulkDelete(false)}>
-                <Trash2 size={14} strokeWidth={1.6} /> Delete
-              </button>
-            </Show>
-          </div>
-        </aside>
-
-        {/* Detail (preview) pane. Hidden when the preview toggle is off, but always
-            shown while the inline editor is open so an edit is never stranded. */}
-        <Show when={!previewCollapsed() || editor().mode !== 'closed'}>
-        <section
-          class="vault-detail"
-          classList={{ 'vault-detail-editing': editor().mode !== 'closed' }}
-        >
-          <Show when={editorView()} keyed>
-            {(v) => (
-              <ItemEditor
-                item={v.item}
-                createType={v.createType}
-                accountEmail={v.accountEmail}
-                folders={folders()}
-                onSaved={() => void onEditorSaved()}
-                onClose={() => setEditor({ mode: 'closed' })}
-              />
-            )}
-          </Show>
-          <Show
-            when={editor().mode === 'closed' && detail()}
-            fallback={
-              editor().mode === 'closed' ? (
-                <div class="vault-detail-empty muted">Select an item to view its details.</div>
-              ) : null
-            }
-          >
-            {(d) => (
-              <div class="detail">
-                <div class="detail-head">
-                  <h2 class="detail-name">{d().name}</h2>
-                  <span class="spacer" />
-                  <div class="detail-actions">
-                    <Show
-                      when={!inTrash()}
-                      fallback={
-                        <>
-                          <button
-                            class="ghost icon-btn"
-                            title="Restore"
-                            onClick={() => void detailRestore(d().id)}
-                          >
-                            <RotateCcw size={15} strokeWidth={1.6} />
-                          </button>
-                          <button
-                            class="ghost icon-btn detail-del"
-                            title="Delete permanently"
-                            onClick={() => void detailDelete(d().id, true)}
-                          >
-                            <Trash2 size={15} strokeWidth={1.6} />
-                          </button>
-                        </>
-                      }
-                    >
-                      <button
-                        class="ghost icon-btn"
-                        title={d().favorite ? 'Unfavorite' : 'Favorite'}
-                        onClick={() => void detailFavorite(d())}
-                      >
-                        <Star
-                          size={15}
-                          strokeWidth={1.6}
-                          class={d().favorite ? 'vault-row-fav' : ''}
-                        />
-                      </button>
-                      <button class="ghost icon-btn" title="Edit" onClick={() => openEdit(d())}>
-                        <Pencil size={15} strokeWidth={1.6} />
-                      </button>
-                      <button
-                        class="ghost icon-btn"
-                        title="Clone"
-                        onClick={() => void detailClone(d().id)}
-                      >
-                        <Copy size={15} strokeWidth={1.6} />
-                      </button>
-                      <button
-                        class="ghost icon-btn detail-del"
-                        title="Move to trash"
-                        onClick={() => void detailDelete(d().id, false)}
-                      >
-                        <Trash2 size={15} strokeWidth={1.6} />
-                      </button>
-                    </Show>
-                  </div>
+                  </Show>
                 </div>
+              </aside>
 
-                <Show when={selectedSecurity()}>
-                  {(sec) => {
-                    const s = sec();
-                    return (
-                      <div class="detail-sec" classList={{ risk: s.kind === 'risk' }}>
-                        <Show
-                          when={s.kind === 'risk' ? s : null}
-                          fallback={
-                            <>
-                              <ShieldCheck size={14} strokeWidth={1.75} />
-                              <span class="detail-sec-label">No known security issues</span>
-                            </>
-                          }
-                        >
-                          {(risk) => (
-                            <>
-                              <ShieldAlert size={14} strokeWidth={1.75} />
-                              <div class="detail-sec-chips">
-                                <For each={risk().chips}>
-                                  {(c) => (
-                                    <span
-                                      class="detail-sec-chip"
-                                      classList={{ severe: c.severe }}
-                                    >
-                                      {c.label}
-                                    </span>
-                                  )}
-                                </For>
-                              </div>
-                            </>
-                          )}
-                        </Show>
-                      </div>
-                    );
-                  }}
-                </Show>
-
-                <Show when={d().login}>
-                  {(login) => (
-                    <>
-                      <Show when={login().username}>
-                        <Field
-                          label="Username"
-                          value={login().username}
-                          onCopy={() => void copy('Username', login().username)}
-                        />
-                      </Show>
-                      <Show when={login().password}>
-                        <div class="detail-field">
-                          <label>Password</label>
-                          <div class="detail-value-row">
-                            <code class="detail-value mono">
-                              {revealed() ? login().password : '••••••••••••'}
-                            </code>
-                            <button
-                              class="ghost icon-btn"
-                              title={revealed() ? 'Hide' : 'Reveal'}
-                              onClick={() => setRevealed(!revealed())}
-                            >
-                              {revealed() ? <EyeOff size={14} /> : <Eye size={14} />}
-                            </button>
-                            <button
-                              class="ghost icon-btn"
-                              title="Copy"
-                              onClick={() => void copy('Password', login().password)}
-                            >
-                              <Copy size={14} />
-                            </button>
-                          </div>
-                        </div>
-                      </Show>
-
-                      <Show when={totp()}>
-                        {(code) => (
-                          <div class="detail-field">
-                            <label>
-                              <Timer size={11} strokeWidth={2} /> One-time code
-                            </label>
-                            <div class="detail-value-row">
-                              <code class="detail-value mono totp-code">{code().code}</code>
-                              <span class="totp-remaining">{code().remaining}s</span>
-                              <button
-                                class="ghost icon-btn"
-                                title="Copy"
-                                onClick={() => void copy('Code', code().code)}
-                              >
-                                <Copy size={14} />
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                      </Show>
-
-                      <For each={login().uris}>
-                        {(u) => (
-                          <Show when={u.uri}>
-                            <div class="detail-field">
-                              <label>Website</label>
-                              <div class="detail-value-row">
-                                <span class="detail-value truncate">{u.uri}</span>
-                                <button
-                                  class="ghost icon-btn"
-                                  title="Open"
-                                  onClick={() => u.uri && void openUrl(u.uri)}
-                                >
-                                  <ExternalLink size={14} />
-                                </button>
-                                <button
-                                  class="ghost icon-btn"
-                                  title="Copy"
-                                  onClick={() => void copy('URL', u.uri)}
-                                >
-                                  <Copy size={14} />
-                                </button>
-                              </div>
-                            </div>
-                          </Show>
-                        )}
-                      </For>
-                    </>
-                  )}
-                </Show>
-
-                <Show when={d().card}>
-                  {(card) => <CardVisual card={card()} onCopy={copy} />}
-                </Show>
-
-                <Show when={d().identity}>
-                  {(id) => (
-                    <For each={identityFields(id())}>
-                      {(f) => (
-                        <Show when={f.value}>
-                          <Field
-                            label={f.label}
-                            value={f.value}
-                            onCopy={() => void copy(f.label, f.value)}
-                          />
-                        </Show>
-                      )}
-                    </For>
-                  )}
-                </Show>
-
-                <Show when={d().sshKey}>
-                  {(key) => (
-                    <>
-                      <Show when={key().publicKey}>
-                        <Field
-                          label="Public key"
-                          value={key().publicKey}
-                          onCopy={() => void copy('Public key', key().publicKey)}
-                        />
-                      </Show>
-                      <Show when={key().fingerprint}>
-                        <Field
-                          label="Fingerprint"
-                          value={key().fingerprint}
-                          onCopy={() => void copy('Fingerprint', key().fingerprint)}
-                        />
-                      </Show>
-                      <Show when={key().privateKey}>
-                        <SecretField
-                          label="Private key"
-                          value={key().privateKey}
-                          onCopy={() => void copy('Private key', key().privateKey)}
-                        />
-                      </Show>
-                    </>
-                  )}
-                </Show>
-
-                <For each={d().fields}>
-                  {(f) => (
-                    <Show when={f.name || f.value || f.fieldType === 'linked'}>
-                      <CustomFieldView
-                        field={f}
-                        detail={d()}
-                        onCopy={(label, value) => void copy(label, value)}
+              {/* Detail (preview) pane. Hidden when the preview toggle is off, but always
+                  shown while the inline editor is open so an edit is never stranded. */}
+              <Show when={!previewCollapsed() || editor().mode !== 'closed'}>
+                <section class="vault-detail" classList={{ 'vault-detail-editing': editor().mode !== 'closed' }}>
+                  <Show when={editorView()} keyed>
+                    {(v) => (
+                      <ItemEditor
+                        item={v.item}
+                        createType={v.createType}
+                        accountEmail={v.accountEmail}
+                        folders={data.folders()}
+                        onSaved={() => void actions.onEditorSaved()}
+                        onClose={() => setEditor({ mode: 'closed' })}
                       />
-                    </Show>
-                  )}
-                </For>
-
-                <Show when={d().notes}>
-                  <div class="detail-field">
-                    <label>Notes</label>
-                    <pre class="detail-notes">{d().notes}</pre>
-                  </div>
-                </Show>
-              </div>
-            )}
-          </Show>
-        </section>
-        </Show>
+                    )}
+                  </Show>
+                  <Show
+                    when={editor().mode === 'closed' && detailState.detail()}
+                    fallback={
+                      editor().mode === 'closed' ? (
+                        <div class="vault-detail-empty muted">Select an item to view its details.</div>
+                      ) : null
+                    }
+                  >
+                    {(d) => (
+                      <VaultDetailPane
+                        detail={d()}
+                        inTrash={filtering.inTrash()}
+                        revealed={detailState.revealed()}
+                        setRevealed={detailState.setRevealed}
+                        totp={detailState.totp()}
+                        selectedSecurity={detailState.selectedSecurity()}
+                        copy={(label, value) => void actions.copy(label, value)}
+                        onFavorite={(item) => void actions.detailFavorite(item)}
+                        onEdit={(item) => actions.openEdit(item)}
+                        onClone={(id) => void actions.detailClone(id)}
+                        onDelete={(id, permanent) => void actions.detailDelete(id, permanent)}
+                        onRestore={(id) => void actions.detailRestore(id)}
+                      />
+                    )}
+                  </Show>
+                </section>
+              </Show>
             </>
           </Match>
         </Switch>
       </div>
 
       <Show when={ctxMenu()}>
-        {(menu) => {
-          const item = () => menu().item;
-          const isLogin = () => item().itemType === 'login';
-          return (
-            <>
-              <div
-                class="vault-menu-backdrop"
-                onClick={closeCtxMenu}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  closeCtxMenu();
-                }}
-              />
-              <div
-                class="vault-ctx"
-                role="menu"
-                style={{ left: menu().x + 'px', top: menu().y + 'px' }}
-              >
-                <div class="vault-ctx-title">{item().name}</div>
-                <div class="vault-ctx-sep" />
-                <Show when={item().username}>
-                  <button
-                    class="vault-ctx-item"
-                    onClick={() => {
-                      closeCtxMenu();
-                      void copy('Username', item().username);
-                    }}
-                  >
-                    <UserRound size={14} /> Copy username
-                  </button>
-                </Show>
-                <Show when={isLogin()}>
-                  <button class="vault-ctx-item" onClick={() => void copyPasswordFor(item())}>
-                    <KeyRound size={14} /> Copy password
-                  </button>
-                </Show>
-                <Show when={item().hasTotp}>
-                  <button class="vault-ctx-item" onClick={() => void copyTotpFor(item())}>
-                    <Timer size={14} /> Copy one-time code
-                  </button>
-                </Show>
-                <Show when={isLogin()}>
-                  <button class="vault-ctx-item" onClick={() => void copyUriFor(item())}>
-                    <Copy size={14} /> Copy website
-                  </button>
-                  <button class="vault-ctx-item" onClick={() => void openSiteFor(item())}>
-                    <ExternalLink size={14} /> Open website
-                  </button>
-                </Show>
-                <div class="vault-ctx-sep" />
-                <Show
-                  when={!inTrash()}
-                  fallback={
-                    <>
-                      <button
-                        class="vault-ctx-item"
-                        onClick={() => {
-                          closeCtxMenu();
-                          void detailRestore(item().id);
-                        }}
-                      >
-                        <RotateCcw size={14} /> Restore
-                      </button>
-                      <button
-                        class="vault-ctx-item danger"
-                        onClick={() => {
-                          closeCtxMenu();
-                          void detailDelete(item().id, true);
-                        }}
-                      >
-                        <Trash2 size={14} /> Delete permanently
-                      </button>
-                    </>
-                  }
-                >
-                  <button class="vault-ctx-item" onClick={() => void rowFavorite(item())}>
-                    <Star size={14} /> {item().favorite ? 'Unfavorite' : 'Favorite'}
-                  </button>
-                  <button class="vault-ctx-item" onClick={() => void rowEdit(item())}>
-                    <Pencil size={14} /> Edit
-                  </button>
-                  <button
-                    class="vault-ctx-item"
-                    onClick={() => {
-                      closeCtxMenu();
-                      void detailClone(item().id);
-                    }}
-                  >
-                    <Copy size={14} /> Clone
-                  </button>
-                  <div class="vault-ctx-sep" />
-                  <button
-                    class="vault-ctx-item danger"
-                    onClick={() => {
-                      closeCtxMenu();
-                      void detailDelete(item().id, false);
-                    }}
-                  >
-                    <Trash2 size={14} /> Move to trash
-                  </button>
-                </Show>
-              </div>
-            </>
-          );
-        }}
+        {(menu) => (
+          <VaultContextMenu
+            menu={menu()}
+            inTrash={filtering.inTrash()}
+            onClose={closeCtxMenu}
+            copyUsername={(item) => void actions.copy('Username', item.username)}
+            copyPasswordFor={(item) => void actions.copyPasswordFor(item)}
+            copyTotpFor={(item) => void actions.copyTotpFor(item)}
+            copyUriFor={(item) => void actions.copyUriFor(item)}
+            openSiteFor={(item) => void actions.openSiteFor(item)}
+            rowFavorite={(item) => void actions.rowFavorite(item)}
+            rowEdit={(item) => void actions.rowEdit(item)}
+            detailClone={(id) => void actions.detailClone(id)}
+            detailDelete={(id, permanent) => void actions.detailDelete(id, permanent)}
+            detailRestore={(id) => void actions.detailRestore(id)}
+          />
+        )}
       </Show>
 
-      <CommandPalette
-        open={paletteOpen()}
-        onClose={() => setPaletteOpen(false)}
-        commands={commands()}
-      />
+      <CommandPalette open={paletteOpen()} onClose={() => setPaletteOpen(false)} commands={commands.commands()} />
     </div>
   );
 }
-
-function FilterButton(props: {
-  label: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  icon: any;
-  active: boolean;
-  onClick: () => void;
-  // Optional trailing element (e.g. the security audit badge).
-  badge?: JSX.Element;
-}) {
-  const Icon = props.icon;
-  return (
-    <button
-      class="vault-rail-btn"
-      classList={{ active: props.active }}
-      title={props.label}
-      onClick={() => props.onClick()}
-    >
-      <Icon size={15} strokeWidth={1.6} />
-      <span>{props.label}</span>
-      {props.badge}
-    </button>
-  );
-}
-
-// Rail-band → token colour. Mirrors SecurityCenter's bandColor so the badge and
-// the Security center's score read the same severity.
-function railBandColor(band: HealthBand): string {
-  switch (band) {
-    case 'critical':
-    case 'poor':
-      return 'var(--destructive)';
-    case 'fair':
-      return 'var(--warning)';
-    case 'good':
-      return 'var(--primary)';
-    case 'excellent':
-      return 'var(--success)';
-  }
-}
-
-// Compact overview of the offline vault-health audit, shown on the Security rail
-// item: the count of at-risk items (a check when clean), tinted by health band.
-// Hidden until the first audit completes. Collapses to a coloured dot when the
-// rail is collapsed (styled in Vault.css).
-function SecurityRailBadge(props: { report: VaultHealthReport | null }) {
-  return (
-    <Show when={props.report}>
-      {(r) => {
-        const count = () => r().atRisk.length;
-        const color = () => railBandColor(r().band);
-        const title = () =>
-          `Security score ${r().score}/100 · ${count()} at-risk item${count() === 1 ? '' : 's'}`;
-        return (
-          <span
-            class="vault-rail-badge"
-            classList={{ clean: count() === 0 }}
-            style={{ color: color(), 'border-color': color() }}
-            title={title()}
-          >
-            <Show when={count() > 0} fallback={<Check size={11} strokeWidth={3} />}>
-              {count()}
-            </Show>
-          </span>
-        );
-      }}
-    </Show>
-  );
-}
-
-function Field(props: { label: string; value: string | null; onCopy: () => void }) {
-  return (
-    <div class="detail-field">
-      <label>{props.label}</label>
-      <div class="detail-value-row">
-        <span class="detail-value truncate">{props.value}</span>
-        <button class="ghost icon-btn" title="Copy" onClick={() => props.onCopy()}>
-          <Copy size={14} />
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// Masked value with a per-field reveal toggle (card number/CVV, SSH private key).
-function SecretField(props: { label: string; value: string | null; onCopy: () => void }) {
-  const [show, setShow] = createSignal(false);
-  return (
-    <div class="detail-field">
-      <label>{props.label}</label>
-      <div class="detail-value-row">
-        <code class="detail-value mono">{show() ? props.value : '••••••••••••'}</code>
-        <button
-          class="ghost icon-btn"
-          title={show() ? 'Hide' : 'Reveal'}
-          onClick={() => setShow(!show())}
-        >
-          {show() ? <EyeOff size={14} /> : <Eye size={14} />}
-        </button>
-        <button class="ghost icon-btn" title="Copy" onClick={() => props.onCopy()}>
-          <Copy size={14} />
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// Read-only card "face" for the detail pane: brand, masked number, holder, expiry.
-function CardVisual(props: { card: CardInput; onCopy: (label: string, value: string | null) => void }) {
-  const [revealed, setRevealed] = createSignal(false);
-  const brand = () => props.card.brand || detectCardBrand(props.card.number ?? '') || 'Card';
-  const number = () => props.card.number ?? '';
-  const numberText = () =>
-    number()
-      ? revealed()
-        ? formatCardNumber(number(), brand())
-        : maskCardNumber(number())
-      : '•••• •••• •••• ••••';
-  return (
-    <div class="card-visual">
-      <div class="card-visual-top">
-        <CreditCard size={22} strokeWidth={1.5} />
-        <span class="card-visual-brand">{brand()}</span>
-      </div>
-      <div class="card-visual-number-row">
-        <span class="card-visual-number mono">{numberText()}</span>
-        <Show when={number()}>
-          <button
-            class="ghost icon-btn"
-            title={revealed() ? 'Hide' : 'Reveal'}
-            onClick={() => setRevealed(!revealed())}
-          >
-            {revealed() ? <EyeOff size={14} /> : <Eye size={14} />}
-          </button>
-          <button
-            class="ghost icon-btn"
-            title="Copy number"
-            onClick={() => props.onCopy('Number', number())}
-          >
-            <Copy size={14} />
-          </button>
-        </Show>
-      </div>
-      <div class="card-visual-bottom">
-        <div class="card-visual-meta">
-          <span class="card-visual-cap">Cardholder</span>
-          <span class="card-visual-val">{props.card.cardholderName || '—'}</span>
-        </div>
-        <Show when={props.card.expMonth || props.card.expYear}>
-          <div class="card-visual-meta">
-            <span class="card-visual-cap">Expires</span>
-            <span class="card-visual-val">{cardExpiry(props.card)}</span>
-          </div>
-        </Show>
-        <Show when={props.card.code}>
-          <div class="card-visual-meta">
-            <span class="card-visual-cap">CVV</span>
-            <span class="card-visual-cvv">
-              <span class="card-visual-val">{revealed() ? props.card.code : '•••'}</span>
-              <button
-                class="ghost icon-btn"
-                title="Copy code"
-                onClick={() => props.onCopy('Security code', props.card.code)}
-              >
-                <Copy size={12} />
-              </button>
-            </span>
-          </div>
-        </Show>
-      </div>
-    </div>
-  );
-}
-
-// One custom field, rendered by its type: boolean as an on/off chip, hidden as a
-// masked secret, linked as its resolved target value (masked if secret), text as
-// a plain copyable row.
-function CustomFieldView(props: {
-  field: CustomField;
-  detail: ItemDetail;
-  onCopy: (label: string, value: string | null) => void;
-}) {
-  const f = () => props.field;
-  const label = () => f().name ?? 'Field';
-  return (
-    <Switch
-      fallback={
-        <Field label={label()} value={f().value} onCopy={() => props.onCopy(label(), f().value)} />
-      }
-    >
-      <Match when={f().fieldType === 'boolean'}>
-        <div class="detail-field">
-          <label>{label()}</label>
-          <div class="detail-bool" classList={{ on: f().value === 'true' }}>
-            <Show when={f().value === 'true'} fallback={<span>Off</span>}>
-              <Check size={14} strokeWidth={2.25} /> On
-            </Show>
-          </div>
-        </div>
-      </Match>
-      <Match when={f().fieldType === 'hidden'}>
-        <SecretField label={label()} value={f().value} onCopy={() => props.onCopy(label(), f().value)} />
-      </Match>
-      <Match when={f().fieldType === 'linked'}>
-        {(() => {
-          const target = linkedLabel(f().linkedId);
-          const value = resolveLinkedValue(props.detail, f().linkedId);
-          const lbl = `${label()} → ${target}`;
-          if (value === null) {
-            return (
-              <div class="detail-field">
-                <label>
-                  <LinkIcon size={11} strokeWidth={2} /> {lbl}
-                </label>
-                <div class="detail-value-row">
-                  <span class="detail-value muted">Linked field (empty)</span>
-                </div>
-              </div>
-            );
-          }
-          if (isLinkedSecret(f().linkedId)) {
-            return <SecretField label={lbl} value={value} onCopy={() => props.onCopy(label(), value)} />;
-          }
-          return (
-            <div class="detail-field">
-              <label>
-                <LinkIcon size={11} strokeWidth={2} /> {lbl}
-              </label>
-              <div class="detail-value-row">
-                <span class="detail-value truncate">{value}</span>
-                <button class="ghost icon-btn" title="Copy" onClick={() => props.onCopy(label(), value)}>
-                  <Copy size={14} />
-                </button>
-              </div>
-            </div>
-          );
-        })()}
-      </Match>
-    </Switch>
-  );
-}
-

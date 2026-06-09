@@ -15,352 +15,55 @@
 // than one connection has folders we group the tree under a per-connection
 // header. Selection always filters by the (globally unique) folderId; every
 // management action routes to the folder's owning account.
+//
+// This file is a thin orchestrator: pure tree-shaping lives in ../lib/folderTree.ts,
+// all stateful behavior in ../hooks/useFolderTree.ts, and row/sub-tree rendering in
+// ./folders/FolderNode.tsx. It only wires those together and renders the chrome
+// (headers, the "No folder" row, the context menu, the delete confirmation).
 
-import { createSignal, For, Show } from 'solid-js';
+import { For, Show } from 'solid-js';
 import {
   ArrowUpToLine,
-  Check,
-  ChevronDown,
-  ChevronRight,
   Folder as FolderIcon,
   FolderInput,
-  FolderOpen,
   FolderPlus,
   Pencil,
   Trash2,
-  X,
 } from 'lucide-solid';
-import type { Folder, VaultItem } from '../lib/types.ts';
-import type { VaultFilter } from '../lib/search.ts';
-import {
-  deletePlan,
-  type DeletePlan,
-  isPlanError,
-  isSelfOrDescendant,
-  leafName,
-  planCreate,
-  planRename,
-  planReparent,
-  type RealFolder,
-  realFolders,
-  segments,
-} from '../lib/folders.ts';
-import { pushToast } from '../state/toast.ts';
+import { leafName, segments } from '../lib/folders.ts';
+import { EditRow, FolderNode } from './folders/FolderNode.tsx';
+import { buildTree } from '../lib/folderTree.ts';
+import { type FolderTreeProps, useFolderTree } from '../hooks/useFolderTree.ts';
 import './FolderTree.css';
 
-interface Node {
-  /** Leaf segment shown on the row. */
-  name: string;
-  /** Full folder-name path (e.g. "Work/Email") — the management key. */
-  fullName: string;
-  /** Owning connection — every management action routes here. */
-  accountEmail: string;
-  /** Unique key for expand state (namespaced per account). */
-  path: string;
-  /** Set when an actual folder exists at this exact path; null for a group. */
-  folderId: string | null;
-  children: Node[];
-}
-
-function buildTree(folders: Folder[], account: string, keyPrefix = ''): Node[] {
-  const root: Node[] = [];
-  const index = new Map<string, Node>();
-  const sorted = folders
-    .slice()
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
-  for (const f of sorted) {
-    const parts = segments(f.name);
-    if (!parts.length) continue;
-    let fullName = '';
-    let key = keyPrefix;
-    let siblings = root;
-    let node: Node | undefined;
-    for (const part of parts) {
-      fullName = fullName ? `${fullName}/${part}` : part;
-      key = key ? `${key}/${part}` : part;
-      node = index.get(key);
-      if (!node) {
-        node = { name: part, fullName, accountEmail: account, path: key, folderId: null, children: [] };
-        index.set(key, node);
-        siblings.push(node);
-      }
-      siblings = node.children;
-    }
-    if (node) node.folderId = f.id;
-  }
-  return root;
-}
-
-// What the inline name input is for: a top-level create in an account, a child
-// create under a node, or a rename of a node.
-type Editing =
-  | { kind: 'create-top'; account: string }
-  | { kind: 'create-child'; node: Node }
-  | { kind: 'rename'; node: Node };
-
-// Shared interaction context handed to every (recursive) FolderNode.
-interface TreeCtx {
-  isExpanded: (path: string) => boolean;
-  toggle: (path: string) => void;
-  expand: (path: string) => void;
-  isActive: (folderId: string | null) => boolean;
-  onSelect: (f: VaultFilter) => void;
-  editing: () => Editing | null;
-  editValue: () => string;
-  setEditValue: (v: string) => void;
-  beginRename: (node: Node) => void;
-  beginCreateChild: (node: Node) => void;
-  submitEdit: () => void;
-  cancelEdit: () => void;
-  openMenu: (node: Node, x: number, y: number) => void;
-  // drag-and-drop
-  dragId: () => string | null;
-  dropKey: () => string | null;
-  startDrag: (node: Node) => void;
-  endDrag: () => void;
-  tryDragOver: (node: Node, e: DragEvent) => void;
-  clearDropTarget: (key: string) => void;
-  drop: (node: Node) => void;
-}
-
-export default function FolderTree(props: {
-  folders: Folder[];
-  items: VaultItem[];
-  active: VaultFilter;
-  onSelect: (f: VaultFilter) => void;
-  onCreate: (account: string, fullName: string) => void;
-  onRename: (account: string, renames: { id: string; newName: string }[]) => void;
-  onMove: (account: string, renames: { id: string; newName: string }[]) => void;
-  onDelete: (account: string, folderIds: string[], itemIds: string[]) => void;
-  /** Account a top-level "New folder" targets when no folders exist yet. */
-  defaultAccount: string;
-}) {
-  const real = () => realFolders(props.folders);
-  // Distinct owning connections (by email — the server label can repeat).
-  const accounts = () => {
-    const seen = new Map<string, string>();
-    for (const f of real()) if (!seen.has(f.accountEmail)) seen.set(f.accountEmail, f.accountLabel);
-    return [...seen.entries()]
-      .map(([email, label]) => ({ email, label }))
-      .sort((a, b) => a.email.localeCompare(b.email));
-  };
-  const multi = () => accounts().length > 1;
-  const soleAccount = () => real()[0]?.accountEmail ?? '';
-  // Account a single-mode "New folder" targets: the sole account that owns folders,
-  // or the caller's default when the vault has no folders yet.
-  const createAccountFor = () => soleAccount() || props.defaultAccount;
-
-  const folderById = (id: string): RealFolder | undefined => real().find((f) => f.id === id);
-
-  const [expanded, setExpanded] = createSignal<Set<string>>(new Set());
-  const isExpanded = (path: string) => expanded().has(path);
-  function toggle(path: string) {
-    const next = new Set(expanded());
-    if (next.has(path)) next.delete(path);
-    else next.add(path);
-    setExpanded(next);
-  }
-  function expand(path: string) {
-    if (expanded().has(path)) return;
-    const next = new Set(expanded());
-    next.add(path);
-    setExpanded(next);
-  }
-  const isActive = (folderId: string | null) =>
-    props.active.kind === 'folder' && props.active.folderId === folderId;
-
-  // ---- inline name editing (create / rename) ----
-  const [editing, setEditing] = createSignal<Editing | null>(null);
-  const [editValue, setEditValue] = createSignal('');
-  const cancelEdit = () => {
-    setEditing(null);
-    setEditValue('');
-  };
-  function beginCreateTop(account: string) {
-    setEditValue('');
-    setEditing({ kind: 'create-top', account });
-  }
-  function beginCreateChild(node: Node) {
-    expand(node.path);
-    setEditValue('');
-    setEditing({ kind: 'create-child', node });
-  }
-  function beginRename(node: Node) {
-    setEditValue(node.name);
-    setEditing({ kind: 'rename', node });
-  }
-  function submitEdit() {
-    const e = editing();
-    if (!e) return;
-    const value = editValue();
-    cancelEdit();
-    if (e.kind === 'create-top') {
-      runCreate(e.account, null, value);
-    } else if (e.kind === 'create-child') {
-      // The parent may be a real folder or a group header; planCreate only needs
-      // its name + account, both of which the node carries.
-      const parent: Folder = {
-        id: e.node.folderId,
-        name: e.node.fullName,
-        accountEmail: e.node.accountEmail,
-        accountLabel: '',
-      };
-      runCreate(e.node.accountEmail, parent, value);
-    } else {
-      const folder = e.node.folderId ? folderById(e.node.folderId) : undefined;
-      if (!folder) return;
-      const plan = planRename(props.folders, folder, value);
-      if (isPlanError(plan)) {
-        pushToast('error', plan.error);
-        return;
-      }
-      if (plan.renames.length) props.onRename(folder.accountEmail, plan.renames);
-    }
-  }
-  function runCreate(account: string, parent: Folder | null, name: string) {
-    if (!name.trim()) return;
-    const plan = planCreate(props.folders, account, parent, name);
-    if (isPlanError(plan)) {
-      pushToast('error', plan.error);
-      return;
-    }
-    props.onCreate(account, plan.name);
-  }
-
-  // ---- context menu ----
-  const [menu, setMenu] = createSignal<{ node: Node; x: number; y: number } | null>(null);
-  const [menuMode, setMenuMode] = createSignal<'main' | 'move'>('main');
-  function openMenu(node: Node, x: number, y: number) {
-    const MENU_W = 210;
-    const MENU_H = 260;
-    setMenu({
-      node,
-      x: Math.max(8, Math.min(x, window.innerWidth - MENU_W)),
-      y: Math.max(8, Math.min(y, window.innerHeight - MENU_H)),
-    });
-    setMenuMode('main');
-  }
-  const closeMenu = () => setMenu(null);
-
-  // Candidate parents for "Move to…": same-account real folders that aren't the
-  // folder itself or inside its own subtree (a cycle).
-  function moveTargets(folder: RealFolder): RealFolder[] {
-    return real()
-      .filter((f) => f.accountEmail === folder.accountEmail && !isSelfOrDescendant(f, folder))
-      .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
-  }
-
-  function doMove(folder: RealFolder, target: Folder | null) {
-    closeMenu();
-    const plan = planReparent(props.folders, folder, target);
-    if (isPlanError(plan)) {
-      pushToast('error', plan.error);
-      return;
-    }
-    if (plan.renames.length) props.onMove(folder.accountEmail, plan.renames);
-  }
-
-  // ---- delete confirmation ----
-  const [confirm, setConfirm] = createSignal<{ folder: RealFolder; plan: DeletePlan } | null>(null);
-  function askDelete(node: Node) {
-    closeMenu();
-    if (!node.folderId) return;
-    const folder = folderById(node.folderId);
-    if (!folder) return;
-    setConfirm({ folder, plan: deletePlan(props.folders, props.items, folder) });
-  }
-  function confirmDelete() {
-    const c = confirm();
-    setConfirm(null);
-    if (!c) return;
-    props.onDelete(c.folder.accountEmail, c.plan.folderIds, c.plan.itemIds);
-  }
-
-  // ---- drag-and-drop (re-parent) ----
-  const [dragId, setDragId] = createSignal<string | null>(null);
-  const [dropKey, setDropKey] = createSignal<string | null>(null);
-  const startDrag = (node: Node) => node.folderId && setDragId(node.folderId);
-  const endDrag = () => {
-    setDragId(null);
-    setDropKey(null);
-  };
-  // A drag is valid onto a real folder in the same account that isn't the dragged
-  // folder or one of its descendants. `null` target = the top-level drop zone.
-  function canDrop(target: Folder | null): boolean {
-    const id = dragId();
-    if (!id) return false;
-    const dragged = folderById(id);
-    if (!dragged) return false;
-    if (!target) return segments(dragged.name).length > 1; // already top-level → no-op
-    return target.accountEmail === dragged.accountEmail && !isSelfOrDescendant(target, dragged);
-  }
-  function tryDragOver(node: Node, e: DragEvent) {
-    if (!node.folderId) return;
-    const target = folderById(node.folderId);
-    if (target && canDrop(target)) {
-      e.preventDefault();
-      if (dropKey() !== node.path) setDropKey(node.path);
-    }
-  }
-  function clearDropTarget(key: string) {
-    if (dropKey() === key) setDropKey(null);
-  }
-  function drop(node: Node) {
-    const id = dragId();
-    const target = node.folderId ? folderById(node.folderId) : undefined;
-    endDrag();
-    if (!id || !target) return;
-    const dragged = folderById(id);
-    if (dragged) doMove(dragged, target);
-  }
-  function dropTop(account: string) {
-    const id = dragId();
-    endDrag();
-    if (!id) return;
-    const dragged = folderById(id);
-    if (dragged && dragged.accountEmail === account) doMove(dragged, null);
-  }
-
-  const ctx: TreeCtx = {
-    isExpanded,
-    toggle,
-    expand,
+export default function FolderTree(props: FolderTreeProps) {
+  const tree = useFolderTree(props);
+  const {
+    real,
+    accounts,
+    multi,
+    createAccountFor,
+    folderById,
     isActive,
-    onSelect: props.onSelect,
     editing,
-    editValue,
-    setEditValue,
-    beginRename,
+    beginCreateTop,
     beginCreateChild,
-    submitEdit,
-    cancelEdit,
-    openMenu,
-    dragId,
+    beginRename,
+    menu,
+    menuMode,
+    setMenuMode,
+    closeMenu,
+    moveTargets,
+    doMove,
+    askDelete,
+    confirm,
+    setConfirm,
+    confirmDelete,
     dropKey,
-    startDrag,
-    endDrag,
-    tryDragOver,
-    clearDropTarget,
-    drop,
-  };
-
-  // The top-level drop zone + a "New folder" affordance live on the "Folders"
-  // header (single account) or each per-account header (multi). Returns the drag
-  // handlers only — the highlight `classList` is inlined on the element so it
-  // stays reactive (a spread object would be evaluated once).
-  const topDropKey = (account: string) => `top:${account}`;
-  function topZoneHandlers(account: string) {
-    return {
-      onDragOver: (e: DragEvent) => {
-        if (canDrop(null) && folderById(dragId() ?? '')?.accountEmail === account) {
-          e.preventDefault();
-          setDropKey(topDropKey(account));
-        }
-      },
-      onDragLeave: () => clearDropTarget(topDropKey(account)),
-      onDrop: () => dropTop(account),
-    };
-  }
+    topDropKey,
+    topZoneHandlers,
+    ctx,
+  } = tree;
 
   return (
     <Show when={real().length > 0 || createAccountFor()}>
@@ -561,142 +264,5 @@ export default function FolderTree(props: {
         )}
       </Show>
     </Show>
-  );
-}
-
-// An inline name input used for create + rename. Submits on Enter, cancels on
-// Escape or blur.
-function EditRow(props: { ctx: TreeCtx; depth: number; placeholder: string }) {
-  const pad = () => `${9 + props.depth * 14}px`;
-  return (
-    <div class="folder-edit-row" style={{ 'padding-left': pad() }}>
-      <span class="folder-twist" />
-      <FolderIcon size={14} strokeWidth={1.6} />
-      <input
-        ref={(el) => queueMicrotask(() => el.focus())}
-        class="folder-edit-input"
-        placeholder={props.placeholder}
-        value={props.ctx.editValue()}
-        onInput={(e) => props.ctx.setEditValue(e.currentTarget.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            props.ctx.submitEdit();
-          } else if (e.key === 'Escape') {
-            e.preventDefault();
-            props.ctx.cancelEdit();
-          }
-        }}
-        onBlur={() => props.ctx.cancelEdit()}
-      />
-      <button
-        class="folder-edit-confirm"
-        title="Save"
-        // mousedown (not click) so it fires before the input's blur cancels.
-        onMouseDown={(e) => {
-          e.preventDefault();
-          props.ctx.submitEdit();
-        }}
-      >
-        <Check size={13} strokeWidth={2} />
-      </button>
-      <button
-        class="folder-edit-cancel"
-        title="Cancel"
-        onMouseDown={(e) => {
-          e.preventDefault();
-          props.ctx.cancelEdit();
-        }}
-      >
-        <X size={13} strokeWidth={2} />
-      </button>
-    </div>
-  );
-}
-
-function FolderNode(props: { node: Node; depth: number; ctx: TreeCtx }) {
-  const ctx = props.ctx;
-  const hasChildren = () => props.node.children.length > 0;
-  const selectable = () => props.node.folderId !== null;
-  const open = () => ctx.isExpanded(props.node.path);
-  const pad = () => `${9 + props.depth * 14}px`;
-  const renaming = () => {
-    const e = ctx.editing();
-    return e?.kind === 'rename' && e.node.path === props.node.path;
-  };
-  const creatingChild = () => {
-    const e = ctx.editing();
-    return e?.kind === 'create-child' && e.node.path === props.node.path;
-  };
-
-  function onClick() {
-    if (selectable()) ctx.onSelect({ kind: 'folder', folderId: props.node.folderId });
-    else if (hasChildren()) ctx.toggle(props.node.path);
-  }
-
-  return (
-    <>
-      <Show
-        when={!renaming()}
-        fallback={<EditRow ctx={ctx} depth={props.depth} placeholder="Folder name" />}
-      >
-        <button
-          class="folder-row"
-          classList={{
-            active: ctx.isActive(props.node.folderId),
-            'drop-target': ctx.dropKey() === props.node.path,
-            dragging: ctx.dragId() !== null && ctx.dragId() === props.node.folderId,
-          }}
-          style={{ 'padding-left': pad() }}
-          draggable={selectable()}
-          onClick={onClick}
-          onContextMenu={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            ctx.openMenu(props.node, e.clientX, e.clientY);
-          }}
-          onDragStart={(e) => {
-            if (!selectable()) return;
-            e.dataTransfer?.setData('text/plain', props.node.folderId ?? '');
-            ctx.startDrag(props.node);
-          }}
-          onDragEnd={() => ctx.endDrag()}
-          onDragOver={(e) => ctx.tryDragOver(props.node, e)}
-          onDragLeave={() => ctx.clearDropTarget(props.node.path)}
-          onDrop={(e) => {
-            e.preventDefault();
-            ctx.drop(props.node);
-          }}
-        >
-          <span
-            class="folder-twist"
-            onClick={(e) => {
-              if (hasChildren()) {
-                e.stopPropagation();
-                ctx.toggle(props.node.path);
-              }
-            }}
-          >
-            <Show when={hasChildren()}>
-              <Show when={open()} fallback={<ChevronRight size={13} strokeWidth={1.6} />}>
-                <ChevronDown size={13} strokeWidth={1.6} />
-              </Show>
-            </Show>
-          </span>
-          <Show when={open() && hasChildren()} fallback={<FolderIcon size={14} strokeWidth={1.6} />}>
-            <FolderOpen size={14} strokeWidth={1.6} />
-          </Show>
-          <span class="folder-name">{props.node.name}</span>
-        </button>
-      </Show>
-      <Show when={open() || creatingChild()}>
-        <Show when={creatingChild()}>
-          <EditRow ctx={ctx} depth={props.depth + 1} placeholder="Subfolder name" />
-        </Show>
-        <For each={props.node.children}>
-          {(child) => <FolderNode node={child} depth={props.depth + 1} ctx={ctx} />}
-        </For>
-      </Show>
-    </>
   );
 }
