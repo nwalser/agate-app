@@ -66,7 +66,6 @@ export default function FolderTree(props: FolderTreeProps) {
 
   return (
     <Show when={real().length > 0 || createAccountFor()}>
-      <div class="vault-rail-sep" />
       <Show when={!multi()}>
         <div
           class="folder-tree-head"

@@ -14,7 +14,7 @@ describe('audit settings', () => {
     await domClickByTitle('Audits');
     await $('.audit-check').waitForExist({ timeout: TIMEOUT.normal });
     expect(await $$('.audit-check').length).to.be.greaterThan(3);
-    expect(await $$('.audit-switch').length).to.be.greaterThan(3);
+    expect(await $$('.audit-check .setting-switch').length).to.be.greaterThan(3);
   });
 
   it('toggles a check off', async () => {
@@ -23,11 +23,11 @@ describe('audit settings', () => {
     await $('.audit-check').waitForExist({ timeout: TIMEOUT.normal });
     // The config persists in localStorage across spec relaunches, so normalize to
     // defaults first — otherwise a prior run's toggle leaks into these assertions.
-    await $('.audit-reset').click();
-    const firstSwitch = await $('.audit-switch');
+    await $('.setting-reset').click();
+    const firstSwitch = await $('.audit-check .setting-switch');
     expect(await firstSwitch.getAttribute('aria-checked')).to.equal('true');
-    // Reused is on by default → its threshold select is shown.
-    expect(await $('.audit-threshold select').isExisting()).to.equal(true);
+    // Reused is on by default → its threshold picker is shown.
+    expect(await $('.audit-check .setting-select').isExisting()).to.equal(true);
     await firstSwitch.click();
     expect(await firstSwitch.getAttribute('aria-checked')).to.equal('false');
   });

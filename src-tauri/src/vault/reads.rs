@@ -30,6 +30,11 @@ use crate::state::AppState;
 
 use super::transform::{view_to_detail, view_to_list_item};
 
+/// One connection's freshly-synced material: (account email, ciphers, folders,
+/// collections). Aliased so the sync aggregation type stays readable (clippy
+/// `type_complexity`).
+type SyncedConnection = (String, Vec<Cipher>, Vec<VaultFolder>, Vec<VaultCollection>);
+
 /// A fresh handle to one connection's unlocked client, or a typed error.
 pub(crate) async fn client_for(state: &AppState, account_email: &str) -> AgateResult<PasswordManagerClient> {
     state
@@ -80,7 +85,7 @@ pub async fn sync(state: &AppState, force: bool) -> AgateResult<()> {
         return Err(AgateError::not_authenticated());
     }
 
-    let mut results: Vec<(String, Vec<Cipher>, Vec<VaultFolder>, Vec<VaultCollection>)> = Vec::new();
+    let mut results: Vec<SyncedConnection> = Vec::new();
     let mut first_err: Option<AgateError> = None;
     let mut any_ok = false;
     for (email, client) in clients {
@@ -261,10 +266,11 @@ pub async fn item_detail(state: &AppState, account_email: &str, id: &str) -> Aga
     let label = label_for(&label_map(state).await, account_email);
     let mut detail = view_to_detail(&view, account_email, &label);
 
-    // Passkey metadata is decrypted separately (the SDK keeps it sealed on the
-    // CipherView). Best-effort: an item with no passkeys simply yields none.
+    // Passkey metadata is decrypted from the view via a key-store context
+    // (`decrypt_fido2_credentials` is a method on `CipherView`, not `Cipher`).
+    // Best-effort: an item with no passkeys simply yields none.
     let mut ctx = key_store.context();
-    match cipher.decrypt_fido2_credentials(&mut ctx) {
+    match view.decrypt_fido2_credentials(&mut ctx) {
         Ok(creds) => detail.passkeys = creds.into_iter().map(passkey_to_dto).collect(),
         Err(e) => log::warn!("passkey decrypt failed: {e}"),
     }
@@ -371,22 +377,15 @@ pub async fn list_folders(state: &AppState) -> AgateResult<Vec<Folder>> {
 /// `list_folders`: decrypts from each connection's cached collections.
 pub async fn list_collections(state: &AppState) -> AgateResult<Vec<Collection>> {
     let labels = label_map(state).await;
-    let snapshot: Vec<(String, PasswordManagerClient, Vec<VaultCollection>)> = {
-        let session = state.session.lock().await;
-        session
-            .connections
-            .iter()
-            .map(|(email, c)| {
-                (email.clone(), PasswordManagerClient(c.client.0.clone()), c.collections.clone())
-            })
-            .collect()
-    };
-
+    // `Collection` (the SDK type) isn't `Clone`, so we can't snapshot it out of the
+    // lock like folders/ciphers. Collections are few; decrypt them by reference
+    // while holding the lock (no `.await` inside, so this is cheap + safe).
+    let session = state.session.lock().await;
     let mut out = Vec::new();
-    for (email, client, collections) in snapshot {
-        let label = label_for(&labels, &email);
-        let key_store = client.0.internal.get_key_store();
-        for collection in &collections {
+    for (email, conn) in session.connections.iter() {
+        let label = label_for(&labels, email);
+        let key_store = conn.client.0.internal.get_key_store();
+        for collection in &conn.collections {
             let decrypted: Result<CollectionView, _> = key_store.decrypt(collection);
             match decrypted {
                 Ok(view) => out.push(Collection {

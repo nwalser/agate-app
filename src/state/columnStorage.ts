@@ -13,6 +13,7 @@ import {
   STORAGE_KEY,
   type ColumnConfig,
   type ColumnSpec,
+  type DisplayMode,
   type GroupKey,
 } from './columnConfig.ts';
 
@@ -38,6 +39,7 @@ export function applyColumnConfig(cfg: ColumnConfig) {
     favicons: cfg.favicons,
     widths: { ...cfg.widths },
     groupBy: cfg.groupBy,
+    displayMode: cfg.displayMode,
   });
 }
 
@@ -113,6 +115,7 @@ export function resetColumns() {
     favicons: DEFAULT.favicons,
     widths: {},
     groupBy: null,
+    displayMode: DEFAULT.displayMode,
   });
 }
 
@@ -137,4 +140,9 @@ export function setFavicons(on: boolean) {
 /** Group rows under header rows by a column's value, or null for a flat list. */
 export function setGroupBy(key: GroupKey | null) {
   persist({ ...columns(), groupBy: key });
+}
+
+/** Switch the list layout (column table ↔ compact single-line list). */
+export function setDisplayMode(mode: DisplayMode) {
+  persist({ ...columns(), displayMode: mode });
 }

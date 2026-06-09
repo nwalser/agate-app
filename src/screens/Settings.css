@@ -26,14 +26,16 @@
   /* Anchors the absolutely-positioned SidebarResizer at the sub-nav seam. */
   position: relative;
 }
+/* Mirrors the vault rail (.vault-rail) exactly so both sidebars are identical
+   everywhere: same width var, padding, and gap. */
 .settings-nav {
   width: var(--sidebar-width);
   flex-shrink: 0;
   border-right: 1px solid var(--border);
-  padding: 10px 8px;
+  padding: 8px 6px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
   overflow-y: auto;
 }
 .settings-nav-search {
@@ -90,6 +92,19 @@
   font-size: 11px;
 }
 
+/* Section label that splits the nav into Vault (per-connection) vs Global pages. */
+.settings-nav-group {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--subtle-foreground);
+  padding: 10px 9px 4px;
+}
+.settings-nav-group:first-of-type {
+  padding-top: 4px;
+}
+
 .settings-nav-item {
   display: flex;
   align-items: center;
@@ -99,7 +114,7 @@
   border: none;
   background: transparent;
   border-radius: var(--radius-sm);
-  padding: 8px 10px;
+  padding: 7px 9px;
   color: var(--muted-foreground);
   font-size: 12.5px;
 }
@@ -233,36 +248,6 @@ input[type='range'] {
   accent-color: var(--primary);
 }
 
-.theme-options {
-  display: flex;
-  gap: 8px;
-}
-.theme-option {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  padding: 12px 8px;
-  font-size: 12px;
-  color: var(--muted-foreground);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-}
-.theme-option:hover {
-  color: var(--foreground);
-  border-color: var(--border-strong);
-}
-.theme-option.active {
-  color: var(--primary);
-  border-color: var(--primary);
-  font-weight: 600;
-}
-.theme-option svg {
-  color: inherit;
-}
-
 /* Device-binding toggle in the App unlock section. */
 .settings-bind {
   margin: 4px 0 6px;
@@ -311,6 +296,11 @@ input[type='range'] {
 }
 .settings-method-state.on {
   color: var(--success);
+}
+/* Status pill pinned to the right of an unlock-method section header. */
+.settings-section h3 .settings-h3-state {
+  margin-left: auto;
+  letter-spacing: 0;
 }
 
 /* About page. */

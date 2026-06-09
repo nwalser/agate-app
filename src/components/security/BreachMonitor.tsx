@@ -21,8 +21,8 @@ import {
 } from 'lucide-solid';
 import type { RelevantBreach } from '../../lib/breachAggregation.ts';
 import { darkwebMonitor } from '../../state/security.ts';
-import { darkwebBusy, darkwebReport, darkwebRunAt, relevantBreaches, runDarkwebScan } from '../../state/securityScans.ts';
-import { BreachDetails, DataClassChips, DisabledNotice, lastRun } from './shared.tsx';
+import { darkwebBusy, darkwebReport, relevantBreaches, runDarkwebScan } from '../../state/securityScans.ts';
+import { BreachDetails, DataClassChips, DisabledNotice } from './shared.tsx';
 
 /** A labelled, collapsible-by-emptiness list of emails not in the checked set. */
 function EmailNotice(props: { icon: JSX.Element; title: string; hint: string; emails: string[] }) {
@@ -118,8 +118,6 @@ export default function BreachMonitor() {
       </div>
 
       <Show when={darkwebMonitor()} fallback={<DisabledNotice what="The dark-web monitor" />}>
-        <p class="muted sec-help">{lastRun(darkwebRunAt())}</p>
-
         <Show when={darkwebBusy() && !darkwebReport()}>
           <p class="sec-loading muted">Scanning your accounts for breaches…</p>
         </Show>

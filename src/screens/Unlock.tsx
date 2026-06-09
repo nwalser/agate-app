@@ -186,7 +186,14 @@ export default function Unlock() {
         when={phase() === 'idle'}
         fallback={
           // Dedicated unlocking screen — no password field, just the animation,
-          // progress bar, and rotating status text.
+          // progress bar, and rotating status text. A faint multi-color aurora
+          // weaves behind it across the whole background.
+          <>
+          <div
+            class="unlocking-aurora"
+            classList={{ done: phase() === 'unlocked' }}
+            aria-hidden="true"
+          />
           <div class="unlocking">
             <div
               class="unlocking-icon"
@@ -224,6 +231,7 @@ export default function Unlock() {
               {phase() === 'unlocked' ? 'Opening your vault' : `Unlocking ${connectionLabel()}`}
             </p>
           </div>
+          </>
         }
       >
         <div class="unlock-card">

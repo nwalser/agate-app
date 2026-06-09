@@ -5,7 +5,7 @@
 // parse + reconcile used at the localStorage boundary (no `any`). The live signal
 // and its mutators live in `state/sidebar.ts`.
 
-import { Bookmark, Dices, File, FolderClosed, RefreshCw, Shield, Star, Trash2 } from 'lucide-solid';
+import { AlertTriangle, Bookmark, Dices, File, FolderClosed, RefreshCw, Shield, Star, Trash2 } from 'lucide-solid';
 import type { IconComponent } from './icon.ts';
 import type { ItemType } from './types.ts';
 import type { VaultFilter } from './search.ts';
@@ -33,6 +33,7 @@ export type SidebarBuiltinId =
   | 'folders'
   | 'generator'
   | 'security'
+  | 'atRisk'
   | 'sync';
 
 /** Base filter a saved query carries. A subset of `VaultFilter` — excludes
@@ -41,6 +42,7 @@ export type SavedFilter =
   | { kind: 'all' }
   | { kind: 'favorites' }
   | { kind: 'trash' }
+  | { kind: 'atRisk' }
   | { kind: 'type'; itemType: ItemType };
 
 // Sort snapshot stored in a view (key + direction).
@@ -83,13 +85,22 @@ export interface SidebarConfig {
   hidden: string[];
   /** Definitions backing the `query:*` ids in `order`. */
   queries: CustomQuery[];
+  /** Optional section label per divider id (`divider:*`). A labeled divider renders
+   *  as a section header; an unlabeled one is a plain rule. Absent/blank = unlabeled. */
+  dividerLabels: Record<string, string>;
 }
 
-/** A resolved, renderable rail entry (builtin, a saved query, or a divider line). */
+/** Loose input to `reconcile`: `dividerLabels` is optional so legacy/test callers
+ *  (and stored configs predating labels) need not supply it. */
+export type SidebarConfigInput = Omit<SidebarConfig, 'dividerLabels'> &
+  Partial<Pick<SidebarConfig, 'dividerLabels'>>;
+
+/** A resolved, renderable rail entry (builtin, a saved query, or a divider line —
+ *  carrying its optional section label). */
 export type SidebarEntry =
   | { kind: 'builtin'; id: SidebarBuiltinId }
   | { kind: 'query'; query: CustomQuery }
-  | { kind: 'divider'; id: string };
+  | { kind: 'divider'; id: string; label: string };
 
 /** Prefix for user-added horizontal divider ids (`divider:<uuid>`). A divider has
  *  no backing definition — it exists purely as an id in `order`. */
@@ -110,12 +121,13 @@ export const DEFAULT_ORDER: SidebarBuiltinId[] = [
   'folders',
   'generator',
   'security',
+  'atRisk',
   'sync',
 ];
 
 /** A fresh default config (never share the mutable arrays). */
 export function defaultSidebar(): SidebarConfig {
-  return { order: [...DEFAULT_ORDER], hidden: [], queries: [] };
+  return { order: [...DEFAULT_ORDER], hidden: [], queries: [], dividerLabels: {} };
 }
 
 // Per-type rail entry id ↔ ItemType. Order mirrors TYPE_FILTERS / DEFAULT_ORDER.
@@ -162,12 +174,37 @@ export function entryMeta(id: SidebarBuiltinId): { label: string; icon: IconComp
       return { label: 'Generator', icon: Dices };
     case 'security':
       return { label: 'Security', icon: Shield };
+    case 'atRisk':
+      return { label: 'At risk', icon: AlertTriangle };
     case 'sync':
       return { label: 'Sync', icon: RefreshCw };
     default: {
       const t = TYPE_BY_ID[id];
       return { label: TYPE_LABEL.get(t) ?? t, icon: typeIcon(t) };
     }
+  }
+}
+
+/** Page title + icon for an active vault filter — drives the item-list page
+ *  header (mirrors the Security page's icon + title). Folder pages resolve their
+ *  name through `folderName` (the no-folder bucket has no name → "No folder"). */
+export function filterPageMeta(
+  filter: VaultFilter,
+  folderName: (id: string | null) => string,
+): { label: string; icon: IconComponent } {
+  switch (filter.kind) {
+    case 'all':
+      return entryMeta('all');
+    case 'favorites':
+      return entryMeta('favorites');
+    case 'trash':
+      return entryMeta('trash');
+    case 'atRisk':
+      return entryMeta('atRisk');
+    case 'type':
+      return { label: TYPE_LABEL.get(filter.itemType) ?? filter.itemType, icon: typeIcon(filter.itemType) };
+    case 'folder':
+      return { label: folderName(filter.folderId) || 'No folder', icon: FolderClosed };
   }
 }
 
@@ -183,6 +220,8 @@ export function builtinFilter(id: SidebarBuiltinId): VaultFilter | null {
       return { kind: 'favorites' };
     case 'trash':
       return { kind: 'trash' };
+    case 'atRisk':
+      return { kind: 'atRisk' };
     case 'type:login':
     case 'type:card':
     case 'type:identity':
@@ -213,7 +252,8 @@ export function builtinView(id: SidebarBuiltinId): VaultView | null {
 export function parseSavedFilter(v: unknown): SavedFilter | null {
   if (typeof v !== 'object' || v === null) return null;
   const o = v as Record<string, unknown>;
-  if (o.kind === 'all' || o.kind === 'favorites' || o.kind === 'trash') return { kind: o.kind };
+  if (o.kind === 'all' || o.kind === 'favorites' || o.kind === 'trash' || o.kind === 'atRisk')
+    return { kind: o.kind };
   if (o.kind === 'type' && isItemType(o.itemType)) return { kind: 'type', itemType: o.itemType };
   return null;
 }
@@ -262,12 +302,58 @@ export function parseCustomQuery(v: unknown): CustomQuery | null {
   return { id: o.id, name: o.name, icon, config: { filter, query, columnFilters: {} } };
 }
 
+/** Validate a persisted `dividerLabels` blob: keep only string values (the divider
+ *  id ↔ label map). Non-objects yield an empty map. */
+export function parseDividerLabels(v: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (typeof v !== 'object' || v === null) return out;
+  for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+    if (typeof val === 'string') out[k] = val;
+  }
+  return out;
+}
+
+/**
+ * Resolve a config into the ordered, renderable rail entries: drop hidden ids, map
+ * each id to a builtin / query / divider entry (attaching a divider's optional
+ * section label), and collapse cosmetically-redundant UNLABELED dividers — a
+ * leading one, a trailing one, or one directly after another divider. Labeled
+ * dividers are section headers and are always kept.
+ */
+export function resolveSidebar(cfg: SidebarConfig): SidebarEntry[] {
+  const hidden = new Set(cfg.hidden);
+  const byId = new Map(cfg.queries.map((q) => [q.id, q] as const));
+  const mapped: SidebarEntry[] = [];
+  for (const id of cfg.order) {
+    if (hidden.has(id)) continue;
+    if (isBuiltinId(id)) {
+      mapped.push({ kind: 'builtin', id });
+    } else if (isDividerId(id)) {
+      mapped.push({ kind: 'divider', id, label: (cfg.dividerLabels[id] ?? '').trim() });
+    } else {
+      const q = byId.get(id);
+      if (q) mapped.push({ kind: 'query', query: q });
+    }
+  }
+  const isBareDivider = (e: SidebarEntry | undefined) =>
+    e !== undefined && e.kind === 'divider' && e.label === '';
+  const out: SidebarEntry[] = [];
+  for (const e of mapped) {
+    // Skip an unlabeled divider that is leading or directly follows another divider.
+    if (isBareDivider(e) && (out.length === 0 || out[out.length - 1].kind === 'divider')) continue;
+    out.push(e);
+  }
+  while (isBareDivider(out[out.length - 1])) out.pop(); // drop a trailing bare divider
+  return out;
+}
+
 /**
  * Normalize a config so the rail can render it safely: drop unknown/duplicate
  * ids, append any built-in missing from `order` (future-proofs new builtins),
- * append saved-query ids not yet ordered, and clamp `hidden ⊆ order`.
+ * append saved-query ids not yet ordered, clamp `hidden ⊆ order`, and keep only
+ * divider labels whose (non-empty) divider id survived in `order`.
  */
-export function reconcile(cfg: SidebarConfig): SidebarConfig {
+export function reconcile(cfg: SidebarConfigInput): SidebarConfig {
   const queryIds = new Set(cfg.queries.map((q) => q.id));
   const seen = new Set<string>();
   const order: string[] = [];
@@ -292,7 +378,13 @@ export function reconcile(cfg: SidebarConfig): SidebarConfig {
   }
   const orderSet = new Set(order);
   const hidden = [...new Set(cfg.hidden)].filter((h) => orderSet.has(h));
-  return { order, hidden, queries: cfg.queries };
+  const dividerLabels: Record<string, string> = {};
+  const src = cfg.dividerLabels ?? {};
+  for (const id of order) {
+    const label = src[id];
+    if (isDividerId(id) && typeof label === 'string' && label.trim()) dividerLabels[id] = label;
+  }
+  return { order, hidden, queries: cfg.queries, dividerLabels };
 }
 
 /** Read + validate the persisted config; corrupt/unavailable falls back to default. */
@@ -312,7 +404,8 @@ export function readSidebarConfig(): SidebarConfig {
     const queries = Array.isArray(o.queries)
       ? o.queries.map(parseCustomQuery).filter((x): x is CustomQuery => x !== null)
       : [];
-    return reconcile({ order, hidden, queries });
+    const dividerLabels = parseDividerLabels(o.dividerLabels);
+    return reconcile({ order, hidden, queries, dividerLabels });
   } catch {
     // ignore: corrupt/unavailable config falls back to defaults
     return defaultSidebar();

@@ -17,12 +17,16 @@
 .titlebar-brand {
   display: flex;
   align-items: center;
+  gap: 7px;
   padding: 0 14px;
   font-size: 12.5px;
   font-weight: 600;
   letter-spacing: 0.02em;
   color: var(--muted-foreground);
   flex-shrink: 0;
+}
+.titlebar-brand svg {
+  color: var(--primary);
 }
 
 /* Connection switcher pill, between the brand and the centered search. */

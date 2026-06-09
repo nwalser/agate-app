@@ -17,6 +17,7 @@ import {
   updateConfig,
 } from '../../state/update.ts';
 import { toastError } from '../../state/toast.ts';
+import { ToggleRow } from '../../components/settings/SettingsControls.tsx';
 import './UpdatesSettings.css';
 
 function formatChecked(ts: number | null): string {
@@ -120,14 +121,14 @@ export default function UpdatesSettings() {
           label="Check for updates on launch"
           desc="Look for a newer release each time Agate starts."
           checked={updateConfig().autoCheck}
-          onToggle={(v) => setUpdateOption('autoCheck', v)}
+          onChange={(v) => setUpdateOption('autoCheck', v)}
         />
         <ToggleRow
           label="Download and install automatically"
           desc="When a launch check finds an update, install it and restart without asking."
           checked={updateConfig().autoInstall}
           disabled={!updateConfig().autoCheck}
-          onToggle={(v) => setUpdateOption('autoInstall', v)}
+          onChange={(v) => setUpdateOption('autoInstall', v)}
         />
       </section>
 
@@ -161,35 +162,6 @@ function InfoRow(props: { label: string; value: string }) {
     <div class="update-info-row">
       <dt>{props.label}</dt>
       <dd>{props.value}</dd>
-    </div>
-  );
-}
-
-function ToggleRow(props: {
-  label: string;
-  desc: string;
-  checked: boolean;
-  disabled?: boolean;
-  onToggle: (v: boolean) => void;
-}) {
-  return (
-    <div class="update-opt" classList={{ off: props.disabled }}>
-      <span class="update-opt-text">
-        <span class="update-opt-label">{props.label}</span>
-        <span class="muted update-opt-desc">{props.desc}</span>
-      </span>
-      <button
-        type="button"
-        role="switch"
-        aria-checked={props.checked}
-        aria-label={props.label}
-        class="update-switch"
-        classList={{ on: props.checked }}
-        disabled={props.disabled}
-        onClick={() => props.onToggle(!props.checked)}
-      >
-        <span class="update-switch-knob" />
-      </button>
     </div>
   );
 }

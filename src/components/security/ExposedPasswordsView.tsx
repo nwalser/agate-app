@@ -7,8 +7,8 @@
 import { For, Show } from 'solid-js';
 import { Clock, Globe, RefreshCw, ShieldCheck, ShieldOff } from 'lucide-solid';
 import { exposedCheck } from '../../state/security.ts';
-import { exposedBusy, exposedResults, exposedRunAt, runExposedCheck } from '../../state/securityScans.ts';
-import { DisabledNotice, lastRun } from './shared.tsx';
+import { exposedBusy, exposedResults, runExposedCheck } from '../../state/securityScans.ts';
+import { DisabledNotice } from './shared.tsx';
 
 export default function ExposedPasswordsView(props: { onOpenItem: (id: string) => void }) {
   return (
@@ -22,7 +22,6 @@ export default function ExposedPasswordsView(props: { onOpenItem: (id: string) =
       </div>
 
       <Show when={exposedCheck()} fallback={<DisabledNotice what="The exposed-password check" />}>
-        <p class="muted sec-help">{lastRun(exposedRunAt())}</p>
         <Show when={exposedBusy() && !exposedResults()}>
           <p class="sec-loading muted">Checking against Have I Been Pwned…</p>
         </Show>

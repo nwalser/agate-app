@@ -73,4 +73,23 @@ describe('groupOf', () => {
       id: 's:na',
     });
   });
+
+  it('groups by name initial, bucketing digits/symbols and empty names', () => {
+    expect(groupOf(item({ name: 'apple' }), 'name', ctx())).toMatchObject({ id: 'n:A', label: 'A', rank: 0 });
+    expect(groupOf(item({ name: '7-Zip' }), 'name', ctx())).toMatchObject({ id: 'n:#', label: '#', rank: 0 });
+    expect(groupOf(item({ name: '  ' }), 'name', ctx())).toMatchObject({ id: 'n:none', label: '—', rank: 1 });
+  });
+
+  it('groups by username, trailing the rows with no username', () => {
+    const named = groupOf(item({ username: 'Alice' }), 'username', ctx());
+    const none = groupOf(item({ username: null }), 'username', ctx());
+    expect(named).toMatchObject({ id: 'u:alice', label: 'Alice', rank: 0 });
+    expect(none).toMatchObject({ id: 'u:none', label: 'No username', rank: 1 });
+    expect(none.rank).toBeGreaterThan(named.rank);
+  });
+
+  it('groups by passkey presence', () => {
+    expect(groupOf(item({ hasPasskey: true }), 'passkey', ctx())).toMatchObject({ id: 'k:yes', label: 'Has passkey' });
+    expect(groupOf(item({ hasPasskey: false }), 'passkey', ctx())).toMatchObject({ id: 'k:no', label: 'No passkey' });
+  });
 });

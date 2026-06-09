@@ -202,4 +202,47 @@ describe('columns store — grouping', () => {
     });
     expect(m.columns().groupBy).toBe(null);
   });
+
+  it('accepts the newly-groupable columns (username, passkey)', async () => {
+    const m = await freshColumns();
+    m.setGroupBy('username');
+    expect(m.columns().groupBy).toBe('username');
+    m.setGroupBy('passkey');
+    expect(m.columns().groupBy).toBe('passkey');
+  });
+});
+
+describe('columns store — display mode', () => {
+  beforeEach(() => localStorage.clear());
+
+  it('defaults to the table layout', async () => {
+    const m = await freshColumns();
+    expect(m.columns().displayMode).toBe('table');
+  });
+
+  it('setDisplayMode persists the choice', async () => {
+    const m = await freshColumns();
+    m.setDisplayMode('list');
+    expect(m.columns().displayMode).toBe('list');
+    expect(JSON.parse(localStorage.getItem('agate.columns') ?? '{}').displayMode).toBe('list');
+  });
+
+  it('drops an invalid persisted displayMode back to table', async () => {
+    const m = await freshColumns({
+      columns: [{ kind: 'builtin', id: 'username' }],
+      revealed: [],
+      favicons: true,
+      widths: {},
+      groupBy: null,
+      displayMode: 'bogus',
+    });
+    expect(m.columns().displayMode).toBe('table');
+  });
+
+  it('resetColumns restores the table layout', async () => {
+    const m = await freshColumns();
+    m.setDisplayMode('list');
+    m.resetColumns();
+    expect(m.columns().displayMode).toBe('table');
+  });
 });

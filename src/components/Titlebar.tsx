@@ -16,7 +16,7 @@
 
 import { createMemo, createSignal, For, Match, onCleanup, onMount, Show, Switch } from 'solid-js';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { Copy, Lock, Minus, Monitor, Moon, Search, Square, Sun, Terminal, X } from 'lucide-solid';
+import { Copy, Lock, Minus, Monitor, Moon, Search, ShieldCheck, Square, Sun, Terminal, X } from 'lucide-solid';
 import { ipc } from '../lib/ipc.ts';
 import type { VaultItem, WindowControl, WindowControlsLayout } from '../lib/types.ts';
 import { typeIcon } from '../lib/vaultIcons.ts';
@@ -32,6 +32,7 @@ import { paletteSource } from '../state/palette.ts';
 import { recentIds } from '../state/recentItems.ts';
 import { connectionNav } from '../state/connections.ts';
 import { activeVault } from '../state/ui.ts';
+import { setAddingConnection } from '../state/session.ts';
 import { lastSync, requestSync, syncState } from '../state/sync.ts';
 import { setTheme, theme, type ThemePref } from '../state/theme.ts';
 import { SyncIcon } from './SyncStatus.tsx';
@@ -259,17 +260,19 @@ export default function Titlebar(props: { showSearch: boolean; onLock: () => voi
   return (
     <header class="titlebar" classList={{ mac: IS_MAC }} data-tauri-drag-region>
       <div class="titlebar-brand" data-tauri-drag-region>
-        Agate
+        <ShieldCheck size={15} strokeWidth={1.75} />
+        <span>Agate</span>
       </div>
 
-      {/* Connection switcher — only on the vault screen, and only when there's
-          more than one connection to switch between. */}
-      <Show when={props.showSearch && connectionNav().connections.length > 1}>
+      {/* Connection switcher — always shown on the vault screen (once at least one
+          connection is loaded); the menu also offers "Add connection". */}
+      <Show when={props.showSearch && connectionNav().connections.length >= 1}>
         <div class="titlebar-conn">
           <VaultSwitcher
             connections={connectionNav().connections}
             active={activeVault()}
             onSelect={connectionNav().switchVault}
+            onAddConnection={() => setAddingConnection(true)}
           />
         </div>
       </Show>

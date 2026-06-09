@@ -1,10 +1,11 @@
 // Connection (vault) switcher — lives in the window titlebar. Scopes the item
-// list to one connection or merges them all ("All vaults"). Only rendered when
-// there is more than one connection; with a single account there is nothing to
-// switch. The unified merged view stays available as the first menu entry.
+// list to one connection or merges them all ("All vaults"). Always shown on the
+// vault screen: with one account it still exposes that account plus an "Add
+// connection" action; with several it switches between them. The unified merged
+// view stays available as the first menu entry.
 
 import { createSignal, For, Show } from 'solid-js';
-import { Check, ChevronsUpDown, Layers, Lock } from 'lucide-solid';
+import { Check, ChevronsUpDown, Layers, Lock, Plus } from 'lucide-solid';
 import type { ConnectionSummary } from '../lib/types.ts';
 import { accountColorVar } from '../lib/accountColor.ts';
 import './VaultSwitcher.css';
@@ -14,6 +15,8 @@ export default function VaultSwitcher(props: {
   /** null = all vaults merged; otherwise the scoped connection email. */
   active: string | null;
   onSelect: (email: string | null) => void;
+  /** Start the add-connection flow (optional; shown as a menu action). */
+  onAddConnection?: () => void;
 }) {
   const [open, setOpen] = createSignal(false);
 
@@ -81,6 +84,24 @@ export default function VaultSwitcher(props: {
                 </button>
               )}
             </For>
+            <Show when={props.onAddConnection}>
+              {(add) => (
+                <>
+                  <div class="vault-switcher-sep" />
+                  <button
+                    class="vault-switcher-item"
+                    role="menuitem"
+                    onClick={() => {
+                      setOpen(false);
+                      add()();
+                    }}
+                  >
+                    <Plus size={15} strokeWidth={1.6} />
+                    <span class="vault-switcher-item-text">Add connection</span>
+                  </button>
+                </>
+              )}
+            </Show>
           </div>
         </>
       </Show>

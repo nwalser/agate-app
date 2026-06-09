@@ -9,6 +9,7 @@ import { Check, Fingerprint, KeyRound, Laptop, Minus } from 'lucide-solid';
 import { ipc } from '../../lib/ipc.ts';
 import { refreshSession, status } from '../../state/session.ts';
 import { pushToast, toastError } from '../../state/toast.ts';
+import { Switch } from '../../components/settings/SettingsControls.tsx';
 
 // Platform-appropriate name for the biometric unlock method (Windows Hello /
 // Touch ID / generic). The backend picks the matching consent gate per OS.
@@ -81,33 +82,23 @@ export default function UnlockSettings() {
 
   return (
     <div class="settings-page">
-      <section class="settings-section">
-        <h3>Unlock methods</h3>
-        <p class="muted settings-help">
-          How Agate is unlocked on this device. One app secret opens every connection.
-        </p>
-        <MethodRow icon={KeyRound} label="App password" on subtitle="Always required" />
-        <MethodRow icon={Laptop} label="This device" on
-          subtitle="Always bound to this machine" />
-        <MethodRow
-          icon={Fingerprint}
-          label={BIOMETRIC_NAME}
-          on={status().helloConfigured}
-          unavailable={!helloAvailable()}
-          subtitle="Face, fingerprint, or PIN"
-        />
-      </section>
+      <p class="muted settings-help">
+        How Agate is unlocked on this device. One app secret opens every connection. Each method is
+        listed below in order.
+      </p>
 
+      {/* 1 — App password (always required) */}
       <section class="settings-section">
         <h3>
           <KeyRound size={14} strokeWidth={1.75} /> App password
+          <MethodState on />
         </h3>
         <p class="muted settings-help">
           Change the single app password. Enter the new password twice to apply — stored master
           passwords are re-protected automatically and stay bound to this machine.
         </p>
         <div class="field">
-          <label>App password</label>
+          <label>New app password</label>
           <input
             type="password"
             autocomplete="new-password"
@@ -129,9 +120,23 @@ export default function UnlockSettings() {
         </button>
       </section>
 
+      {/* 2 — This device (machine binding, always on) */}
+      <section class="settings-section">
+        <h3>
+          <Laptop size={14} strokeWidth={1.75} /> This device
+          <MethodState on />
+        </h3>
+        <p class="muted settings-help">
+          A device key is always mixed into the unlock, so the stored data can't be opened on
+          another machine. This can't be turned off.
+        </p>
+      </section>
+
+      {/* 3 — Biometric unlock (Windows Hello / Touch ID) */}
       <section class="settings-section">
         <h3>
           <Fingerprint size={14} strokeWidth={1.75} /> {BIOMETRIC_NAME}
+          <MethodState on={status().helloConfigured} unavailable={!helloAvailable()} />
         </h3>
         <p class="muted settings-help">
           Unlock your vault with {BIOMETRIC_NAME} (face, fingerprint, or PIN) instead of typing a
@@ -146,14 +151,13 @@ export default function UnlockSettings() {
           }
         >
           <div class="settings-row">
-            <span>{status().helloConfigured ? 'Enabled' : 'Disabled'}</span>
-            <button
-              classList={{ primary: !status().helloConfigured, danger: status().helloConfigured }}
+            <span>Use {BIOMETRIC_NAME}</span>
+            <Switch
+              checked={status().helloConfigured}
               disabled={helloBusy()}
-              onClick={() => void toggleHello()}
-            >
-              {status().helloConfigured ? 'Disable' : 'Enable'}
-            </button>
+              onChange={() => void toggleHello()}
+              label={`${BIOMETRIC_NAME} unlock`}
+            />
           </div>
         </Show>
       </section>
@@ -161,33 +165,19 @@ export default function UnlockSettings() {
   );
 }
 
-// A read-only summary row showing whether one unlock method is active.
-function MethodRow(props: {
-  icon: typeof KeyRound;
-  label: string;
-  subtitle: string;
-  on?: boolean;
-  unavailable?: boolean;
-}) {
-  const Icon = props.icon;
+// Inline on/off/unavailable status pill shown in an unlock-method section header.
+function MethodState(props: { on?: boolean; unavailable?: boolean }) {
   return (
-    <div class="settings-method">
-      <Icon size={16} strokeWidth={1.6} class="settings-method-icon" />
-      <span class="settings-method-text">
-        <span class="settings-method-label">{props.label}</span>
-        <span class="muted settings-method-sub">{props.subtitle}</span>
+    <Show
+      when={!props.unavailable}
+      fallback={<span class="muted settings-method-state settings-h3-state">Unavailable</span>}
+    >
+      <span class="settings-method-state settings-h3-state" classList={{ on: props.on }}>
+        <Show when={props.on} fallback={<Minus size={13} strokeWidth={2} />}>
+          <Check size={13} strokeWidth={2.5} />
+        </Show>
+        {props.on ? 'On' : 'Off'}
       </span>
-      <Show
-        when={!props.unavailable}
-        fallback={<span class="muted settings-method-state">Unavailable</span>}
-      >
-        <span class="settings-method-state" classList={{ on: props.on }}>
-          <Show when={props.on} fallback={<Minus size={13} strokeWidth={2} />}>
-            <Check size={13} strokeWidth={2.5} />
-          </Show>
-          {props.on ? 'On' : 'Off'}
-        </span>
-      </Show>
-    </div>
+    </Show>
   );
 }

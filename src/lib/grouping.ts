@@ -31,6 +31,23 @@ export interface GroupValue {
 /** The group an item falls into for a given grouping. Pure. */
 export function groupOf(item: VaultItem, key: GroupKey, ctx: GroupContext): GroupValue {
   switch (key) {
+    case 'name': {
+      // Bucket by the first character: A–Z, "#" for digits/symbols, "—" for empty.
+      const ch = item.name.trim().charAt(0).toUpperCase();
+      if (!ch) return { id: 'n:none', label: '—', rank: 1 };
+      if (ch >= 'A' && ch <= 'Z') return { id: `n:${ch}`, label: ch, rank: 0 };
+      return { id: 'n:#', label: '#', rank: 0 };
+    }
+    case 'username': {
+      const u = item.username?.trim();
+      return u
+        ? { id: `u:${u.toLowerCase()}`, label: u, rank: 0 }
+        : { id: 'u:none', label: 'No username', rank: 1 };
+    }
+    case 'passkey':
+      return item.hasPasskey
+        ? { id: 'k:yes', label: 'Has passkey', rank: 0 }
+        : { id: 'k:no', label: 'No passkey', rank: 1 };
     case 'folder': {
       const name = ctx.folderName(item.folderId);
       // Foldered rows sort alphabetically (rank 0); "No folder" trails (rank 1).

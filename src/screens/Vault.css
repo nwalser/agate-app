@@ -5,14 +5,45 @@
   min-height: 0;
 }
 
-/* Per-page toolbar at the top of the item list. A muted row count sits on the
-   left; the preview toggle + context-aware Add are pushed to the right. */
+/* The vault view's content column (right of the rail): a full-width page header
+   on top, then the list ↔ detail split fills the rest. */
+.vault-main {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+/* The list + detail row beneath the header. */
+.vault-split {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+}
+
+/* Per-page header spanning the whole item view (mirrors the Security page header):
+   the page icon + title sit on the left, a muted row count follows, and the
+   preview toggle + context-aware Add are pushed to the right. A hairline divider
+   separates it from the list/detail below. */
 .vault-list-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 2px 4px 6px;
-  min-height: 32px;
+  padding: 8px 16px;
+  min-height: 40px;
+  border-bottom: 1px solid var(--border);
+}
+.vault-list-head-icon {
+  color: var(--primary);
+  flex-shrink: 0;
+}
+.vault-list-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* "Unsaved changes to <view>" bar — shown above the list when the live config has
@@ -21,7 +52,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 0 4px 6px;
+  margin: 8px 16px 0;
   padding: 6px 10px;
   font-size: 12px;
   border: 1px solid var(--border-strong);
@@ -123,6 +154,20 @@
 .vault-menu-item svg {
   color: var(--muted-foreground);
   flex-shrink: 0;
+}
+/* Separator + section label inside the Add menu (splits item types from templates). */
+.vault-menu-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 5px 6px;
+}
+.vault-menu-label {
+  padding: 4px 10px 3px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--subtle-foreground);
 }
 
 .vault-search {
@@ -256,6 +301,32 @@
   height: 1px;
   background: var(--border);
   margin: 7px 6px;
+}
+
+/* A divider with a name renders as a section header instead of a plain rule. */
+.vault-rail-divider-label {
+  padding: 10px 9px 3px;
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--subtle-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Drag-to-reorder wrapper around each rail entry. Transparent by default; while a
+   rail entry is being dragged it dims, and the hovered drop target shows a top
+   insertion bar. (The folder-tree block opts out — it has its own DnD.) */
+.vault-rail-entry {
+  border-radius: var(--radius-sm);
+}
+.vault-rail-entry.rail-dragging {
+  opacity: 0.45;
+}
+.vault-rail-entry.rail-dropover {
+  box-shadow: inset 0 2px 0 var(--primary);
 }
 
 /* Pushes the trailing rail group (Settings) to the bottom of the rail. */

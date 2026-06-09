@@ -4,29 +4,36 @@
 // health badge all reflect it. The two network-based checks (exposed-password,
 // dark-web) live under Settings › Security instead — these are the local checks.
 
-import { For, Show, type JSX } from 'solid-js';
-import { Clock, Globe, Repeat, RotateCcw, ShieldCheck, Timer, Gauge } from 'lucide-solid';
+import { Show, type JSX } from 'solid-js';
+import { Clock, Globe, Repeat, ShieldCheck, Timer, Gauge } from 'lucide-solid';
 import { auditConfig, resetAuditConfig, setAuditOption } from '../../state/auditConfig.ts';
+import {
+  ResetButton,
+  Select,
+  SettingSubField,
+  ToggleRow,
+} from '../../components/settings/SettingsControls.tsx';
+import type { IconComponent } from '../../lib/icon.ts';
 import './AuditSettings.css';
 
-const WEAK_LEVELS: { score: number; label: string }[] = [
-  { score: 2, label: 'Below fair' },
-  { score: 3, label: 'Below good' },
-  { score: 4, label: 'Below strong' },
+const WEAK_LEVELS = [
+  { value: 2, label: 'Below fair' },
+  { value: 3, label: 'Below good' },
+  { value: 4, label: 'Below strong' },
 ];
 
-const OLD_OPTIONS: { days: number; label: string }[] = [
-  { days: 30, label: '1 month' },
-  { days: 90, label: '3 months' },
-  { days: 180, label: '6 months' },
-  { days: 365, label: '1 year' },
-  { days: 730, label: '2 years' },
+const OLD_OPTIONS = [
+  { value: 30, label: '1 month' },
+  { value: 90, label: '3 months' },
+  { value: 180, label: '6 months' },
+  { value: 365, label: '1 year' },
+  { value: 730, label: '2 years' },
 ];
 
-const REUSE_OPTIONS: { n: number; label: string }[] = [
-  { n: 2, label: '2 or more' },
-  { n: 3, label: '3 or more' },
-  { n: 5, label: '5 or more' },
+const REUSE_OPTIONS = [
+  { value: 2, label: '2 or more' },
+  { value: 3, label: '3 or more' },
+  { value: 5, label: '5 or more' },
 ];
 
 export default function AuditSettings() {
@@ -51,12 +58,14 @@ export default function AuditSettings() {
           enabled={c().reused}
           onToggle={(v) => setAuditOption('reused', v)}
         >
-          <ThresholdSelect
-            label="Flag when shared by"
-            value={c().reuseMin}
-            options={REUSE_OPTIONS.map((o) => ({ value: o.n, label: o.label }))}
-            onChange={(v) => setAuditOption('reuseMin', v)}
-          />
+          <SettingSubField label="Flag when shared by">
+            <Select
+              ariaLabel="Reuse threshold"
+              value={c().reuseMin}
+              options={REUSE_OPTIONS}
+              onChange={(v) => setAuditOption('reuseMin', v)}
+            />
+          </SettingSubField>
         </AuditCheck>
 
         <AuditCheck
@@ -66,12 +75,14 @@ export default function AuditSettings() {
           enabled={c().weak}
           onToggle={(v) => setAuditOption('weak', v)}
         >
-          <ThresholdSelect
-            label="Flag strength"
-            value={c().weakMaxScore}
-            options={WEAK_LEVELS.map((o) => ({ value: o.score, label: o.label }))}
-            onChange={(v) => setAuditOption('weakMaxScore', v)}
-          />
+          <SettingSubField label="Flag strength">
+            <Select
+              ariaLabel="Weak-password threshold"
+              value={c().weakMaxScore}
+              options={WEAK_LEVELS}
+              onChange={(v) => setAuditOption('weakMaxScore', v)}
+            />
+          </SettingSubField>
         </AuditCheck>
 
         <AuditCheck
@@ -81,12 +92,14 @@ export default function AuditSettings() {
           enabled={c().old}
           onToggle={(v) => setAuditOption('old', v)}
         >
-          <ThresholdSelect
-            label="Flag when older than"
-            value={c().oldDays}
-            options={OLD_OPTIONS.map((o) => ({ value: o.days, label: o.label }))}
-            onChange={(v) => setAuditOption('oldDays', v)}
-          />
+          <SettingSubField label="Flag when older than">
+            <Select
+              ariaLabel="Old-password threshold"
+              value={c().oldDays}
+              options={OLD_OPTIONS}
+              onChange={(v) => setAuditOption('oldDays', v)}
+            />
+          </SettingSubField>
         </AuditCheck>
 
         <AuditCheck
@@ -105,68 +118,33 @@ export default function AuditSettings() {
           onToggle={(v) => setAuditOption('noTotp', v)}
         />
 
-        <button class="ghost audit-reset" onClick={() => resetAuditConfig()}>
-          <RotateCcw size={13} strokeWidth={1.75} /> Reset to defaults
-        </button>
+        <ResetButton label="Reset to defaults" onClick={() => resetAuditConfig()} />
       </section>
     </div>
   );
 }
 
+// One audit check: a toggle row carrying the divider, plus an optional threshold
+// sub-field revealed only while the check is on.
 function AuditCheck(props: {
-  icon: typeof Repeat;
+  icon: IconComponent;
   label: string;
   desc: string;
   enabled: boolean;
   onToggle: (v: boolean) => void;
   children?: JSX.Element;
 }) {
-  const Icon = props.icon;
   return (
-    <div class="audit-check" classList={{ off: !props.enabled }}>
-      <div class="audit-check-head">
-        <Icon size={16} strokeWidth={1.6} class="audit-check-icon" />
-        <span class="audit-check-text">
-          <span class="audit-check-label">{props.label}</span>
-          <span class="muted audit-check-desc">{props.desc}</span>
-        </span>
-        <Toggle checked={props.enabled} onChange={props.onToggle} label={props.label} />
-      </div>
-      <Show when={props.enabled && props.children}>
-        <div class="audit-check-config">{props.children}</div>
-      </Show>
+    <div class="audit-check">
+      <ToggleRow
+        flush
+        icon={props.icon}
+        label={props.label}
+        desc={props.desc}
+        checked={props.enabled}
+        onChange={props.onToggle}
+      />
+      <Show when={props.enabled && props.children}>{props.children}</Show>
     </div>
-  );
-}
-
-function ThresholdSelect(props: {
-  label: string;
-  value: number;
-  options: { value: number; label: string }[];
-  onChange: (v: number) => void;
-}) {
-  return (
-    <label class="audit-threshold">
-      <span class="muted">{props.label}</span>
-      <select value={props.value} onChange={(e) => props.onChange(Number(e.currentTarget.value))}>
-        <For each={props.options}>{(o) => <option value={o.value}>{o.label}</option>}</For>
-      </select>
-    </label>
-  );
-}
-
-function Toggle(props: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={props.checked}
-      aria-label={props.label}
-      class="audit-switch"
-      classList={{ on: props.checked }}
-      onClick={() => props.onChange(!props.checked)}
-    >
-      <span class="audit-switch-knob" />
-    </button>
   );
 }

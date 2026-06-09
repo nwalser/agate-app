@@ -25,19 +25,29 @@ export type ColumnSpec =
 export type SortKey = 'name' | 'username' | 'folder' | 'type' | 'security';
 export type SortDir = 'asc' | 'desc';
 
-/** Categorical columns the list can group rows under (value available without
- *  fetching item detail). Drives the optional group-header rows. */
-export type GroupKey = 'folder' | 'type' | 'security';
+/** Columns the list can group rows under. Restricted to values available without
+ *  fetching per-row item detail (Name initial, Username, Folder, Type, Security,
+ *  Passkey) so grouping never forces a bulk decrypt. Drives the group-header rows. */
+export type GroupKey = 'name' | 'username' | 'folder' | 'type' | 'security' | 'passkey';
 
-export const GROUP_KEYS: GroupKey[] = ['folder', 'type', 'security'];
+export const GROUP_KEYS: GroupKey[] = ['name', 'username', 'folder', 'type', 'security', 'passkey'];
 
 /** Labels for the "Group by" picker (the per-group header text is derived from
  *  the rows themselves — see `lib/grouping.ts`). */
 export const GROUP_LABELS: Record<GroupKey, string> = {
+  name: 'Name',
+  username: 'Username',
   folder: 'Folder',
   type: 'Type',
   security: 'Security',
+  passkey: 'Passkey',
 };
+
+/** How the vault list lays each item out: the multi-column table, or a compact
+ *  single-line list (name + secondary). */
+export type DisplayMode = 'table' | 'list';
+
+export const DISPLAY_MODES: DisplayMode[] = ['table', 'list'];
 
 export interface ColumnConfig {
   /** Visible data columns after the always-on Name column, in display order. */
@@ -51,6 +61,8 @@ export interface ColumnConfig {
   widths: Record<string, number>;
   /** Group rows under header rows by this column's value, or null for a flat list. */
   groupBy: GroupKey | null;
+  /** List layout: the column table, or a compact single-line list. */
+  displayMode: DisplayMode;
 }
 
 /** Width-map key for the always-on Name column. */
@@ -132,9 +144,11 @@ export function sortKeyOf(c: ColumnSpec): SortKey | null {
 /** The group key a column maps to, or null if it can't group rows. */
 export function groupKeyOf(c: ColumnSpec): GroupKey | null {
   if (c.kind !== 'builtin') return null;
+  if (c.id === 'username') return 'username';
   if (c.id === 'folder') return 'folder';
   if (c.id === 'type') return 'type';
   if (c.id === 'security') return 'security';
+  if (c.id === 'passkey') return 'passkey';
   return null;
 }
 
@@ -244,6 +258,7 @@ export const DEFAULT: ColumnConfig = {
   favicons: true,
   widths: {},
   groupBy: null,
+  displayMode: 'table',
 };
 
 function isBuiltinId(v: unknown): v is BuiltinColumnId {
@@ -252,6 +267,10 @@ function isBuiltinId(v: unknown): v is BuiltinColumnId {
 
 function isGroupKey(v: unknown): v is GroupKey {
   return typeof v === 'string' && (GROUP_KEYS as string[]).includes(v);
+}
+
+function isDisplayMode(v: unknown): v is DisplayMode {
+  return typeof v === 'string' && (DISPLAY_MODES as string[]).includes(v);
 }
 
 function parseSpec(v: unknown): ColumnSpec | null {
@@ -284,7 +303,8 @@ export function parseColumnConfig(value: unknown): ColumnConfig {
     }
   }
   const groupBy = isGroupKey(o.groupBy) ? o.groupBy : null;
-  return { columns, revealed, favicons, widths, groupBy };
+  const displayMode = isDisplayMode(o.displayMode) ? o.displayMode : DEFAULT.displayMode;
+  return { columns, revealed, favicons, widths, groupBy, displayMode };
 }
 
 /** Read + validate the persisted config; corrupt/unavailable falls back to DEFAULT. */

@@ -6,13 +6,19 @@
 // VaultContextMenu subcomponents; this file switches views and threads props.
 
 import { For, createEffect, createMemo, createSignal, onCleanup, onMount, Match, Show, Switch } from 'solid-js';
-import { Plus, PanelRightClose, PanelRightOpen, RotateCcw, Star, Trash2, X, FolderInput } from 'lucide-solid';
+import { Dynamic } from 'solid-js/web';
+import { BookmarkPlus, Plus, PanelRightClose, PanelRightOpen, RotateCcw, Star, Trash2, X, FolderInput } from 'lucide-solid';
 import type { VaultItem } from '../lib/types.ts';
 import { applyColumnConfig, columns, type ColumnSpec } from '../state/columns.ts';
 import { filters, setAllColumnFilters, showColumnFilters } from '../state/columnFilters.ts';
 import type { VaultFilter } from '../lib/search.ts';
 import type { CustomQuery, SavedFilter, ViewConfig } from '../lib/sidebarConfig.ts';
-import { queryById, updateQuery } from '../state/sidebar.ts';
+import { filterPageMeta } from '../lib/sidebarConfig.ts';
+import { DEFAULT_VIEW_ICON, viewIcon } from '../lib/viewIcons.ts';
+import { addQuery, queryById, updateQuery } from '../state/sidebar.ts';
+import { pushToast } from '../state/toast.ts';
+import { templates } from '../state/templates.ts';
+import { templateToSeed, type ItemTemplate } from '../lib/templates.ts';
 import { sameViewConfig } from '../lib/viewConfig.ts';
 import { query, setQuery } from '../state/search.ts';
 import { clearConnectionNav, setConnectionNav } from '../state/connections.ts';
@@ -124,7 +130,7 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
   // (account-scoped), which a view can't represent → capture it as "all".
   function toSavedFilter(f: VaultFilter): SavedFilter {
     if (f.kind === 'type') return { kind: 'type', itemType: f.itemType };
-    if (f.kind === 'favorites' || f.kind === 'trash') return { kind: f.kind };
+    if (f.kind === 'favorites' || f.kind === 'trash' || f.kind === 'atRisk') return { kind: f.kind };
     return { kind: 'all' };
   }
 
@@ -162,6 +168,16 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
   function discardViewChanges() {
     const v = activeView();
     if (v) applyView(v.config);
+  }
+  // One-step "save the current list state as a brand-new pinned view": capture the
+  // live filter/search/columns/sort, name it after the current page (or the active
+  // search), and make it the active view so it highlights in the rail immediately.
+  function saveAsNewView() {
+    const base = (query().trim() || pageHeader().label || 'New view').slice(0, 60);
+    const id = addQuery({ name: base, icon: DEFAULT_VIEW_ICON, config: captureView() });
+    if (!id) return;
+    setActiveViewId(id);
+    pushToast('success', `Saved view “${base}”. Rename or re-icon it from its right-click menu.`);
   }
 
   // Switch a rail filter and return to the vault view in one step (leaves any view).
@@ -205,6 +221,13 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
     setView('vault');
     applyView(q.config);
     setActiveViewId(q.id);
+  }
+
+  // Instantiate a custom template: open the inline editor in create mode, pre-filled
+  // with the template's item type, notes, and custom fields. Saving makes a new item.
+  function openTemplate(tpl: ItemTemplate) {
+    setView('vault');
+    setEditor({ mode: 'create', createType: tpl.itemType, template: tpl });
   }
 
   // Switch which connection the list is scoped to (null = all vaults merged).
@@ -299,6 +322,21 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
     onOpenSettings: props.onOpenSettings,
   });
 
+  // Distinct usernames already used across the vault, for the login editor's
+  // username autocomplete. Sorted, case-insensitively de-duplicated.
+  const usernameSuggestions = createMemo(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const it of data.items()) {
+      const u = it.username?.trim();
+      if (u && !seen.has(u.toLowerCase())) {
+        seen.add(u.toLowerCase());
+        out.push(u);
+      }
+    }
+    return out.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  });
+
   // Resolved props for the inline editor, or null when closed. A fresh object on
   // every open/switch makes the keyed <Show> remount the form so its field
   // signals re-init (e.g. editing item A then item B).
@@ -307,6 +345,8 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
     if (s.mode === 'closed') return null;
     return {
       item: s.mode === 'edit' ? s.item : null,
+      // A template seed pre-fills a create without becoming a real (id-bearing) item.
+      seed: s.mode === 'create' && s.template ? templateToSeed(s.template) : null,
       createType: s.mode === 'create' ? s.createType : undefined,
       accountEmail: s.mode === 'edit' ? s.item.accountEmail : data.createAccount(),
     };
@@ -316,6 +356,15 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
   // the per-page Add button: a type page adds that type directly; All / Favorites
   // / folders fall back to the type-picker menu.
   const addType = filtering.addType;
+
+  // Icon + title for the item-list page header (mirrors the Security page's
+  // header). A saved view shows its own name + icon; otherwise the active rail
+  // filter resolves to a page label + icon.
+  const pageHeader = createMemo(() => {
+    const v = activeView();
+    if (v) return { label: v.name, icon: viewIcon(v.icon) };
+    return filterPageMeta(filtering.filter(), filtering.folderNameOf);
+  });
 
   // Hover text for the header cloud icon — state plus last-success clock time.
   const syncTooltip = createMemo(() => {
@@ -449,7 +498,11 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
 
         <Switch>
           <Match when={view() === 'security'}>
-            <SecurityCenter onOpenItem={openItem} />
+            <SecurityCenter
+              report={data.health()}
+              onOpenItem={openItem}
+              onViewAtRisk={() => selectFilter({ kind: 'atRisk' })}
+            />
           </Match>
           <Match when={view() === 'sync'}>
             <SyncStatus
@@ -463,13 +516,8 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
             <GeneratorPage />
           </Match>
           <Match when={view() === 'vault'}>
-            <>
-              <aside
-                class="vault-list"
-                classList={{ 'has-selection': selection.selectedCount() > 0, 'list-full': previewCollapsed() }}
-                data-density={rowDensity()}
-              >
-                <Show when={viewDirty() && activeView()}>
+            <div class="vault-main">
+              <Show when={viewDirty() && activeView()}>
                   {(v) => (
                     <div class="vault-view-bar">
                       <span class="vault-view-bar-text">
@@ -486,6 +534,13 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
                   )}
                 </Show>
                 <div class="vault-list-head">
+                  <Dynamic
+                    component={pageHeader().icon}
+                    size={16}
+                    strokeWidth={1.75}
+                    class="vault-list-head-icon"
+                  />
+                  <h2 class="vault-list-title">{pageHeader().label}</h2>
                   <span class="vault-list-count">
                     {filtering.displayed().length} {filtering.displayed().length === 1 ? 'item' : 'items'}
                   </span>
@@ -499,6 +554,13 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
                       <Show when={previewCollapsed()} fallback={<PanelRightClose size={16} strokeWidth={1.6} />}>
                         <PanelRightOpen size={16} strokeWidth={1.6} />
                       </Show>
+                    </button>
+                    <button
+                      class="ghost icon-btn"
+                      title="Save current filters &amp; columns as a new view"
+                      onClick={() => saveAsNewView()}
+                    >
+                      <BookmarkPlus size={16} strokeWidth={1.6} />
                     </button>
                     <Show when={!filtering.inTrash()}>
                       <Show
@@ -530,6 +592,29 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
                                       );
                                     }}
                                   </For>
+                                  <Show when={templates().length > 0}>
+                                    <div class="vault-menu-sep" />
+                                    <div class="vault-menu-label">Templates</div>
+                                    <For each={templates()}>
+                                      {(tpl) => {
+                                        const Icon = typeIcon(tpl.itemType);
+                                        return (
+                                          <button
+                                            class="vault-menu-item"
+                                            role="menuitem"
+                                            title={`New ${createLabel(tpl.itemType).toLowerCase()} from “${tpl.name}”`}
+                                            onClick={() => {
+                                              setAddMenuOpen(false);
+                                              openTemplate(tpl);
+                                            }}
+                                          >
+                                            <Icon size={14} strokeWidth={1.6} />
+                                            {tpl.name}
+                                          </button>
+                                        );
+                                      }}
+                                    </For>
+                                  </Show>
                                 </div>
                               </>
                             </Show>
@@ -550,12 +635,19 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
                   </div>
                 </div>
 
+              <div class="vault-split">
+                <aside
+                  class="vault-list"
+                  classList={{ 'has-selection': selection.selectedCount() > 0, 'list-full': previewCollapsed() }}
+                  data-density={rowDensity()}
+                >
                 <VaultList
                   items={filtering.displayed()}
                   folders={data.folders()}
                   sortKey={filtering.sortKey()}
                   sortDir={filtering.sortDir()}
                   onSort={filtering.toggleSort}
+                  onSetSort={filtering.setSort}
                   selectedId={selectedId()}
                   selectedCount={selection.selectedCount()}
                   isSelected={selection.isSelected}
@@ -668,9 +760,11 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
                     {(v) => (
                       <ItemEditor
                         item={v.item}
+                        seed={v.seed}
                         createType={v.createType}
                         accountEmail={v.accountEmail}
                         folders={data.folders()}
+                        usernameSuggestions={usernameSuggestions()}
                         onSaved={() => void actions.onEditorSaved()}
                         onClose={() => setEditor({ mode: 'closed' })}
                       />
@@ -704,7 +798,8 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
                   </Show>
                 </section>
               </Show>
-            </>
+              </div>
+            </div>
           </Match>
         </Switch>
       </div>

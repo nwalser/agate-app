@@ -148,5 +148,8 @@ pub fn view_to_detail(view: &CipherView, account_email: &str, account_label: &st
                     .collect()
             })
             .unwrap_or_default(),
+        // Passkeys are decrypted separately (needs a KeyStoreContext on the view);
+        // `item_detail` fills this in. Defaults to none here.
+        passkeys: Vec::new(),
     }
 }

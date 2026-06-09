@@ -90,6 +90,13 @@ describe('passesFilter', () => {
     expect(passesFilter(item({ folderId: null }), { kind: 'folder', folderId: null })).toBe(true);
     expect(passesFilter(item({ folderId: 'f1' }), { kind: 'folder', folderId: null })).toBe(false);
   });
+
+  it('atRisk behaves like all here (the report-based narrowing lives in the hook)', () => {
+    // At item granularity it only drops trash; membership in the at-risk set is
+    // applied by useVaultFiltering, which has the health report.
+    expect(passesFilter(item({ deleted: false }), { kind: 'atRisk' })).toBe(true);
+    expect(passesFilter(item({ deleted: true }), { kind: 'atRisk' })).toBe(false);
+  });
 });
 
 describe('filterItems', () => {

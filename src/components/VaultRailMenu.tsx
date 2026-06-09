@@ -34,7 +34,15 @@ import {
   type SidebarBuiltinId,
 } from '../lib/sidebarConfig.ts';
 import { viewIcon } from '../lib/viewIcons.ts';
-import { addDivider, moveEntry, removeEntry, sidebar, toggleHidden, visibleEntries } from '../state/sidebar.ts';
+import {
+  addDivider,
+  moveEntry,
+  removeEntry,
+  reorderEntry,
+  sidebar,
+  toggleHidden,
+  visibleEntries,
+} from '../state/sidebar.ts';
 import FolderTree from './FolderTree.tsx';
 import { ContextMenu, CtxItem, CtxSep } from './ContextMenu.tsx';
 import { SyncIcon, type SyncState } from './SyncStatus.tsx';
@@ -89,6 +97,22 @@ export default function VaultRailMenu(props: {
     setEntryMenu({ id, x: e.clientX, y: e.clientY });
   }
 
+  // Drag-to-reorder rail entries. Handlers guard on `dragId` so they only act
+  // during a rail-entry drag — a vault-item drag (folder drops) is left alone.
+  const [dragId, setDragId] = createSignal<string | null>(null);
+  const [overId, setOverId] = createSignal<string | null>(null);
+  function dropOn(targetId: string) {
+    const from = dragId();
+    if (from && from !== targetId) {
+      const order = sidebar().order;
+      const fi = order.indexOf(from);
+      const ti = order.indexOf(targetId);
+      if (fi >= 0 && ti >= 0) reorderEntry(fi, ti);
+    }
+    setDragId(null);
+    setOverId(null);
+  }
+
   const builtin = (id: SidebarBuiltinId, onCtx: (e: MouseEvent) => void): JSX.Element => {
     if (id === 'folders') return folders();
     if (id === 'sync') {
@@ -129,6 +153,20 @@ export default function VaultRailMenu(props: {
         />
       );
     }
+    if (id === 'atRisk') {
+      // A filter view (not the Security center), carrying the same at-risk badge.
+      const f = builtinFilter(id);
+      return (
+        <FilterButton
+          label={meta.label}
+          icon={meta.icon}
+          active={props.view === 'vault' && f !== null && filterEq(props.filter, f)}
+          onClick={() => f && props.selectFilter(f)}
+          onContextMenu={onCtx}
+          badge={<SecurityRailBadge report={props.health} />}
+        />
+      );
+    }
     // Filter builtins: All / Favorites / Trash / per-type.
     const f = builtinFilter(id);
     return (
@@ -156,22 +194,68 @@ export default function VaultRailMenu(props: {
 
       <For each={visibleEntries()}>
         {(entry) => {
-          if (entry.kind === 'divider') {
-            return <div class="vault-rail-sep" onContextMenu={(e) => openEntryMenu(e, entry.id)} />;
-          }
-          if (entry.kind === 'query') {
-            const q = entry.query;
-            return (
+          const inner =
+            entry.kind === 'divider' ? (
+              // A labeled divider renders as a section header; unlabeled (or when the
+              // rail is collapsed, where text is useless) it's a plain rule.
+              <Show
+                when={entry.label && !props.sidebarCollapsed}
+                fallback={<div class="vault-rail-sep" onContextMenu={(e) => openEntryMenu(e, entry.id)} />}
+              >
+                <div class="vault-rail-divider-label" onContextMenu={(e) => openEntryMenu(e, entry.id)}>
+                  {entry.label}
+                </div>
+              </Show>
+            ) : entry.kind === 'query' ? (
               <FilterButton
-                label={q.name}
-                icon={viewIcon(q.icon)}
-                active={props.view === 'vault' && props.activeViewId === q.id}
-                onClick={() => props.onRunQuery(q)}
-                onContextMenu={(e) => openEntryMenu(e, q.id)}
+                label={entry.query.name}
+                icon={viewIcon(entry.query.icon)}
+                active={props.view === 'vault' && props.activeViewId === entry.query.id}
+                onClick={() => props.onRunQuery(entry.query)}
+                onContextMenu={(e) => openEntryMenu(e, entry.query.id)}
               />
+            ) : (
+              builtin(entry.id, (e) => openEntryMenu(e, entry.id))
             );
-          }
-          return builtin(entry.id, (e) => openEntryMenu(e, entry.id));
+          // The folder-tree block owns its own drag-and-drop (folder reparenting +
+          // item drops), so it opts out of rail-entry reordering — move it with the
+          // arrows / context menu instead.
+          if (entry.kind === 'builtin' && entry.id === 'folders') return inner;
+          const id = entry.kind === 'query' ? entry.query.id : entry.id;
+          return (
+            <div
+              class="vault-rail-entry"
+              classList={{
+                'rail-dragging': dragId() === id,
+                'rail-dropover': overId() === id && dragId() !== null && dragId() !== id,
+              }}
+              draggable={true}
+              onDragStart={(e) => {
+                setDragId(id);
+                if (e.dataTransfer) {
+                  e.dataTransfer.effectAllowed = 'move';
+                  e.dataTransfer.setData('text/plain', id);
+                }
+              }}
+              onDragOver={(e) => {
+                if (dragId() === null) return; // not a rail-entry drag — ignore
+                e.preventDefault();
+                setOverId(id);
+                if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+              }}
+              onDrop={(e) => {
+                if (dragId() === null) return;
+                e.preventDefault();
+                dropOn(id);
+              }}
+              onDragEnd={() => {
+                setDragId(null);
+                setOverId(null);
+              }}
+            >
+              {inner}
+            </div>
+          );
         }}
       </For>
 
@@ -211,10 +295,10 @@ export default function VaultRailMenu(props: {
               <Show when={isQueryId(id())}>
                 <CtxSep />
                 <CtxItem onClick={act(() => props.onOpenSettings())}>
-                  <Pencil size={14} /> Edit query
+                  <Pencil size={14} /> Edit view
                 </CtxItem>
                 <CtxItem danger onClick={act(() => removeEntry(id()))}>
-                  <Trash2 size={14} /> Delete query
+                  <Trash2 size={14} /> Delete view
                 </CtxItem>
               </Show>
               <Show when={isDividerId(id())}>

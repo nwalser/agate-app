@@ -30,12 +30,16 @@ export function matchesQuery(item: VaultItem, query: string): boolean {
   return false;
 }
 
-/** Closed set of left-rail filters. `folderId: null` = items with no folder. */
+/** Closed set of left-rail filters. `folderId: null` = items with no folder.
+ *  `atRisk` keeps only items flagged by the offline health audit — the membership
+ *  test lives in the filtering hook (it needs the report), so here it behaves like
+ *  `all` (non-deleted) and the hook narrows it further. */
 export type VaultFilter =
   | { kind: 'all' }
   | { kind: 'favorites' }
   | { kind: 'trash' }
   | { kind: 'type'; itemType: ItemType }
+  | { kind: 'atRisk' }
   | { kind: 'folder'; folderId: string | null };
 
 /** Whether a single item passes the active filter (independent of search). */
@@ -49,6 +53,7 @@ export function passesFilter(item: VaultItem, filter: VaultFilter): boolean {
       return !item.deleted && item.itemType === filter.itemType;
     case 'folder':
       return !item.deleted && (item.folderId ?? null) === filter.folderId;
+    case 'atRisk':
     case 'all':
       return !item.deleted;
   }

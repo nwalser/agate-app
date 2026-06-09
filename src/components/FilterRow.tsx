@@ -24,6 +24,7 @@ export default function FilterRow() {
         <span />
         <input
           class="vault-filter-input"
+          data-filter-key={NAME_FILTER_KEY}
           placeholder="Filter name…"
           value={columnFilter(NAME_FILTER_KEY)}
           onInput={(e) => setColumnFilter(NAME_FILTER_KEY, e.currentTarget.value)}
@@ -33,6 +34,7 @@ export default function FilterRow() {
             isFilterable(col) ? (
               <input
                 class="vault-filter-input"
+                data-filter-key={columnKey(col)}
                 placeholder="Filter…"
                 value={columnFilter(columnKey(col))}
                 onInput={(e) => setColumnFilter(columnKey(col), e.currentTarget.value)}

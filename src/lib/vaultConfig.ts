@@ -6,6 +6,7 @@
 
 import type { ItemDetail, ItemType } from './types.ts';
 import type { VaultFilter } from './search.ts';
+import type { ItemTemplate } from './templates.ts';
 
 // Item types offered in the "Add" menu and command palette (excludes 'unknown').
 export const CREATE_TYPES: { type: ItemType; label: string }[] = [
@@ -36,10 +37,11 @@ export function filterEq(a: VaultFilter, b: VaultFilter): boolean {
   return true;
 }
 
-// Editor open-state: closed, creating a fresh item, or editing an existing one.
+// Editor open-state: closed, creating a fresh item (optionally from a template
+// that pre-fills the form), or editing an existing one.
 export type EditorState =
   | { mode: 'closed' }
-  | { mode: 'create'; createType: ItemType }
+  | { mode: 'create'; createType: ItemType; template?: ItemTemplate }
   | { mode: 'edit'; item: ItemDetail };
 
 // Automatic background sync interval: once on open, then on this fixed cadence.

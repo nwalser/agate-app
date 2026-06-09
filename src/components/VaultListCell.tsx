@@ -15,7 +15,15 @@ import type { CellContent } from '../lib/cellRendering.ts';
 const SEC_ICON = { ok: ShieldCheck, warn: ShieldAlert, risk: ShieldX } as const;
 
 export default function VaultListCell(props: { content: CellContent; onCopy?: () => void }): JSX.Element {
-  const c = props.content;
+  // Read props.content INSIDE a reactive boundary (the JSX `{}` getter), not into a
+  // `const` at component-init — a Solid component runs once, so a captured const
+  // never updates when the descriptor changes (e.g. the offline-health report loads
+  // after first render). Without this the Security badge stays stuck on its first
+  // value (the "always green" bug).
+  return <>{renderCell(props.content, props.onCopy)}</>;
+}
+
+function renderCell(c: CellContent, onCopy?: () => void): JSX.Element {
   switch (c.kind) {
     case 'blank':
       return <span class="vault-cell" />;
@@ -27,30 +35,30 @@ export default function VaultListCell(props: { content: CellContent; onCopy?: ()
             muted: c.muted,
             mono: c.mono,
             'vault-type-badge': c.badge,
-            'vault-cell-copyable': !!props.onCopy,
+            'vault-cell-copyable': !!onCopy,
           }}
         >
           <span class="vault-cell-val" classList={{ truncate: c.truncate }}>
             {c.value}
           </span>
-          <CopyButton onCopy={props.onCopy} />
+          <CopyButton onCopy={onCopy} />
         </span>
       );
     case 'secret':
       return (
-        <span class="vault-cell vault-secret" classList={{ 'vault-cell-copyable': !!props.onCopy }}>
+        <span class="vault-cell vault-secret" classList={{ 'vault-cell-copyable': !!onCopy }}>
           <span class="vault-cell-val">{c.mask}</span>
-          <CopyButton onCopy={props.onCopy} />
+          <CopyButton onCopy={onCopy} />
         </span>
       );
     case 'totp':
       return (
-        <span class="vault-cell mono totp-code" classList={{ 'vault-cell-copyable': !!props.onCopy }}>
+        <span class="vault-cell mono totp-code" classList={{ 'vault-cell-copyable': !!onCopy }}>
           <span class="vault-cell-val">{c.code ? c.code.code : '…'}</span>
           <Show when={c.code}>
             <small class="totp-remaining">{c.code!.remaining}s</small>
           </Show>
-          <CopyButton onCopy={props.onCopy} />
+          <CopyButton onCopy={onCopy} />
         </span>
       );
     case 'secBadge':

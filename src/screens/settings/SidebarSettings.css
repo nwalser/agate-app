@@ -14,11 +14,18 @@
   background: var(--card-hover);
 }
 .sidebar-settings .sb-row.dragging {
-  opacity: 0.5;
+  opacity: 0.4;
 }
-.sidebar-settings .sb-row.dropover {
-  border-color: var(--primary);
-  background: var(--card-hover);
+/* Insert-line drop indicator (matches .column-menu-row): a 2px accent rule on the
+   edge the dragged row lands against, so "above" vs "below" is unambiguous. */
+.sidebar-settings .sb-row.drop-above {
+  box-shadow: inset 0 2px 0 0 var(--primary);
+}
+.sidebar-settings .sb-row.drop-below {
+  box-shadow: inset 0 -2px 0 0 var(--primary);
+}
+.sidebar-settings .sb-grip:active {
+  cursor: grabbing;
 }
 .sidebar-settings .sb-row.hidden .sb-name,
 .sidebar-settings .sb-row.hidden .sb-row-icon {
@@ -46,6 +53,14 @@
 }
 .sidebar-settings .sb-btn {
   padding: 5px;
+}
+
+/* Inline "section header" name editor on a divider row. */
+.sidebar-settings .sb-divider-input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  font-size: 12px;
 }
 
 /* ---- saved queries ---- */
@@ -106,33 +121,6 @@
 .sidebar-settings .sb-input {
   font-size: 12.5px;
   padding: 7px 9px;
-}
-
-.sidebar-settings .sb-seg {
-  display: flex;
-  gap: 2px;
-  padding: 2px;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-}
-.sidebar-settings .sb-seg-btn {
-  flex: 1;
-  border: none;
-  background: transparent;
-  border-radius: var(--radius-sm);
-  padding: 6px 8px;
-  font-size: 11.5px;
-  color: var(--muted-foreground);
-}
-.sidebar-settings .sb-seg-btn:hover {
-  background: var(--card-hover);
-  color: var(--foreground);
-}
-.sidebar-settings .sb-seg-btn.active {
-  background: var(--card-hover);
-  color: var(--foreground);
-  font-weight: 600;
 }
 
 /* Icon picker for a saved view: a wrapping grid of toggle buttons. */
@@ -198,21 +186,3 @@
   color: var(--foreground);
 }
 
-.sidebar-settings .sb-reset {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  border: none;
-  background: transparent;
-  border-radius: var(--radius-sm);
-  padding: 8px 10px;
-  font-size: 12px;
-  color: var(--muted-foreground);
-}
-.sidebar-settings .sb-reset:hover {
-  background: var(--card-hover);
-  color: var(--foreground);
-}
-.sidebar-settings .sb-reset svg {
-  flex-shrink: 0;
-}

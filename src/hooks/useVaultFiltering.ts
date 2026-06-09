@@ -51,6 +51,15 @@ export function useVaultFiltering(deps: {
   const folderNameOf = (id: string | null): string =>
     id ? deps.folders().find((f) => f.id === id)?.name ?? '' : '';
 
+  // At-risk logins indexed by id (for the Security sort + grouping, and the
+  // "At risk" filter view). Empty until the first offline-health report arrives.
+  const atRiskById = createMemo(() => {
+    const map = new Map<string, ItemAudit>();
+    const r = deps.health();
+    if (r) for (const a of r.atRisk) map.set(a.id, a);
+    return map;
+  });
+
   const filtered = createMemo(() => {
     const av = activeVault();
     // A `/`-prefixed query is a command, not a list filter — don't let it hide rows.
@@ -58,6 +67,11 @@ export function useVaultFiltering(deps: {
     let base = filterItems(deps.items(), term, filter());
     // Scope to the selected vault (connection), if any. null = all merged.
     if (av) base = base.filter((it) => it.accountEmail === av);
+    // "At risk" is a view over the offline-health audit: keep only flagged items.
+    if (filter().kind === 'atRisk') {
+      const risky = atRiskById();
+      base = base.filter((it) => risky.has(it.id));
+    }
     const active = filters();
     if (Object.keys(active).length === 0) return base;
     // Per-column filters. Build extractors only for the Name column and the
@@ -78,15 +92,6 @@ export function useVaultFiltering(deps: {
       .map((k) => ({ needle: active[k].toLowerCase(), get: extractors.get(k)! }));
     if (applicable.length === 0) return base;
     return base.filter((it) => applicable.every((f) => f.get(it).toLowerCase().includes(f.needle)));
-  });
-
-  // At-risk logins indexed by id (for the Security sort + grouping). Empty until
-  // the first offline-health report arrives.
-  const atRiskById = createMemo(() => {
-    const map = new Map<string, ItemAudit>();
-    const r = deps.health();
-    if (r) for (const a of r.atRisk) map.set(a.id, a);
-    return map;
   });
 
   const groupCtx = (): GroupContext => ({

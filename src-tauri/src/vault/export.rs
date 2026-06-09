@@ -82,7 +82,7 @@ fn type_name(t: ItemType) -> &'static str {
 
 /// Quote a CSV field when it contains a delimiter, quote, or newline (RFC 4180).
 fn csv_escape(s: &str) -> String {
-    if s.contains(|c| matches!(c, ',' | '"' | '\n' | '\r')) {
+    if s.contains([',', '"', '\n', '\r']) {
         format!("\"{}\"", s.replace('"', "\"\""))
     } else {
         s.to_string()

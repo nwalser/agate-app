@@ -1,0 +1,164 @@
+/* Shared Settings controls — the single switch, option picker, labelled row, and
+   reset link used on every Settings page. Design tokens only (CLAUDE.md). The look
+   here is canonical: no page should ship its own switch or picker. */
+
+/* Labelled row: [icon] · label + desc · trailing control --------------------- */
+.setting-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+}
+/* A hairline divider sits ONLY between two consecutive rows — never dangling under
+   the last row of a group (before a heading or a picker). */
+.setting-row:has(+ .setting-row) {
+  border-bottom: 1px solid var(--border);
+}
+/* `flush` rows live inside a wrapper that owns the padding/divider. */
+.setting-row.flush {
+  padding: 0;
+  border-bottom: none;
+}
+.setting-row.dim {
+  opacity: 0.5;
+}
+.setting-row-icon {
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+.setting-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.setting-row-label {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.setting-row-desc {
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+.setting-row-control {
+  flex-shrink: 0;
+}
+
+/* Switch --------------------------------------------------------------------- */
+.setting-switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 34px;
+  height: 20px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.setting-switch:disabled {
+  cursor: default;
+}
+.setting-switch.on {
+  background: var(--primary);
+  border-color: var(--primary);
+}
+.setting-switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--foreground);
+  transition: transform 0.15s, background 0.15s;
+}
+.setting-switch.on .setting-switch-knob {
+  transform: translateX(14px);
+  background: var(--primary-foreground);
+}
+
+/* Dropdown picker ------------------------------------------------------------ */
+/* The one <select> for choosing a value (timeout, clipboard, threshold, format).
+   Sized to its content + left-aligned, not full-bleed like a form field. */
+.setting-select {
+  width: auto;
+  min-width: 200px;
+  max-width: 100%;
+}
+
+/* Value pickers sit directly under their help text; give them an even gap from
+   whatever follows (a toggle row or the next subheading). */
+.settings-section > .setting-select,
+.settings-section > .setting-segmented {
+  margin-bottom: 4px;
+}
+
+/* Segmented option picker ---------------------------------------------------- */
+.setting-segmented {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.setting-seg-option {
+  flex: 1 1 0;
+  min-width: 68px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 9px 10px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.setting-seg-option:hover {
+  color: var(--foreground);
+  border-color: var(--border-strong);
+}
+.setting-seg-option.active {
+  color: var(--primary);
+  border-color: var(--primary);
+  font-weight: 600;
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+}
+.setting-seg-option svg {
+  flex-shrink: 0;
+}
+
+/* A labelled sub-field revealed under an enabled toggle (e.g. an audit threshold).
+   Indented to line up under the row text, past the leading icon. */
+.setting-subfield {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0 2px 28px;
+}
+.setting-subfield-label {
+  font-size: 11.5px;
+}
+
+/* Reset link ----------------------------------------------------------------- */
+.setting-reset {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 14px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.setting-reset:hover {
+  background: var(--card-hover);
+  color: var(--foreground);
+}
+.setting-reset svg {
+  flex-shrink: 0;
+}

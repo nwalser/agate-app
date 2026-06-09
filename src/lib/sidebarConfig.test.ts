@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   DEFAULT_ORDER,
   SIDEBAR_STORAGE_KEY,
+  builtinFilter,
   defaultSidebar,
+  entryMeta,
+  filterPageMeta,
   isDividerId,
   parseCustomQuery,
   parseSavedFilter,
@@ -10,6 +13,7 @@ import {
   reconcile,
   type CustomQuery,
 } from './sidebarConfig.ts';
+import { typeIcon } from './vaultIcons.ts';
 
 const query = (over: Partial<CustomQuery> = {}): CustomQuery => ({
   id: 'query:abc',
@@ -72,12 +76,50 @@ describe('parseSavedFilter', () => {
     expect(parseSavedFilter({ kind: 'type', itemType: 'login' })).toEqual({ kind: 'type', itemType: 'login' });
   });
 
+  it('accepts the at-risk filter', () => {
+    expect(parseSavedFilter({ kind: 'atRisk' })).toEqual({ kind: 'atRisk' });
+  });
+
   it('rejects unknown kinds, bad item types, and non-objects', () => {
     expect(parseSavedFilter({ kind: 'folder', folderId: null })).toBeNull();
     expect(parseSavedFilter({ kind: 'type', itemType: 'nope' })).toBeNull();
     expect(parseSavedFilter({ kind: 'type' })).toBeNull();
     expect(parseSavedFilter(null)).toBeNull();
     expect(parseSavedFilter('all')).toBeNull();
+  });
+});
+
+describe('atRisk built-in rail entry', () => {
+  it('is part of the default order', () => {
+    expect(DEFAULT_ORDER).toContain('atRisk');
+  });
+
+  it('selects the at-risk vault filter and has a label/icon', () => {
+    expect(builtinFilter('atRisk')).toEqual({ kind: 'atRisk' });
+    expect(entryMeta('atRisk').label).toBe('At risk');
+  });
+});
+
+describe('filterPageMeta', () => {
+  const noName = () => '';
+
+  it('labels the builtin filter pages', () => {
+    expect(filterPageMeta({ kind: 'all' }, noName).label).toBe('All items');
+    expect(filterPageMeta({ kind: 'favorites' }, noName).label).toBe('Favorites');
+    expect(filterPageMeta({ kind: 'trash' }, noName).label).toBe('Trash');
+    expect(filterPageMeta({ kind: 'atRisk' }, noName).label).toBe('At risk');
+  });
+
+  it('labels a type page and carries its type icon', () => {
+    const meta = filterPageMeta({ kind: 'type', itemType: 'login' }, noName);
+    expect(meta.label).toBe('Logins');
+    expect(meta.icon).toBe(typeIcon('login'));
+  });
+
+  it('resolves a folder page name, falling back to "No folder"', () => {
+    const named = filterPageMeta({ kind: 'folder', folderId: 'f1' }, (id) => (id === 'f1' ? 'Work' : ''));
+    expect(named.label).toBe('Work');
+    expect(filterPageMeta({ kind: 'folder', folderId: null }, noName).label).toBe('No folder');
   });
 });
 

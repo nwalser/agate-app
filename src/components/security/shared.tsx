@@ -7,7 +7,7 @@
 
 import { For, Show } from 'solid-js';
 import { Settings as SettingsIcon } from 'lucide-solid';
-import type { BreachRecord, ItemAudit } from '../../lib/types.ts';
+import type { BreachRecord } from '../../lib/types.ts';
 
 // Data classes worth flagging in red — leaking these is materially worse.
 const SEVERE_CLASSES = [
@@ -23,21 +23,6 @@ const SEVERE_CLASSES = [
 
 export function isSevere(dataClass: string): boolean {
   return SEVERE_CLASSES.includes(dataClass.toLowerCase());
-}
-
-export function chipsFor(item: ItemAudit): string[] {
-  return [
-    item.reused && 'Reused',
-    item.weak && 'Weak',
-    item.old && 'Old',
-    item.insecureUri && 'Insecure',
-    item.noTotp && 'No 2FA',
-  ].filter((c): c is string => Boolean(c));
-}
-
-export function lastRun(ts: number | null): string {
-  if (ts === null) return 'Not run yet';
-  return `Last checked ${new Date(ts).toLocaleString()}`;
 }
 
 export function DataClassChips(props: { classes: string[] }) {

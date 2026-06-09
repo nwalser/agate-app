@@ -37,27 +37,37 @@ import './ItemEditor.css';
 export default function ItemEditor(props: {
   item?: ItemDetail | null;
   createType?: ItemType;
+  /** Synthetic prefill source when creating from a template — populates the form
+   *  but keeps create semantics (no id → saving makes a brand-new item). */
+  seed?: ItemDetail | null;
   /** Which connection this item belongs to / is created in. */
   accountEmail: string;
   folders: Folder[];
+  /** Distinct usernames across the vault, for the login username autocomplete. */
+  usernameSuggestions?: string[];
   onSaved: () => void;
   onClose: () => void;
 }) {
+  // A real edit only when an actual item is passed; a template seed prefills the
+  // same way but stays a create (see `save`, which keys the id off `props.item`).
   const editing = createMemo(() => !!props.item);
+  // Prefill source: the edited item, else a template seed. Stable for the editor's
+  // lifetime (the parent keys a fresh ItemEditor per open), so reading it once is safe.
+  const prefill = props.item ?? props.seed ?? null;
   const itemType = createMemo<ItemType>(
-    () => props.item?.itemType ?? props.createType ?? 'login',
+    () => props.item?.itemType ?? props.seed?.itemType ?? props.createType ?? 'login',
   );
   // Linkable properties for this item type (empty for note / SSH key).
   const linkOptions = createMemo(() => linkedOptionsFor(itemType()));
 
   // ---- common fields ----
-  const [name, setName] = createSignal(props.item?.name ?? '');
+  const [name, setName] = createSignal(prefill?.name ?? '');
   const [folderId, setFolderId] = createSignal<string | null>(
-    props.item?.folderId ?? null,
+    prefill?.folderId ?? null,
   );
-  const [favorite, setFavorite] = createSignal(props.item?.favorite ?? false);
-  const [reprompt, setReprompt] = createSignal(props.item?.reprompt ?? false);
-  const [notes, setNotes] = createSignal(props.item?.notes ?? '');
+  const [favorite, setFavorite] = createSignal(prefill?.favorite ?? false);
+  const [reprompt, setReprompt] = createSignal(prefill?.reprompt ?? false);
+  const [notes, setNotes] = createSignal(prefill?.notes ?? '');
 
   // ---- builders registered by each field component (only the active type's
   // component mounts, so only its builder is ever set). ----
@@ -137,22 +147,26 @@ export default function ItemEditor(props: {
 
           {/* ---- login ---- */}
           <Show when={itemType() === 'login'}>
-            <LoginFields item={props.item} onReady={(b) => (buildLogin = b)} />
+            <LoginFields
+              item={prefill}
+              usernames={props.usernameSuggestions}
+              onReady={(b) => (buildLogin = b)}
+            />
           </Show>
 
           {/* ---- card ---- */}
           <Show when={itemType() === 'card'}>
-            <CardFields item={props.item} onReady={(b) => (buildCard = b)} />
+            <CardFields item={prefill} onReady={(b) => (buildCard = b)} />
           </Show>
 
           {/* ---- identity ---- */}
           <Show when={itemType() === 'identity'}>
-            <IdentityFields item={props.item} onReady={(b) => (buildIdentity = b)} />
+            <IdentityFields item={prefill} onReady={(b) => (buildIdentity = b)} />
           </Show>
 
           {/* ---- ssh key ---- */}
           <Show when={itemType() === 'sshKey'}>
-            <SshKeyFields item={props.item} onReady={(b) => (buildSshKey = b)} />
+            <SshKeyFields item={prefill} onReady={(b) => (buildSshKey = b)} />
           </Show>
 
           {/* ---- notes (all types) ---- */}
@@ -160,7 +174,7 @@ export default function ItemEditor(props: {
 
           {/* ---- custom fields (all types) ---- */}
           <CustomFieldsEditor
-            item={props.item}
+            item={prefill}
             linkOptions={linkOptions()}
             onReady={(b) => (buildFields = b)}
           />

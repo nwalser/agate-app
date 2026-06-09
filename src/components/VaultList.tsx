@@ -49,6 +49,8 @@ export interface VaultListProps {
   sortKey: SortKey;
   sortDir: SortDir;
   onSort: (k: SortKey) => void;
+  /** Set sort key + direction explicitly (the header menu's asc/desc items). */
+  onSetSort: (k: SortKey, d: SortDir) => void;
   selectedId: string | null;
   selectedCount: number;
   isSelected: (id: string) => boolean;
@@ -99,14 +101,18 @@ export default function VaultList(props: VaultListProps) {
     return col ? columnKey(col) : null;
   });
   const totpRevealed = () => {
+    // The compact list layout draws no column cells, so no TOTP is shown/needed.
+    if (columns().displayMode === 'list') return false;
     const k = totpColKey();
     return k !== null && isRevealed(k);
   };
 
   // Whether any visible column needs decrypted detail (a custom field, or a
   // revealed secret). Website + favicon come from the list's `uri` now, so they
-  // no longer force a per-row detail fetch.
+  // no longer force a per-row detail fetch. The compact list layout renders no
+  // column cells, so it never needs (or decrypts) any per-row detail.
   const detailNeeded = createMemo(() => {
+    if (columns().displayMode === 'list') return false;
     for (const col of columns().columns) {
       if (col.kind === 'custom') return true;
       if (builtinMeta(col.id).secret && isRevealed(columnKey(col))) return true;
@@ -309,6 +315,7 @@ export default function VaultList(props: VaultListProps) {
       <div
         ref={tableRef}
         class="vault-table"
+        classList={{ 'list-mode': columns().displayMode === 'list' }}
         tabindex={0}
         style={{ '--vault-cols': metrics().template }}
         onKeyDown={(e) => props.onListKeyDown(e)}
@@ -319,11 +326,19 @@ export default function VaultList(props: VaultListProps) {
       >
         {/* Header + filter row are sticky as one block, pinned vertically while the
             rows scroll under them — same scroller + the shared --vault-cols
-            template keeps every track aligned. */}
-        <div class="vault-thead">
-          <VaultListHeader sortKey={props.sortKey} sortDir={props.sortDir} onSort={props.onSort} />
-          <FilterRow />
-        </div>
+            template keeps every track aligned. Hidden in the compact list layout,
+            which has no columns to sort/filter. */}
+        <Show when={columns().displayMode === 'table'}>
+          <div class="vault-thead">
+            <VaultListHeader
+              sortKey={props.sortKey}
+              sortDir={props.sortDir}
+              onSort={props.onSort}
+              onSetSort={props.onSetSort}
+            />
+            <FilterRow />
+          </div>
+        </Show>
 
         <div class="vault-rows">
           <For each={props.items}>
@@ -367,14 +382,23 @@ export default function VaultList(props: VaultListProps) {
                       </Show>
                       <span class="vault-row-name truncate">{item.name}</span>
                     </span>
-                    <For each={columns().columns}>
-                      {(col) => (
-                        <VaultListCell
-                          content={cellContent(item, col, cellCtx())}
-                          onCopy={canCopy(item, col) ? () => props.onCopyCell(item, col) : undefined}
-                        />
-                      )}
-                    </For>
+                    <Show
+                      when={columns().displayMode === 'table'}
+                      fallback={
+                        <Show when={item.username || item.uri}>
+                          <span class="vault-row-secondary truncate">{item.username || item.uri}</span>
+                        </Show>
+                      }
+                    >
+                      <For each={columns().columns}>
+                        {(col) => (
+                          <VaultListCell
+                            content={cellContent(item, col, cellCtx())}
+                            onCopy={canCopy(item, col) ? () => props.onCopyCell(item, col) : undefined}
+                          />
+                        )}
+                      </For>
+                    </Show>
                     <span class="vault-row-end">
                       <Show when={item.favorite}>
                         <Star size={13} strokeWidth={1.75} class="vault-row-fav" />

@@ -7,8 +7,9 @@
 // live. Settings stays bottom-pinned and is not listed here.
 
 import { createSignal, For, Show } from 'solid-js';
-import { ArrowDown, ArrowUp, Eye, EyeOff, GripVertical, Minus, Pencil, Plus, RotateCcw, Trash2, X } from 'lucide-solid';
+import { ArrowDown, ArrowUp, Eye, EyeOff, GripVertical, Minus, Pencil, Plus, Trash2, X } from 'lucide-solid';
 import type { IconComponent } from '../../lib/icon.ts';
+import { ResetButton } from '../../components/settings/SettingsControls.tsx';
 import { entryMeta, isBuiltinId, isDividerId } from '../../lib/sidebarConfig.ts';
 import { DEFAULT_VIEW_ICON, VIEW_ICONS, viewIcon } from '../../lib/viewIcons.ts';
 import {
@@ -21,10 +22,12 @@ import {
   removeQuery,
   reorderEntry,
   resetSidebar,
+  setDividerLabel,
   sidebar,
   toggleHidden,
   updateQuery,
 } from '../../state/sidebar.ts';
+import { useDragReorder } from '../../hooks/useDragReorder.ts';
 import './SidebarSettings.css';
 
 function resolveRow(id: string): { label: string; icon: IconComponent } {
@@ -35,16 +38,9 @@ function resolveRow(id: string): { label: string; icon: IconComponent } {
 }
 
 export default function SidebarSettings() {
-  // Drag-reorder state (mirrors ColumnMenu): the dragged row + the hovered row.
-  const [dragIdx, setDragIdx] = createSignal<number | null>(null);
-  const [overIdx, setOverIdx] = createSignal<number | null>(null);
-
-  function drop(target: number) {
-    const from = dragIdx();
-    if (from !== null && from !== target) reorderEntry(from, target);
-    setDragIdx(null);
-    setOverIdx(null);
-  }
+  // Drag-reorder via the shared grip-handle + insert-line hook (mirrors ColumnMenu).
+  const reorder = useDragReorder({ onReorder: reorderEntry });
+  const entryCount = () => sidebar().order.length;
 
   // View add/edit form state. editId === null → adding a new view.
   const [editId, setEditId] = createSignal<string | null>(null);
@@ -92,35 +88,28 @@ export default function SidebarSettings() {
               <div
                 class="sb-row"
                 classList={{
-                  dragging: dragIdx() === i(),
-                  dropover: overIdx() === i() && dragIdx() !== i(),
+                  dragging: reorder.dragIndex() === i(),
+                  'drop-above': reorder.gap() === i() && reorder.dragIndex() !== null,
+                  'drop-below':
+                    i() === entryCount() - 1 &&
+                    reorder.gap() === entryCount() &&
+                    reorder.dragIndex() !== null,
                   hidden: isHidden(id),
                 }}
-                draggable={true}
-                onDragStart={(e) => {
-                  setDragIdx(i());
-                  e.dataTransfer?.setData('text/plain', String(i()));
-                  if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
-                }}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  setOverIdx(i());
-                  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-                }}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  drop(i());
-                }}
-                onDragEnd={() => {
-                  setDragIdx(null);
-                  setOverIdx(null);
-                }}
+                {...reorder.rowProps(i)}
               >
-                <span class="sb-grip" title="Drag to reorder" aria-hidden="true">
+                <span class="sb-grip" title="Drag to reorder" {...reorder.handleProps(i)}>
                   <GripVertical size={14} />
                 </span>
                 <Icon size={15} strokeWidth={1.6} class="sb-row-icon" />
-                <span class="sb-name">{row.label}</span>
+                <Show when={isDividerId(id)} fallback={<span class="sb-name">{row.label}</span>}>
+                  <input
+                    class="sb-input sb-divider-input"
+                    placeholder="Section header (optional)"
+                    value={sidebar().dividerLabels[id] ?? ''}
+                    onInput={(e) => setDividerLabel(id, e.currentTarget.value)}
+                  />
+                </Show>
                 <button
                   class="ghost icon-btn sb-btn"
                   title="Move up"
@@ -243,9 +232,7 @@ export default function SidebarSettings() {
         </form>
       </section>
 
-      <button class="sb-reset" onClick={() => resetSidebar()}>
-        <RotateCcw size={14} /> Reset sidebar to default
-      </button>
+      <ResetButton label="Reset sidebar to default" onClick={() => resetSidebar()} />
     </div>
   );
 }

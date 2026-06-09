@@ -145,6 +145,11 @@ mod mirror_tests {
                 fields: vec![],
                 folder_id: None,
                 organization_id: None,
+                revision_date: "2020-01-01T00:00:00Z".into(),
+                creation_date: "2020-01-01T00:00:00Z".into(),
+                collection_ids: vec![],
+                attachments: vec![],
+                passkeys: vec![],
             },
         );
         camel("TotpCode", &TotpCode { code: "123456".into(), period: 30, remaining: 10 });

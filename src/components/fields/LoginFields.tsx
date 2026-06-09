@@ -32,6 +32,8 @@ function passwordStrength(pw: string): { score: number; label: string } {
 
 export default function LoginFields(props: {
   item?: ItemDetail | null;
+  /** Past usernames across the vault, offered as autocomplete on the field. */
+  usernames?: string[];
   onReady: (build: () => LoginInput) => void;
 }) {
   const [username, setUsername] = createSignal(props.item?.login?.username ?? '');
@@ -96,8 +98,14 @@ export default function LoginFields(props: {
         <input
           value={username()}
           onInput={(e) => setUsername(e.currentTarget.value)}
+          list="ie-username-suggestions"
           autocomplete="off"
         />
+        <Show when={props.usernames && props.usernames.length > 0}>
+          <datalist id="ie-username-suggestions">
+            <For each={props.usernames}>{(u) => <option value={u} />}</For>
+          </datalist>
+        </Show>
       </div>
 
       <div class="field">

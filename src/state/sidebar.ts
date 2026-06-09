@@ -12,12 +12,14 @@ import {
   type CustomQuery,
   type SidebarConfig,
   type SidebarEntry,
+  type ViewConfig,
   defaultSidebar,
   defaultViewConfig,
   isBuiltinId,
   isDividerId,
   readSidebarConfig,
   reconcile,
+  resolveSidebar,
 } from '../lib/sidebarConfig.ts';
 
 const [sidebar, setSidebarSignal] = createSignal<SidebarConfig>(readSidebarConfig());
@@ -39,23 +41,10 @@ export function queryById(id: string): CustomQuery | null {
   return sidebar().queries.find((q) => q.id === id) ?? null;
 }
 
-/** The ordered, non-hidden entries the rail renders, resolved to builtin/query. */
+/** The ordered, non-hidden entries the rail renders, resolved to builtin/query/
+ *  divider (with labels + redundant-divider collapsing — see `resolveSidebar`). */
 export function visibleEntries(): SidebarEntry[] {
-  const cfg = sidebar();
-  const hidden = new Set(cfg.hidden);
-  const out: SidebarEntry[] = [];
-  for (const id of cfg.order) {
-    if (hidden.has(id)) continue;
-    if (isBuiltinId(id)) {
-      out.push({ kind: 'builtin', id });
-    } else if (isDividerId(id)) {
-      out.push({ kind: 'divider', id });
-    } else {
-      const q = cfg.queries.find((x) => x.id === id);
-      if (q) out.push({ kind: 'query', query: q });
-    }
-  }
-  return out;
+  return resolveSidebar(sidebar());
 }
 
 export function isHidden(id: string): boolean {
@@ -88,14 +77,15 @@ export function reorderEntry(from: number, to: number) {
   persist({ ...sidebar(), order });
 }
 
-/** Create a saved view (appended to the rail) with a name + icon and a default
- *  empty config — its filter/column snapshot is set later while viewing. Returns
+/** Create a saved view (appended to the rail). With just a name + icon it starts
+ *  from a default empty config (configured later while viewing); pass `config` to
+ *  seed it from the current list state in one step ("Save as new view"). Returns
  *  the new id, or null if the name is blank. */
-export function addQuery(input: { name: string; icon: string }): string | null {
+export function addQuery(input: { name: string; icon: string; config?: ViewConfig }): string | null {
   const name = input.name.trim();
   if (!name) return null;
   const id = `query:${crypto.randomUUID()}`;
-  const q: CustomQuery = { id, name, icon: input.icon, config: defaultViewConfig() };
+  const q: CustomQuery = { id, name, icon: input.icon, config: input.config ?? defaultViewConfig() };
   const cur = sidebar();
   persist({ ...cur, order: [...cur.order, id], queries: [...cur.queries, q] });
   return id;
@@ -116,15 +106,30 @@ export function updateQuery(id: string, patch: Partial<Omit<CustomQuery, 'id'>>)
 }
 
 /** Add a horizontal divider to the rail. Inserts at `atIndex` in `order` (clamped),
- *  or appends when omitted. Returns the new divider id. */
-export function addDivider(atIndex?: number): string {
+ *  or appends when omitted. An optional `label` makes it a section header. Returns
+ *  the new divider id. */
+export function addDivider(atIndex?: number, label?: string): string {
   const id = `${DIVIDER_PREFIX}${crypto.randomUUID()}`;
   const cur = sidebar();
   const order = cur.order.slice();
   const at = atIndex === undefined ? order.length : Math.max(0, Math.min(atIndex, order.length));
   order.splice(at, 0, id);
-  persist({ ...cur, order });
+  const dividerLabels = { ...cur.dividerLabels };
+  if (label && label.trim()) dividerLabels[id] = label.trim();
+  persist({ ...cur, order, dividerLabels });
   return id;
+}
+
+/** Set or clear a divider's section label (a blank label clears it, reverting the
+ *  divider to a plain rule). No-op for non-divider ids. */
+export function setDividerLabel(id: string, label: string) {
+  if (!isDividerId(id)) return;
+  const cur = sidebar();
+  const dividerLabels = { ...cur.dividerLabels };
+  const trimmed = label.trim();
+  if (trimmed) dividerLabels[id] = trimmed;
+  else delete dividerLabels[id];
+  persist({ ...cur, dividerLabels });
 }
 
 /** Remove any entry by id (a divider or a saved query) from order + hidden, and —
@@ -132,10 +137,12 @@ export function addDivider(atIndex?: number): string {
 export function removeEntry(id: string) {
   if (isBuiltinId(id)) return;
   const cur = sidebar();
+  // reconcile (in persist) drops the removed divider's label since its id leaves order.
   persist({
     order: cur.order.filter((x) => x !== id),
     hidden: cur.hidden.filter((x) => x !== id),
     queries: cur.queries.filter((q) => q.id !== id),
+    dividerLabels: cur.dividerLabels,
   });
 }
 

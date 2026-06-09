@@ -3,16 +3,17 @@
 // backend only runs on this explicit button press. The written path is surfaced
 // in a toast so the user knows exactly where the sensitive file landed.
 
-import { createSignal, For } from 'solid-js';
+import { createSignal } from 'solid-js';
 import { Download, Upload } from 'lucide-solid';
 import { ipc } from '../lib/ipc.ts';
 import type { ExportFormat } from '../lib/types.ts';
 import { activeVault } from '../state/ui.ts';
 import { pushToast, toastError } from '../state/toast.ts';
+import { Select } from './settings/SettingsControls.tsx';
 
-const FORMATS: { id: ExportFormat; label: string }[] = [
-  { id: 'json', label: 'JSON' },
-  { id: 'csv', label: 'CSV' },
+const FORMATS: { value: ExportFormat; label: string }[] = [
+  { value: 'json', label: 'JSON' },
+  { value: 'csv', label: 'CSV' },
 ];
 
 export default function ExportSettings() {
@@ -58,22 +59,7 @@ export default function ExportSettings() {
         <strong>The file is unencrypted</strong> — it contains all your passwords in plain text.
         Keep it somewhere safe and delete it when you're done. Trashed items are not included.
       </p>
-      <div class="clip-options" role="radiogroup" aria-label="Export format">
-        <For each={FORMATS}>
-          {(f) => (
-            <button
-              type="button"
-              role="radio"
-              aria-checked={format() === f.id}
-              class="clip-option"
-              classList={{ active: format() === f.id }}
-              onClick={() => setFormat(f.id)}
-            >
-              {f.label}
-            </button>
-          )}
-        </For>
-      </div>
+      <Select ariaLabel="Export format" value={format()} options={FORMATS} onChange={(v) => setFormat(v)} />
       <button class="primary export-btn" disabled={busy()} onClick={() => void exportNow()}>
         {busy() ? 'Exporting…' : 'Export vault'}
       </button>
