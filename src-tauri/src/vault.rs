@@ -14,6 +14,7 @@
 
 use std::collections::HashMap;
 
+use bitwarden_core::UserId;
 use bitwarden_generators::{PassphraseGeneratorRequest, PasswordGeneratorRequest};
 use bitwarden_pm::PasswordManagerClient;
 use bitwarden_sync::SyncRequest;
@@ -127,6 +128,27 @@ pub async fn sync(state: &AppState, force: bool) -> AgateResult<()> {
     Ok(())
 }
 
+/// Ensure the client's `user_id` is set. The SDK's password-login flow
+/// (`auth::login_password`) sets the tokens and the user key but never the
+/// `user_id`. Cipher *writes* (`mutate::encrypt_and_push`) require it to stamp the
+/// `encryptedFor` field — so without this, every create / edit / favorite returns
+/// `NotAuthenticated` ("Not logged in.") even though the vault is fully unlocked
+/// and reads/syncs work. We adopt it from the sync profile, which is the first
+/// authenticated response that carries the account's id.
+///
+/// Idempotent: a no-op once set (clones share one `Arc<InternalClient>`), and a
+/// no-op when the profile carried no id.
+async fn adopt_user_id(client: &PasswordManagerClient, profile_id: Option<uuid::Uuid>) {
+    if client.0.internal.get_user_id().is_some() {
+        return;
+    }
+    if let Some(id) = profile_id {
+        // ignore: `init_user_id` only errors when a *different* id is already set;
+        // we just checked it is unset, so this cannot fail here.
+        let _ = client.0.internal.init_user_id(UserId::new(id)).await;
+    }
+}
+
 async fn sync_one(client: &PasswordManagerClient, force: bool) -> AgateResult<Vec<Cipher>> {
     let response = client
         .sync()
@@ -140,6 +162,10 @@ async fn sync_one(client: &PasswordManagerClient, force: bool) -> AgateResult<Ve
             }
             AgateError::new(ErrorKind::Network, msg)
         })?;
+
+    // Sync is the first authenticated call after login, so it's where we learn the
+    // account id the write path needs. See `adopt_user_id`.
+    adopt_user_id(client, response.profile.as_ref().and_then(|p| p.id)).await;
 
     let mut ciphers: Vec<Cipher> = Vec::new();
     for model in response.ciphers.unwrap_or_default() {
@@ -271,6 +297,7 @@ pub fn view_to_detail(view: &CipherView, account_email: &str, account_label: &st
                     name: f.name.clone(),
                     value: f.value.clone(),
                     field_type: format!("{:?}", f.r#type).to_lowercase(),
+                    linked_id: f.linked_id.map(u32::from),
                 })
                 .collect()
         })
@@ -415,4 +442,56 @@ pub async fn generate_passphrase(
         .generator()
         .passphrase(request)
         .map_err(|e| AgateError::new(ErrorKind::Internal, format!("generate failed: {e}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression for "favoriting says 'Not logged in.'": the SDK's password login
+    /// leaves the client's `user_id` unset, and `mutate::encrypt_and_push` (the
+    /// favorite / create / edit write path) maps a missing `user_id` to
+    /// `NotAuthenticated`. `sync_one` adopts the id from the sync profile; this
+    /// proves the adopt step turns the failing precondition into a passing one.
+    #[tokio::test]
+    async fn adopts_user_id_from_sync_profile() {
+        let client = PasswordManagerClient::new(None);
+        // Precondition = the bug: a freshly-built (logged-in) client has no user_id,
+        // so a write would return "Not logged in." here.
+        assert!(
+            client.0.internal.get_user_id().is_none(),
+            "fresh client must have no user_id (the bug's root cause)"
+        );
+
+        let id = uuid::Uuid::parse_str("d5b1fde2-a1e3-4c5b-9e0f-1a2b3c4d5e6f").unwrap();
+        adopt_user_id(&client, Some(id)).await;
+
+        assert_eq!(
+            client.0.internal.get_user_id().map(uuid::Uuid::from),
+            Some(id),
+            "after sync, favorite/create/edit must see a user_id (no 'Not logged in.')"
+        );
+    }
+
+    /// A second adopt with a different id is ignored — the client stays bound to the
+    /// first account, never silently re-pointed.
+    #[tokio::test]
+    async fn adopt_user_id_keeps_first_id() {
+        let client = PasswordManagerClient::new(None);
+        let first = uuid::Uuid::parse_str("d5b1fde2-a1e3-4c5b-9e0f-1a2b3c4d5e6f").unwrap();
+        let second = uuid::Uuid::parse_str("00000000-0000-4000-8000-000000000000").unwrap();
+
+        adopt_user_id(&client, Some(first)).await;
+        adopt_user_id(&client, Some(second)).await;
+
+        assert_eq!(client.0.internal.get_user_id().map(uuid::Uuid::from), Some(first));
+    }
+
+    /// A sync response with no profile id leaves the client unset rather than panicking.
+    #[tokio::test]
+    async fn adopt_user_id_is_noop_without_profile_id() {
+        let client = PasswordManagerClient::new(None);
+        adopt_user_id(&client, None).await;
+        assert!(client.0.internal.get_user_id().is_none());
+    }
 }

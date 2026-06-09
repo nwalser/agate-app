@@ -7,7 +7,14 @@ import { createSignal } from 'solid-js';
 import type { ItemType } from '../lib/types.ts';
 
 /** Built-in columns the list knows how to render without configuration. */
-export type BuiltinColumnId = 'username' | 'website' | 'folder' | 'type' | 'totp' | 'password';
+export type BuiltinColumnId =
+  | 'username'
+  | 'website'
+  | 'folder'
+  | 'type'
+  | 'totp'
+  | 'password'
+  | 'security';
 
 /** A visible column: a known built-in, or a custom field referenced by name. */
 export type ColumnSpec =
@@ -43,6 +50,7 @@ export const ALL_BUILTINS: BuiltinColumnId[] = [
   'type',
   'totp',
   'password',
+  'security',
 ];
 
 /** Display labels for item types (Type column + type filter input). */
@@ -79,6 +87,10 @@ export function builtinMeta(id: BuiltinColumnId): ColumnMeta {
       return { label: 'One-time code', sortable: false, secret: true, needsDetail: true };
     case 'password':
       return { label: 'Password', sortable: false, secret: true, needsDetail: true };
+    case 'security':
+      // Rendered from the offline health report (passed into the list), not from
+      // per-item detail — so no detail fetch and not a sortable/secret column.
+      return { label: 'Security', sortable: false, secret: false, needsDetail: false };
   }
 }
 

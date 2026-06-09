@@ -170,6 +170,8 @@ pub struct CustomField {
     pub value: Option<String>,
     /// "text" | "hidden" | "boolean" | "linked"
     pub field_type: String,
+    /// For linked fields: the numeric `LinkedIdType` target (None otherwise).
+    pub linked_id: Option<u32>,
 }
 
 /// Full decrypted item detail for the detail pane and the editor (prefill).
@@ -338,6 +340,8 @@ pub struct FieldInput {
     pub value: Option<String>,
     /// 0=Text,1=Hidden,2=Boolean,3=Linked
     pub field_type: u8,
+    /// For linked fields: the numeric `LinkedIdType` target (None otherwise).
+    pub linked_id: Option<u32>,
 }
 
 // ---------------------------------------------------------------------------

@@ -314,6 +314,8 @@ export default function ItemEditor(props: {
           name: orNull(f.name),
           value: orNull(f.value),
           fieldType: FIELD_KIND_TO_INT[f.kind],
+          // Editor only produces Text/Hidden/Boolean fields, never linked ones.
+          linkedId: null,
         })),
     };
 
@@ -333,16 +335,10 @@ export default function ItemEditor(props: {
   );
 
   return (
-    <div class="item-editor-overlay" onClick={() => props.onClose()}>
-      <div
-        class="item-editor"
-        role="dialog"
-        aria-modal="true"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <div class="item-editor">
         <header class="ie-header">
           <h2 class="ie-title">{heading()}</h2>
-          <button class="ghost icon-btn" title="Close" onClick={() => props.onClose()}>
+          <button class="ghost icon-btn" title="Cancel" onClick={() => props.onClose()}>
             <X size={16} strokeWidth={1.75} />
           </button>
         </header>
@@ -870,7 +866,6 @@ export default function ItemEditor(props: {
             {saving() ? 'Saving…' : 'Save'}
           </button>
         </footer>
-      </div>
     </div>
   );
 }

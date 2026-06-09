@@ -1,5 +1,5 @@
 import { createSignal, For, Show } from 'solid-js';
-import { Fingerprint, Lock } from 'lucide-solid';
+import { Fingerprint, Lock, LockOpen } from 'lucide-solid';
 import { ipc } from '../lib/ipc.ts';
 import type { TwoFactorKind, UnlockOutcome } from '../lib/types.ts';
 import { refreshSession, status } from '../state/session.ts';
@@ -12,6 +12,21 @@ export default function Unlock() {
   const [appPassword, setAppPassword] = createSignal('');
   const [busy, setBusy] = createSignal(false);
 
+  // Drives the lock-icon + progress-bar animation, independent of `busy` (which
+  // only gates inputs): 'working' while a key is being unwrapped/connections are
+  // re-logging-in, 'unlocked' for the brief success beat before the vault opens.
+  const [phase, setPhase] = createSignal<'idle' | 'working' | 'unlocked'>('idle');
+  const prefersReducedMotion = () =>
+    typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+  /** Play the unlock beat, then hand off to the vault. */
+  async function finishUnlocked() {
+    setPhase('unlocked');
+    await delay(prefersReducedMotion() ? 120 : 620);
+    await refreshSession();
+  }
+
   // Connections that reported `twoFactorRequired` and still need a code.
   const [pending, setPending] = createSignal<UnlockOutcome[]>([]);
   const [tfToken, setTfToken] = createSignal('');
@@ -22,15 +37,16 @@ export default function Unlock() {
   const providersFor = (o: UnlockOutcome | undefined): TwoFactorKind[] =>
     o && o.status === 'twoFactorRequired' ? o.providers : [];
 
-  function handleOutcomes(outcomes: UnlockOutcome[]) {
+  async function handleOutcomes(outcomes: UnlockOutcome[]) {
     for (const o of outcomes) {
       if (o.status === 'failed') pushToast('error', `${o.email}: ${o.message}`);
     }
     const need = outcomes.filter((o) => o.status === 'twoFactorRequired');
     setPending(need);
     if (need.length === 0) {
-      void refreshSession();
+      await finishUnlocked();
     } else {
+      setPhase('idle'); // back to the locked icon; show the 2FA form
       setTfProvider(providersFor(need[0])[0] ?? 'authenticator');
     }
   }
@@ -38,11 +54,13 @@ export default function Unlock() {
   async function unlock() {
     if (!appPassword()) return;
     setBusy(true);
+    setPhase('working');
     try {
       const outcomes = await ipc.unlockAll(appPassword());
       setAppPassword('');
-      handleOutcomes(outcomes);
+      await handleOutcomes(outcomes);
     } catch (err) {
+      setPhase('idle');
       toastError(err);
     } finally {
       setBusy(false);
@@ -51,9 +69,11 @@ export default function Unlock() {
 
   async function unlockHello() {
     setBusy(true);
+    setPhase('working');
     try {
-      handleOutcomes(await ipc.helloUnlock());
+      await handleOutcomes(await ipc.helloUnlock());
     } catch (err) {
+      setPhase('idle');
       toastError(err);
     } finally {
       setBusy(false);
@@ -74,7 +94,7 @@ export default function Unlock() {
       const rest = pending().slice(1);
       setPending(rest);
       if (rest.length === 0) {
-        await refreshSession();
+        await finishUnlocked();
       } else {
         setTfProvider(providersFor(rest[0])[0] ?? 'authenticator');
       }
@@ -111,8 +131,13 @@ export default function Unlock() {
   return (
     <div class="unlock">
       <div class="unlock-card">
-        <div class="unlock-icon">
-          <Lock size={20} strokeWidth={1.75} />
+        <div
+          class="unlock-icon"
+          classList={{ working: phase() === 'working', unlocked: phase() === 'unlocked' }}
+        >
+          <Show when={phase() === 'unlocked'} fallback={<Lock size={20} strokeWidth={1.75} />}>
+            <LockOpen size={20} strokeWidth={1.75} />
+          </Show>
         </div>
 
         <Show
@@ -157,7 +182,8 @@ export default function Unlock() {
 
           <Show when={hasHello()}>
             <button class="primary full unlock-hello" disabled={busy()} onClick={() => void unlockHello()}>
-              <Fingerprint size={16} strokeWidth={1.75} /> Unlock with Windows Hello
+              <Fingerprint size={16} strokeWidth={1.75} />
+              {phase() === 'unlocked' ? 'Unlocked' : 'Unlock with Windows Hello'}
             </button>
             <div class="unlock-or muted">or</div>
           </Show>
@@ -173,8 +199,14 @@ export default function Unlock() {
             />
           </div>
           <button class="primary full" disabled={busy()} onClick={() => void unlock()}>
-            {busy() ? 'Unlocking…' : 'Unlock all'}
+            {phase() === 'unlocked' ? 'Unlocked' : busy() ? 'Unlocking…' : 'Unlock all'}
           </button>
+        </Show>
+
+        <Show when={phase() !== 'idle'}>
+          <div class="unlock-progress" classList={{ done: phase() === 'unlocked' }}>
+            <div class="unlock-progress-bar" />
+          </div>
         </Show>
 
         <button class="ghost full unlock-logout" onClick={() => void logout()}>

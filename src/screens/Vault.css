@@ -5,12 +5,13 @@
   min-height: 0;
 }
 
-.vault-header {
+/* Per-page toolbar at the top of the item list — holds the context-aware Add. */
+.vault-list-head {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--border);
+  padding: 2px 4px 6px;
 }
 
 .vault-add-anchor {
@@ -115,7 +116,7 @@
 }
 
 .vault-rail {
-  width: 168px;
+  width: 216px;
   flex-shrink: 0;
   border-right: 1px solid var(--border);
   overflow-y: auto;
@@ -125,6 +126,7 @@
   gap: 1px;
 }
 .vault-rail-btn {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 9px;
@@ -149,10 +151,57 @@
 .vault-rail-btn svg {
   flex-shrink: 0;
 }
+
+/* Security audit summary badge on the Security rail item. The pill colour comes
+   from an inline `color`/`border-color` (the health band), matching .sec-band. */
+.vault-rail-badge {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  min-width: 18px;
+  height: 17px;
+  padding: 0 6px;
+  border: 1px solid;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.vault-rail-badge svg {
+  display: block;
+}
+
+/* Collapsed rail: drop the pill to a small status dot pinned to the icon. */
+.vault-rail.collapsed .vault-rail-badge {
+  position: absolute;
+  top: 4px;
+  right: 5px;
+  min-width: 0;
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  margin: 0;
+  font-size: 0;
+  background: currentColor;
+  border: 1px solid var(--surface);
+}
+.vault-rail.collapsed .vault-rail-badge svg {
+  display: none;
+}
+
 .vault-rail-sep {
   height: 1px;
   background: var(--border);
   margin: 7px 6px;
+}
+
+/* Pushes the trailing rail group (Settings) to the bottom of the rail. */
+.vault-rail-spacer {
+  flex: 1 1 auto;
+  min-height: 8px;
 }
 
 /* Collapse toggle at the top of the rail. */
@@ -359,6 +408,12 @@ button.vault-head-cell.sorted {
   padding: 22px 26px;
 }
 
+/* While editing inline, the editor fills the pane and owns its own scroll. */
+.vault-detail.vault-detail-editing {
+  padding: 0;
+  overflow: hidden;
+}
+
 .detail-head {
   display: flex;
   align-items: flex-start;
@@ -379,6 +434,51 @@ button.vault-head-cell.sorted {
 }
 .detail-del:hover {
   color: var(--destructive);
+}
+
+/* Per-item security audit banner under the title. Clean = success-tinted icon
+   with neutral text; at-risk = warning icon plus per-flag chips. Chip colours
+   mirror SecurityCenter's .sec-chip / .sec-class.severe. */
+.detail-sec {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 18px;
+  padding: 8px 11px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: 12.5px;
+  color: var(--success);
+}
+.detail-sec.risk {
+  color: var(--warning);
+}
+.detail-sec svg {
+  flex-shrink: 0;
+}
+.detail-sec-label {
+  color: var(--foreground);
+}
+.detail-sec-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.detail-sec-chip {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: var(--warning);
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.32);
+  white-space: nowrap;
+}
+.detail-sec-chip.severe {
+  color: var(--destructive);
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.32);
 }
 
 .detail-field {

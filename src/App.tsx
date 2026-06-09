@@ -43,7 +43,7 @@ export default function App() {
 
   return (
     <>
-      <Titlebar showSearch={showSearch()} />
+      <Titlebar showSearch={showSearch()} onLock={() => void lock()} />
       <Show when={ready()} fallback={<div class="app-loading muted">Loading…</div>}>
         <Switch>
           {/* First run: create the one app password that unlocks every connection. */}

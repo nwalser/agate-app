@@ -81,6 +81,41 @@
   color: var(--muted-foreground);
 }
 
+.sec-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.sec-card-head h3 {
+  margin: 0;
+}
+.sec-refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 4px 9px;
+}
+
+.sec-disabled {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  margin: 6px 0 0;
+}
+.sec-disabled svg {
+  flex-shrink: 0;
+}
+
+.sec-affected {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--warning);
+  white-space: nowrap;
+}
+
 /* Overview ---------------------------------------------------------------- */
 
 .sec-score-card {

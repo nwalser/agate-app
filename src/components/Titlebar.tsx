@@ -14,13 +14,48 @@
 // (the search input, the control buttons) are the event target instead, so they
 // stay clickable and are not draggable.
 
-import { createSignal, For, onCleanup, onMount, Show } from 'solid-js';
+import { createMemo, createSignal, For, Match, onCleanup, onMount, Show, Switch } from 'solid-js';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { Copy, Minus, Search, Square, X } from 'lucide-solid';
+import {
+  Copy,
+  CreditCard,
+  File,
+  KeyRound,
+  Lock,
+  Minus,
+  Monitor,
+  Moon,
+  Search,
+  Square,
+  StickyNote,
+  Sun,
+  Terminal,
+  UserRound,
+  X,
+} from 'lucide-solid';
 import { ipc } from '../lib/ipc.ts';
-import type { WindowControl, WindowControlsLayout } from '../lib/types.ts';
+import type { ItemType, VaultItem, WindowControl, WindowControlsLayout } from '../lib/types.ts';
+import {
+  type Command,
+  commandTerm,
+  isCommandQuery,
+  type RankedCommand,
+  rankCommands,
+} from '../lib/command.ts';
 import { query, setQuery } from '../state/search.ts';
+import { paletteSource } from '../state/palette.ts';
+import { lastSync, requestSync, syncState } from '../state/sync.ts';
+import { setTheme, theme, type ThemePref } from '../state/theme.ts';
+import { SyncIcon } from './SyncStatus.tsx';
 import './Titlebar.css';
+
+// Theme button cycles through these in order (mirrors the old vault header).
+const THEME_CYCLE: ThemePref[] = ['system', 'light', 'dark'];
+const THEME_LABEL: Record<ThemePref, string> = {
+  system: 'System theme',
+  light: 'Light theme',
+  dark: 'Dark theme',
+};
 
 const appWindow = getCurrentWindow();
 
@@ -39,13 +74,100 @@ const DEFAULT_LAYOUT: WindowControlsLayout = {
   buttons: ['minimize', 'maximize', 'close'],
 };
 
-export default function Titlebar(props: { showSearch: boolean }) {
+// How many preview rows the search dropdown shows at once.
+const RESULT_LIMIT = 8;
+
+// Item type → preview-row icon (mirrors the vault list's typeIcon).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const ITEM_ICON: Record<ItemType, any> = {
+  login: KeyRound,
+  card: CreditCard,
+  identity: UserRound,
+  secureNote: StickyNote,
+  sshKey: Terminal,
+  unknown: File,
+};
+
+// Wrap a vault item as a runnable command for the normal-search preview.
+function itemCommand(it: VaultItem, openItem: (id: string) => void): Command {
+  return {
+    id: it.id,
+    label: it.name,
+    hint: it.username ?? undefined,
+    icon: ITEM_ICON[it.itemType],
+    run: () => openItem(it.id),
+  };
+}
+
+export default function Titlebar(props: { showSearch: boolean; onLock: () => void }) {
+  function cycleTheme() {
+    const idx = THEME_CYCLE.indexOf(theme());
+    setTheme(THEME_CYCLE[(idx + 1) % THEME_CYCLE.length]);
+  }
+
+  const syncTitle = () => {
+    if (syncState() === 'syncing') return 'Syncing…';
+    if (syncState() === 'error') return 'Sync failed — click to retry';
+    return lastSync() === null ? 'Not synced yet — click to sync' : 'Synced — click to sync now';
+  };
+
   // Tracks the OS maximize state so the maximize button shows the right glyph
   // (single square = maximize, overlapping = restore). Seeded once, then kept in
   // sync via the window's resize event. Unused on macOS (no custom controls).
   const [maximized, setMaximized] = createSignal(false);
   // Where/what controls to draw. Linux overrides this from the desktop config.
   const [layout, setLayout] = createSignal<WindowControlsLayout>(DEFAULT_LAYOUT);
+
+  // --- search dropdown: previews items (plain text) or commands (`/` prefix) ---
+  // `focused` gates the dropdown so it only shows while the field has focus;
+  // `selected` is the keyboard-highlighted row.
+  const [focused, setFocused] = createSignal(false);
+  const [selected, setSelected] = createSignal(0);
+  let searchInput: HTMLInputElement | undefined;
+
+  const commandMode = () => isCommandQuery(query());
+
+  // Top matches for the current query: action commands in `/` mode, otherwise
+  // live vault items wrapped as go-to commands. Ranked + capped for the preview.
+  const results = createMemo<RankedCommand[]>(() => {
+    const src = paletteSource();
+    if (commandMode()) {
+      return rankCommands(src.commands, commandTerm(query())).slice(0, RESULT_LIMIT);
+    }
+    const itemCmds = src.items.map((it) => itemCommand(it, src.openItem));
+    return rankCommands(itemCmds, query()).slice(0, RESULT_LIMIT);
+  });
+
+  const dropdownOpen = () => focused() && query().trim().length > 0;
+  const clampedSelected = () => Math.min(selected(), Math.max(0, results().length - 1));
+
+  function activate(index: number) {
+    const target = results()[index];
+    if (!target) return;
+    // A command is consumed (clear the field); a go-to keeps the query so the
+    // list stays filtered behind the now-selected item.
+    if (commandMode()) setQuery('');
+    setSelected(0);
+    searchInput?.blur();
+    target.command.run();
+  }
+
+  function onSearchKeyDown(e: KeyboardEvent) {
+    const count = results().length;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (count > 0) setSelected((s) => (Math.min(s, count - 1) + 1) % count);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (count > 0) setSelected((s) => (Math.min(s, count - 1) - 1 + count) % count);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      activate(clampedSelected());
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      searchInput?.blur();
+    }
+  }
 
   function syncMaximized() {
     appWindow
@@ -121,15 +243,99 @@ export default function Titlebar(props: { showSearch: boolean }) {
       <div class="titlebar-center" data-tauri-drag-region>
         <Show when={props.showSearch}>
           <div class="titlebar-search">
-            <Search size={14} strokeWidth={1.75} />
+            <Show when={commandMode()} fallback={<Search size={14} strokeWidth={1.75} />}>
+              <Terminal size={14} strokeWidth={1.75} />
+            </Show>
             <input
-              placeholder="Search vault…"
+              ref={(el) => (searchInput = el)}
+              placeholder="Search vault — type / for commands"
               value={query()}
-              onInput={(e) => setQuery(e.currentTarget.value)}
+              onInput={(e) => {
+                setQuery(e.currentTarget.value);
+                setSelected(0);
+              }}
+              onFocus={() => setFocused(true)}
+              onBlur={() => setFocused(false)}
+              onKeyDown={onSearchKeyDown}
             />
+            <Show when={dropdownOpen()}>
+              {/* Keep mousedown from blurring the input before the click lands. */}
+              <div class="titlebar-results" role="listbox" onMouseDown={(e) => e.preventDefault()}>
+                <Show
+                  when={results().length > 0}
+                  fallback={
+                    <div class="titlebar-results-empty">
+                      {commandMode() ? 'No matching commands' : 'No matches'}
+                    </div>
+                  }
+                >
+                  <For each={results()}>
+                    {(entry, index) => {
+                      const Icon = entry.command.icon;
+                      const isSelected = () => index() === clampedSelected();
+                      return (
+                        <button
+                          type="button"
+                          class="titlebar-result"
+                          classList={{ 'titlebar-result-selected': isSelected() }}
+                          role="option"
+                          aria-selected={isSelected()}
+                          onMouseEnter={() => setSelected(index())}
+                          onClick={() => activate(index())}
+                        >
+                          <Show when={Icon}>
+                            <span class="titlebar-result-icon">
+                              <Icon size={15} strokeWidth={1.5} />
+                            </span>
+                          </Show>
+                          <span class="titlebar-result-label">
+                            <For each={entry.spans}>
+                              {(span) => (
+                                <Show when={span.matched} fallback={<>{span.text}</>}>
+                                  <mark class="titlebar-result-mark">{span.text}</mark>
+                                </Show>
+                              )}
+                            </For>
+                          </span>
+                          <Show when={entry.command.hint}>
+                            <span class="titlebar-result-hint">{entry.command.hint}</span>
+                          </Show>
+                        </button>
+                      );
+                    }}
+                  </For>
+                </Show>
+              </div>
+            </Show>
           </div>
         </Show>
       </div>
+
+      <Show when={props.showSearch}>
+        <div class="titlebar-actions">
+          <button
+            class="titlebar-btn"
+            title={syncTitle()}
+            disabled={syncState() === 'syncing'}
+            onClick={() => requestSync()}
+          >
+            <SyncIcon state={syncState()} lastSync={lastSync()} />
+          </button>
+          <button class="titlebar-btn" title={THEME_LABEL[theme()]} onClick={cycleTheme}>
+            <Switch fallback={<Monitor size={15} strokeWidth={1.75} />}>
+              <Match when={theme() === 'light'}>
+                <Sun size={15} strokeWidth={1.75} />
+              </Match>
+              <Match when={theme() === 'dark'}>
+                <Moon size={15} strokeWidth={1.75} />
+              </Match>
+            </Switch>
+          </button>
+          <button class="titlebar-btn" title="Lock" onClick={() => props.onLock()}>
+            <Lock size={15} strokeWidth={1.75} />
+          </button>
+        </div>
+      </Show>
 
       <Show when={!IS_MAC}>
         <div class="titlebar-controls" classList={{ left: layout().side === 'left' }}>

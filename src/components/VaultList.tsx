@@ -25,6 +25,7 @@ import {
   File,
   Filter,
   KeyRound,
+  ShieldCheck,
   SlidersHorizontal,
   Star,
   StickyNote,
@@ -33,7 +34,16 @@ import {
   X,
 } from 'lucide-solid';
 import { ipc } from '../lib/ipc.ts';
-import type { Folder, ItemDetail, ItemType, TotpCode, VaultItem } from '../lib/types.ts';
+import type {
+  Folder,
+  ItemAudit,
+  ItemDetail,
+  ItemType,
+  TotpCode,
+  VaultHealthReport,
+  VaultItem,
+} from '../lib/types.ts';
+import { itemAuditChips } from '../lib/audit.ts';
 import {
   builtinMeta,
   columnKey,
@@ -89,6 +99,8 @@ function colWidth(c: ColumnSpec): string {
       return '120px';
     case 'folder':
       return 'minmax(0, 0.8fr)';
+    case 'security':
+      return 'minmax(0, 1.2fr)';
     default:
       return 'minmax(0, 1fr)';
   }
@@ -112,6 +124,9 @@ export interface VaultListProps {
   emptyMessage: string;
   /** Bumped by the parent after a mutation/sync to drop stale cached detail. */
   cacheToken: number;
+  /** Offline vault-health report, used by the optional "Security" column. Null
+   *  until the first audit completes; at-risk items come from its `atRisk`. */
+  security: VaultHealthReport | null;
 }
 
 export default function VaultList(props: VaultListProps) {
@@ -244,6 +259,15 @@ export default function VaultList(props: VaultListProps) {
     return props.folders.find((f) => f.id === id)?.name ?? '';
   };
 
+  // At-risk items from the offline health report, indexed by id for the Security
+  // column. Logins absent from this map (with a report present) are audited-clean.
+  const securityById = createMemo(() => {
+    const map = new Map<string, ItemAudit>();
+    const r = props.security;
+    if (r) for (const a of r.atRisk) map.set(a.id, a);
+    return map;
+  });
+
   // ---- cell content per column ----
   function cell(item: VaultItem, col: ColumnSpec): JSX.Element {
     if (col.kind === 'custom') return customCell(item, col.field, columnKey(col));
@@ -260,7 +284,31 @@ export default function VaultList(props: VaultListProps) {
         return totpCell(item, columnKey(col));
       case 'password':
         return passwordCell(item, columnKey(col));
+      case 'security':
+        return securityCell(item);
     }
+  }
+
+  function securityCell(item: VaultItem): JSX.Element {
+    // The audit covers logins only; show nothing for other types or before the
+    // first report arrives.
+    if (item.itemType !== 'login' || !props.security) return <span class="vault-cell" />;
+    const audit = securityById().get(item.id);
+    if (!audit) {
+      return (
+        <span class="vault-cell vault-sec-ok" title="No known security issues">
+          <ShieldCheck size={13} strokeWidth={1.75} />
+        </span>
+      );
+    }
+    const chips = itemAuditChips(audit);
+    return (
+      <span class="vault-cell vault-sec-cell" title={chips.map((c) => c.label).join(', ')}>
+        <For each={chips}>
+          {(c) => <span class="vault-sec-chip" classList={{ severe: c.severe }}>{c.label}</span>}
+        </For>
+      </span>
+    );
   }
 
   function passwordCell(item: VaultItem, key: string): JSX.Element {

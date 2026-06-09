@@ -26,6 +26,91 @@
   border-radius: 50%;
   background: var(--card-hover);
   color: var(--primary);
+  transition: background 0.3s ease, color 0.3s ease, transform 0.3s ease;
+}
+
+/* Deriving the key + re-logging-in: a soft breathing pulse. */
+.unlock-icon.working {
+  animation: unlock-pulse 1.2s ease-in-out infinite;
+}
+
+/* Success beat before the vault opens: pop + turn green. */
+.unlock-icon.unlocked {
+  background: color-mix(in srgb, var(--success) 18%, transparent);
+  color: var(--success);
+  animation: unlock-pop 0.5s ease;
+}
+
+@keyframes unlock-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 35%, transparent);
+  }
+  50% {
+    transform: scale(1.05);
+    box-shadow: 0 0 0 7px color-mix(in srgb, var(--primary) 0%, transparent);
+  }
+}
+
+@keyframes unlock-pop {
+  0% {
+    transform: scale(0.7);
+  }
+  55% {
+    transform: scale(1.14);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* Unlock progress — an honest indeterminate sweep while working, filling solid
+   on success. Not a fake percentage: the backend does one opaque key derivation
+   then N logins, so there is no real fraction to report. */
+.unlock-progress {
+  height: 4px;
+  margin: 14px 2px 2px;
+  border-radius: 999px;
+  background: var(--card-hover);
+  overflow: hidden;
+}
+
+.unlock-progress-bar {
+  height: 100%;
+  width: 40%;
+  border-radius: inherit;
+  background: var(--primary);
+  animation: unlock-sweep 1.15s ease-in-out infinite;
+}
+
+.unlock-progress.done .unlock-progress-bar {
+  width: 100%;
+  background: var(--success);
+  transform: none;
+  animation: none;
+  transition: width 0.4s ease;
+}
+
+@keyframes unlock-sweep {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .unlock-icon.working,
+  .unlock-icon.unlocked,
+  .unlock-progress-bar {
+    animation: none;
+  }
+  .unlock-progress .unlock-progress-bar {
+    width: 100%;
+    transform: none;
+  }
 }
 
 .unlock-title {

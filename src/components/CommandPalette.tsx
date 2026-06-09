@@ -1,14 +1,8 @@
 import { createMemo, createSignal, For, Show } from 'solid-js';
+import { type Command, rankCommands } from '../lib/command.ts';
 import './CommandPalette.css';
 
-export interface Command {
-  id: string;
-  label: string;
-  hint?: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  icon?: any;
-  run: () => void;
-}
+export type { Command };
 
 interface CommandPaletteProps {
   open: boolean;
@@ -16,93 +10,11 @@ interface CommandPaletteProps {
   commands: Command[];
 }
 
-/** Span of the label: matched spans are highlighted, plain spans are not. */
-interface LabelSpan {
-  text: string;
-  matched: boolean;
-}
-
-interface FuzzyResult {
-  /** Whether every query character appears in order. */
-  hit: boolean;
-  /** Higher is better. Rewards contiguous runs and early matches. */
-  score: number;
-  /** Indices in the label that the query matched. */
-  indices: number[];
-}
-
-/**
- * Case-insensitive subsequence matcher: every character of `query` must appear
- * in `label` in order. Contiguous runs score higher, and earlier matches beat
- * later ones, so tighter prefix-y matches rank first.
- */
-function fuzzyMatch(label: string, query: string): FuzzyResult {
-  const q = query.trim().toLowerCase();
-  if (q === '') return { hit: true, score: 0, indices: [] };
-
-  const hay = label.toLowerCase();
-  const indices: number[] = [];
-  let score = 0;
-  let run = 0;
-  let qi = 0;
-
-  for (let hi = 0; hi < hay.length && qi < q.length; hi++) {
-    if (hay[hi] === q[qi]) {
-      indices.push(hi);
-      // Contiguous matches build a run bonus; gaps reset it.
-      run = indices.length > 1 && indices[indices.length - 2] === hi - 1 ? run + 1 : 1;
-      score += run * 4;
-      // Early matches are slightly favored.
-      if (hi < 8) score += 8 - hi;
-      qi++;
-    }
-  }
-
-  if (qi < q.length) return { hit: false, score: 0, indices: [] };
-  return { hit: true, score, indices };
-}
-
-/** Build label spans from the set of matched character indices. */
-function spansFor(label: string, indices: number[]): LabelSpan[] {
-  if (indices.length === 0) return [{ text: label, matched: false }];
-
-  const matched = new Set(indices);
-  const spans: LabelSpan[] = [];
-  let buf = '';
-  let bufMatched = matched.has(0);
-
-  for (let i = 0; i < label.length; i++) {
-    const isMatched = matched.has(i);
-    if (isMatched !== bufMatched) {
-      if (buf !== '') spans.push({ text: buf, matched: bufMatched });
-      buf = '';
-      bufMatched = isMatched;
-    }
-    buf += label[i];
-  }
-  if (buf !== '') spans.push({ text: buf, matched: bufMatched });
-  return spans;
-}
-
-interface RankedCommand {
-  command: Command;
-  spans: LabelSpan[];
-}
-
 export default function CommandPalette(props: CommandPaletteProps) {
   const [query, setQuery] = createSignal('');
   const [selected, setSelected] = createSignal(0);
 
-  const ranked = createMemo<RankedCommand[]>(() => {
-    const q = query();
-    const out: { command: Command; score: number; indices: number[] }[] = [];
-    for (const command of props.commands) {
-      const res = fuzzyMatch(command.label, q);
-      if (res.hit) out.push({ command, score: res.score, indices: res.indices });
-    }
-    out.sort((a, b) => b.score - a.score);
-    return out.map((r) => ({ command: r.command, spans: spansFor(r.command.label, r.indices) }));
-  });
+  const ranked = createMemo(() => rankCommands(props.commands, query()));
 
   // Keep the selected index within the (re-filtered) result bounds.
   const clampedSelected = createMemo(() => {

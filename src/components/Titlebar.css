@@ -38,6 +38,7 @@
 }
 
 .titlebar-search {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -64,6 +65,89 @@
 }
 .titlebar-search input:focus {
   border: none;
+}
+
+/* Search/command preview, anchored under the field. Sits above the app body. */
+.titlebar-results {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: var(--z-toast);
+  padding: 6px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.titlebar-result {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--foreground);
+  text-align: left;
+  cursor: pointer;
+}
+.titlebar-result-selected {
+  background: var(--card-hover);
+}
+.titlebar-result-icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+}
+.titlebar-result-selected .titlebar-result-icon {
+  color: var(--foreground);
+}
+.titlebar-result-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.titlebar-result-mark {
+  background: transparent;
+  color: var(--primary);
+  font-weight: 600;
+}
+.titlebar-result-hint {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--subtle-foreground);
+  white-space: nowrap;
+}
+.titlebar-results-empty {
+  padding: 16px;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--muted-foreground);
+}
+
+/* Sync / theme / lock actions, right of the search and left of the window
+   controls. Narrower than the OS control buttons so they read as app actions. */
+.titlebar-actions {
+  display: flex;
+  align-items: stretch;
+  flex-shrink: 0;
+}
+.titlebar-actions .titlebar-btn {
+  width: 38px;
+}
+.titlebar-actions .titlebar-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+  background: transparent;
+  color: var(--muted-foreground);
 }
 
 .titlebar-controls {

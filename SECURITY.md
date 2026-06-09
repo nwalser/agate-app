@@ -21,20 +21,23 @@ Please do not include real vault data or credentials in a report.
   authorization gate, not OS-cryptographic sealing — documented honestly in
   `src-tauri/src/hello.rs`.
 - **Security audits** are client-side. Offline checks (reused/weak/old/insecure/
-  missing-TOTP) send nothing anywhere. The opt-in HIBP exposed-password check
-  uses k-anonymity: only the first **5 hex chars** of a password's SHA-1 ever
-  leave the device, always with `Add-Padding: true`.
-- **Dark-web monitor** (`src-tauri/src/darkweb.rs`) is **opt-in and off by
-  default**. There is no k-anonymity option for breached-email lookups anywhere
-  in the free tier, so when enabled it sends the **full email address** (one of
-  the user's own vault/account addresses) over HTTPS to a third-party breach
-  database (**XposedOrNot**) — strictly more sensitive than the password check.
-  Consent is stored and **enforced at the trust boundary** (the Rust command
-  refuses to make the call until the user has opted in), the queried email is
-  never logged, and only addresses already in the user's vault are queryable.
-  The **breach directory** tab fetches HIBP's public `/breaches` catalogue and
-  sends no personal data. Provider attribution is shown in the UI as required by
-  both providers' terms (HIBP breach data is CC BY 4.0).
+  missing-TOTP) send nothing anywhere. The HIBP exposed-password check uses
+  k-anonymity: only the first **5 hex chars** of a password's SHA-1 ever leave
+  the device, always with `Add-Padding: true`. It runs periodically and can be
+  turned off in **Settings → Security monitoring**.
+- **Dark-web monitor** (`src-tauri/src/darkweb.rs`) is **on by default** and can
+  be turned off in **Settings → Security monitoring**. It periodically scans
+  *all* of the user's own account email addresses (no arbitrary-address lookup).
+  There is no k-anonymity option for breached-email lookups anywhere in the free
+  tier, so it sends the **full email address** over HTTPS to a third-party breach
+  database (**XposedOrNot**) — strictly more sensitive than the password check,
+  which is why it is a separate, clearly-disclosed, individually-disableable
+  control. The queried email is never logged, only addresses already in the
+  user's vault are scanned, and toggling the feature off revokes the backend
+  consent flag the scan command enforces at the trust boundary. The **Breaches**
+  view shows only the breaches the user's own accounts actually appear in (and
+  what each exposed) — derived from the scan, never the full public catalogue.
+  Provider attribution is shown in the UI as required by the provider's terms.
 - **Auto-updates** are verified against an embedded **minisign** public key before
   install; the vault is locked (secrets zeroized) before the installer runs.
 - Vault decryption, auth, and the protocol use Bitwarden's **official Rust SDK**,

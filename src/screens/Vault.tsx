@@ -3,6 +3,7 @@ import {
   createMemo,
   createSignal,
   For,
+  type JSX,
   Match,
   on,
   onCleanup,
@@ -11,6 +12,7 @@ import {
   Switch,
 } from 'solid-js';
 import {
+  Check,
   Cloud,
   Copy,
   CreditCard,
@@ -32,6 +34,8 @@ import {
   RotateCcw,
   Settings as SettingsIcon,
   Shield,
+  ShieldAlert,
+  ShieldCheck,
   Star,
   StickyNote,
   Sun,
@@ -44,8 +48,21 @@ import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { ipc } from '../lib/ipc.ts';
 import { filterItems, type VaultFilter } from '../lib/search.ts';
-import type { ConnectionSummary, Folder, ItemDetail, ItemType, TotpCode, VaultItem } from '../lib/types.ts';
+import { itemAuditChips } from '../lib/audit.ts';
+import type {
+  ConnectionSummary,
+  Folder,
+  HealthBand,
+  ItemDetail,
+  ItemType,
+  TotpCode,
+  VaultHealthReport,
+  VaultItem,
+} from '../lib/types.ts';
+import { cardExpiry, identityFields } from '../lib/itemFields.ts';
 import { query, setQuery } from '../state/search.ts';
+import { clearPaletteSource, setPaletteSource } from '../state/palette.ts';
+import { isCommandQuery } from '../lib/command.ts';
 import { pushToast, toastError } from '../state/toast.ts';
 import { setTheme, theme, type ThemePref } from '../state/theme.ts';
 import ItemEditor from '../components/ItemEditor.tsx';
@@ -121,6 +138,9 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
   const [items, setItems] = createSignal<VaultItem[]>([]);
   const [folders, setFolders] = createSignal<Folder[]>([]);
   const [connections, setConnections] = createSignal<ConnectionSummary[]>([]);
+  // Offline vault-health audit, summarised as a badge on the Security rail item.
+  // Best-effort: recomputed after every sync; null until the first run.
+  const [health, setHealth] = createSignal<VaultHealthReport | null>(null);
   // `query` is the shared titlebar search signal (state/search.ts) — the search
   // field now lives in the custom window titlebar, not this header.
   const [filter, setFilter] = createSignal<VaultFilter>({ kind: 'all' });
@@ -163,8 +183,20 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
     });
   }
 
-  // Overlays / menus.
+  // Editor (rendered inline in the detail pane) + menus.
   const [editor, setEditor] = createSignal<EditorState>({ mode: 'closed' });
+  // Resolved props for the inline editor, or null when closed. A fresh object on
+  // every open/switch makes the keyed <Show> remount the form so its field
+  // signals re-init (e.g. editing item A then item B).
+  const editorView = createMemo(() => {
+    const s = editor();
+    if (s.mode === 'closed') return null;
+    return {
+      item: s.mode === 'edit' ? s.item : null,
+      createType: s.mode === 'create' ? s.createType : undefined,
+      accountEmail: s.mode === 'edit' ? s.item.accountEmail : createAccount(),
+    };
+  });
   const [addMenuOpen, setAddMenuOpen] = createSignal(false);
   const [moveMenuOpen, setMoveMenuOpen] = createSignal(false);
   const [paletteOpen, setPaletteOpen] = createSignal(false);
@@ -183,11 +215,27 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
   );
 
   const inTrash = createMemo(() => filter().kind === 'trash');
+
+  // Per-item security audit for the open detail, read off the offline health
+  // report (logins only). 'risk' carries the flags to show; 'ok' means audited
+  // and clean; null = not a login, in trash, or not yet audited (render nothing).
+  const selectedSecurity = createMemo<
+    { kind: 'risk'; chips: { label: string; severe: boolean }[] } | { kind: 'ok' } | null
+  >(() => {
+    const d = detail();
+    const h = health();
+    if (!d || !d.login || inTrash() || !h) return null;
+    const audit = h.atRisk.find((x) => x.id === d.id);
+    return audit ? { kind: 'risk', chips: itemAuditChips(audit) } : { kind: 'ok' };
+  });
+
   const folderNameOf = (id: string | null): string =>
     id ? folders().find((f) => f.id === id)?.name ?? '' : '';
   const filtered = createMemo(() => {
     const av = activeVault();
-    let base = filterItems(items(), query(), filter());
+    // A `/`-prefixed query is a command, not a list filter — don't let it hide rows.
+    const term = isCommandQuery(query()) ? '' : query();
+    let base = filterItems(items(), term, filter());
     // Scope to the selected vault (connection), if any. null = all merged.
     if (av) base = base.filter((it) => it.accountEmail === av);
     const active = filters();
@@ -282,6 +330,17 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
     }
   }
 
+  // Refresh the offline health audit behind the Security rail badge. Best-effort:
+  // the Security center surfaces real errors, so a failure here just leaves the
+  // last badge in place rather than toasting on every background sync.
+  async function loadHealth() {
+    try {
+      setHealth(await ipc.auditOffline());
+    } catch {
+      // ignore: rail badge is advisory; Security center reports audit failures
+    }
+  }
+
   // The connection a freshly created item goes into: the scoped vault when one is
   // active and unlocked, otherwise any unlocked connection.
   const createAccount = () => {
@@ -326,6 +385,8 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
       await Promise.all([loadItems(), loadFolders()]);
       setLastSync(Date.now());
       setSyncState('idle');
+      // Recompute the security badge off the freshly synced vault (offline, cheap).
+      void loadHealth();
       if (manual) pushToast('success', 'Vault synced.');
     } catch (err) {
       setSyncState('error');
@@ -354,6 +415,9 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
     // then refresh in the background — avoids a blank-then-populate flicker.
     void (async () => {
       await Promise.all([loadItems(), loadFolders(), loadConnections()]);
+      // Seed the security badge off the cached vault so it shows even if the
+      // first background sync fails; runSync refreshes it once sync completes.
+      void loadHealth();
       await runSync(false);
     })();
     autoSyncTimer = setInterval(() => void runSync(false), AUTO_SYNC_MS);
@@ -564,6 +628,21 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
     setEditor({ mode: 'edit', item: d });
   }
 
+  // The editor renders inline in the vault detail pane, so creating from another
+  // view (generator/security/…) must return to the vault view first.
+  function openCreate(createType: ItemType) {
+    setView('vault');
+    setEditor({ mode: 'create', createType });
+  }
+
+  // Reveal a single item: switch to the all-items vault view and select it.
+  // Shared by the command palette, the titlebar search, and the security center.
+  function openItem(id: string) {
+    selectFilter({ kind: 'all' });
+    clearSelection();
+    setSelectedId(id);
+  }
+
   // Cycle the header theme button through system -> light -> dark.
   function cycleTheme() {
     const idx = THEME_CYCLE.indexOf(theme());
@@ -725,7 +804,10 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
   );
 
   // ---- command palette commands ----
-  const commands = createMemo<Command[]>(() => {
+  // Action commands only (no go-to-item entries). These are what the titlebar
+  // search shows in `/` command mode; the Ctrl-K palette appends go-to-item
+  // entries below (items are reachable by plain text there).
+  const actionCommands = createMemo<Command[]>(() => {
     const list: Command[] = [];
     for (const ct of CREATE_TYPES) {
       list.push({
@@ -733,7 +815,7 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
         label: `New ${ct.label.toLowerCase()}`,
         hint: 'Create',
         icon: Plus,
-        run: () => setEditor({ mode: 'create', createType: ct.type }),
+        run: () => openCreate(ct.type),
       });
     }
     list.push({
@@ -766,6 +848,12 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
       icon: SettingsIcon,
       run: () => props.onOpenSettings(),
     });
+    return list;
+  });
+
+  // The Ctrl-K palette's full list: actions plus a go-to entry per live item.
+  const commands = createMemo<Command[]>(() => {
+    const list = [...actionCommands()];
     for (const it of items()) {
       if (it.deleted) continue;
       list.push({
@@ -773,15 +861,22 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
         label: `Go to ${it.name}`,
         hint: it.username ?? undefined,
         icon: typeIcon(it.itemType),
-        run: () => {
-          selectFilter({ kind: 'all' });
-          clearSelection();
-          setSelectedId(it.id);
-        },
+        run: () => openItem(it.id),
       });
     }
     return list;
   });
+
+  // Publish commands + items so the titlebar search (outside this tree, in
+  // App.tsx) can preview items and run commands. Cleared when the Vault unmounts.
+  createEffect(() => {
+    setPaletteSource({
+      commands: actionCommands(),
+      items: items().filter((it) => !it.deleted),
+      openItem,
+    });
+  });
+  onCleanup(clearPaletteSource);
 
   // Folders scoped to the active vault (all folders when no vault is selected) —
   // drives the rail folder tree and the bulk "move to folder" targets.
@@ -820,7 +915,7 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
                         role="menuitem"
                         onClick={() => {
                           setAddMenuOpen(false);
-                          setEditor({ mode: 'create', createType: ct.type });
+                          openCreate(ct.type);
                         }}
                       >
                         <Icon size={14} strokeWidth={1.6} />
@@ -852,9 +947,6 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
               <Moon size={15} strokeWidth={1.75} />
             </Match>
           </Switch>
-        </button>
-        <button class="ghost icon-btn" title="Settings" onClick={() => props.onOpenSettings()}>
-          <SettingsIcon size={15} strokeWidth={1.75} />
         </button>
         <button class="ghost icon-btn" title="Lock" onClick={() => props.onLock()}>
           <Lock size={15} strokeWidth={1.75} />
@@ -931,6 +1023,7 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
             icon={Shield}
             active={view() === 'security'}
             onClick={() => setView('security')}
+            badge={<SecurityRailBadge report={health()} />}
           />
           <button
             class="vault-rail-btn"
@@ -941,17 +1034,21 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
             <SyncIcon state={syncState()} lastSync={lastSync()} />
             <span>Sync</span>
           </button>
+
+          {/* Push Settings to the bottom of the rail. */}
+          <div class="vault-rail-spacer" />
+          <div class="vault-rail-sep" />
+          <FilterButton
+            label="Settings"
+            icon={SettingsIcon}
+            active={false}
+            onClick={() => props.onOpenSettings()}
+          />
         </nav>
 
         <Switch>
           <Match when={view() === 'security'}>
-            <SecurityCenter
-              onOpenItem={(id) => {
-                selectFilter({ kind: 'all' });
-                clearSelection();
-                setSelectedId(id);
-              }}
-            />
+            <SecurityCenter onOpenItem={openItem} />
           </Match>
           <Match when={view() === 'sync'}>
             <SyncStatus
@@ -1038,13 +1135,33 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
             onCheckboxToggle={onCheckboxToggle}
             emptyMessage={items().length === 0 ? 'Vault is empty or not synced.' : 'No matches.'}
             cacheToken={cacheToken()}
+            security={health()}
           />
         </aside>
 
-        <section class="vault-detail">
+        <section
+          class="vault-detail"
+          classList={{ 'vault-detail-editing': editor().mode !== 'closed' }}
+        >
+          <Show when={editorView()} keyed>
+            {(v) => (
+              <ItemEditor
+                item={v.item}
+                createType={v.createType}
+                accountEmail={v.accountEmail}
+                folders={folders()}
+                onSaved={() => void onEditorSaved()}
+                onClose={() => setEditor({ mode: 'closed' })}
+              />
+            )}
+          </Show>
           <Show
-            when={detail()}
-            fallback={<div class="vault-detail-empty muted">Select an item to view its details.</div>}
+            when={editor().mode === 'closed' && detail()}
+            fallback={
+              editor().mode === 'closed' ? (
+                <div class="vault-detail-empty muted">Select an item to view its details.</div>
+              ) : null
+            }
           >
             {(d) => (
               <div class="detail">
@@ -1104,6 +1221,43 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
                     </Show>
                   </div>
                 </div>
+
+                <Show when={selectedSecurity()}>
+                  {(sec) => {
+                    const s = sec();
+                    return (
+                      <div class="detail-sec" classList={{ risk: s.kind === 'risk' }}>
+                        <Show
+                          when={s.kind === 'risk' ? s : null}
+                          fallback={
+                            <>
+                              <ShieldCheck size={14} strokeWidth={1.75} />
+                              <span class="detail-sec-label">No known security issues</span>
+                            </>
+                          }
+                        >
+                          {(risk) => (
+                            <>
+                              <ShieldAlert size={14} strokeWidth={1.75} />
+                              <div class="detail-sec-chips">
+                                <For each={risk().chips}>
+                                  {(c) => (
+                                    <span
+                                      class="detail-sec-chip"
+                                      classList={{ severe: c.severe }}
+                                    >
+                                      {c.label}
+                                    </span>
+                                  )}
+                                </For>
+                              </div>
+                            </>
+                          )}
+                        </Show>
+                      </div>
+                    );
+                  }}
+                </Show>
 
                 <Show when={d().login}>
                   {(login) => (
@@ -1191,6 +1345,92 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
                   )}
                 </Show>
 
+                <Show when={d().card}>
+                  {(card) => (
+                    <>
+                      <Show when={card().cardholderName}>
+                        <Field
+                          label="Cardholder name"
+                          value={card().cardholderName}
+                          onCopy={() => void copy('Cardholder name', card().cardholderName)}
+                        />
+                      </Show>
+                      <Show when={card().brand}>
+                        <Field
+                          label="Brand"
+                          value={card().brand}
+                          onCopy={() => void copy('Brand', card().brand)}
+                        />
+                      </Show>
+                      <Show when={card().number}>
+                        <SecretField
+                          label="Number"
+                          value={card().number}
+                          onCopy={() => void copy('Number', card().number)}
+                        />
+                      </Show>
+                      <Show when={card().expMonth || card().expYear}>
+                        <Field
+                          label="Expiration"
+                          value={cardExpiry(card())}
+                          onCopy={() => void copy('Expiration', cardExpiry(card()))}
+                        />
+                      </Show>
+                      <Show when={card().code}>
+                        <SecretField
+                          label="Security code"
+                          value={card().code}
+                          onCopy={() => void copy('Security code', card().code)}
+                        />
+                      </Show>
+                    </>
+                  )}
+                </Show>
+
+                <Show when={d().identity}>
+                  {(id) => (
+                    <For each={identityFields(id())}>
+                      {(f) => (
+                        <Show when={f.value}>
+                          <Field
+                            label={f.label}
+                            value={f.value}
+                            onCopy={() => void copy(f.label, f.value)}
+                          />
+                        </Show>
+                      )}
+                    </For>
+                  )}
+                </Show>
+
+                <Show when={d().sshKey}>
+                  {(key) => (
+                    <>
+                      <Show when={key().publicKey}>
+                        <Field
+                          label="Public key"
+                          value={key().publicKey}
+                          onCopy={() => void copy('Public key', key().publicKey)}
+                        />
+                      </Show>
+                      <Show when={key().fingerprint}>
+                        <Field
+                          label="Fingerprint"
+                          value={key().fingerprint}
+                          onCopy={() => void copy('Fingerprint', key().fingerprint)}
+                        />
+                      </Show>
+                      <Show when={key().privateKey}>
+                        <SecretField
+                          label="Private key"
+                          value={key().privateKey}
+                          onCopy={() => void copy('Private key', key().privateKey)}
+                        />
+                      </Show>
+                    </>
+                  )}
+                </Show>
+
                 <For each={d().fields}>
                   {(f) => (
                     <Show when={f.name || f.value}>
@@ -1217,23 +1457,6 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
           </Match>
         </Switch>
       </div>
-
-      <Show when={editor().mode !== 'closed'}>
-        {(() => {
-          const state = editor();
-          if (state.mode === 'closed') return null;
-          return (
-            <ItemEditor
-              item={state.mode === 'edit' ? state.item : null}
-              createType={state.mode === 'create' ? state.createType : undefined}
-              accountEmail={state.mode === 'edit' ? state.item.accountEmail : createAccount()}
-              folders={folders()}
-              onSaved={() => void onEditorSaved()}
-              onClose={() => setEditor({ mode: 'closed' })}
-            />
-          );
-        })()}
-      </Show>
 
       <Show when={ctxMenu()}>
         {(menu) => {
@@ -1358,6 +1581,8 @@ function FilterButton(props: {
   icon: any;
   active: boolean;
   onClick: () => void;
+  // Optional trailing element (e.g. the security audit badge).
+  badge?: JSX.Element;
 }) {
   const Icon = props.icon;
   return (
@@ -1369,7 +1594,53 @@ function FilterButton(props: {
     >
       <Icon size={15} strokeWidth={1.6} />
       <span>{props.label}</span>
+      {props.badge}
     </button>
+  );
+}
+
+// Rail-band → token colour. Mirrors SecurityCenter's bandColor so the badge and
+// the Security center's score read the same severity.
+function railBandColor(band: HealthBand): string {
+  switch (band) {
+    case 'critical':
+    case 'poor':
+      return 'var(--destructive)';
+    case 'fair':
+      return 'var(--warning)';
+    case 'good':
+      return 'var(--primary)';
+    case 'excellent':
+      return 'var(--success)';
+  }
+}
+
+// Compact overview of the offline vault-health audit, shown on the Security rail
+// item: the count of at-risk items (a check when clean), tinted by health band.
+// Hidden until the first audit completes. Collapses to a coloured dot when the
+// rail is collapsed (styled in Vault.css).
+function SecurityRailBadge(props: { report: VaultHealthReport | null }) {
+  return (
+    <Show when={props.report}>
+      {(r) => {
+        const count = () => r().atRisk.length;
+        const color = () => railBandColor(r().band);
+        const title = () =>
+          `Security score ${r().score}/100 · ${count()} at-risk item${count() === 1 ? '' : 's'}`;
+        return (
+          <span
+            class="vault-rail-badge"
+            classList={{ clean: count() === 0 }}
+            style={{ color: color(), 'border-color': color() }}
+            title={title()}
+          >
+            <Show when={count() > 0} fallback={<Check size={11} strokeWidth={3} />}>
+              {count()}
+            </Show>
+          </span>
+        );
+      }}
+    </Show>
   );
 }
 
@@ -1386,3 +1657,27 @@ function Field(props: { label: string; value: string | null; onCopy: () => void 
     </div>
   );
 }
+
+// Masked value with a per-field reveal toggle (card number/CVV, SSH private key).
+function SecretField(props: { label: string; value: string | null; onCopy: () => void }) {
+  const [show, setShow] = createSignal(false);
+  return (
+    <div class="detail-field">
+      <label>{props.label}</label>
+      <div class="detail-value-row">
+        <code class="detail-value mono">{show() ? props.value : '••••••••••••'}</code>
+        <button
+          class="ghost icon-btn"
+          title={show() ? 'Hide' : 'Reveal'}
+          onClick={() => setShow(!show())}
+        >
+          {show() ? <EyeOff size={14} /> : <Eye size={14} />}
+        </button>
+        <button class="ghost icon-btn" title="Copy" onClick={() => props.onCopy()}>
+          <Copy size={14} />
+        </button>
+      </div>
+    </div>
+  );
+}
+

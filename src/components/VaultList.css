@@ -40,6 +40,38 @@
   color: var(--muted-foreground);
 }
 
+/* "Security" column: at-risk flag chips, or a green check when audited-clean.
+   Chip colours mirror SecurityCenter's .sec-chip / .sec-class.severe and the
+   detail pane's .detail-sec-chip. Chips clip to the column width (full set in
+   the cell's title tooltip). */
+.vault-sec-cell {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+}
+.vault-sec-chip {
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 999px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  color: var(--warning);
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.32);
+}
+.vault-sec-chip.severe {
+  color: var(--destructive);
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.32);
+}
+.vault-sec-ok {
+  display: flex;
+  align-items: center;
+  color: var(--success);
+}
+
 .vault-row-end {
   justify-self: end;
 }
