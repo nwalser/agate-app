@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hostOf } from './favicons.ts';
+import { hostOf, parentHost } from './favicons.ts';
 
 describe('hostOf', () => {
   it('extracts the host from a full URL', () => {
@@ -22,5 +22,24 @@ describe('hostOf', () => {
     // No dot → not a real public host (e.g. "localhost", bare words).
     expect(hostOf('localhost')).toBeNull();
     expect(hostOf('notahost')).toBeNull();
+  });
+});
+
+describe('parentHost', () => {
+  it('strips a subdomain to its registrable domain', () => {
+    expect(parentHost('login.example.com')).toBe('example.com');
+    expect(parentHost('a.b.example.com')).toBe('b.example.com');
+    expect(parentHost('b.example.com')).toBe('example.com');
+  });
+
+  it('returns null at a registrable domain', () => {
+    expect(parentHost('example.com')).toBeNull();
+  });
+
+  it('does not strip past a multi-label public suffix', () => {
+    expect(parentHost('a.example.co.uk')).toBe('example.co.uk');
+    expect(parentHost('example.co.uk')).toBeNull();
+    expect(parentHost('shop.example.com.au')).toBe('example.com.au');
+    expect(parentHost('example.com.au')).toBeNull();
   });
 });

@@ -69,3 +69,57 @@ export function icoUrl(host: string): string {
 export function appleUrl(host: string): string {
   return `https://${host}/apple-touch-icon.png`;
 }
+
+// Common multi-label public suffixes. Without these we'd treat a registry
+// domain (e.g. "co.uk") as a subdomain and chase its icon. Not exhaustive — an
+// unknown compound TLD just stops the walk one label early (a missed fallback,
+// never a wrong icon).
+const MULTI_LABEL_SUFFIXES = new Set([
+  'co.uk',
+  'org.uk',
+  'gov.uk',
+  'ac.uk',
+  'me.uk',
+  'net.uk',
+  'com.au',
+  'net.au',
+  'org.au',
+  'edu.au',
+  'gov.au',
+  'co.jp',
+  'or.jp',
+  'ne.jp',
+  'ac.jp',
+  'go.jp',
+  'co.nz',
+  'net.nz',
+  'org.nz',
+  'govt.nz',
+  'co.za',
+  'org.za',
+  'com.br',
+  'com.cn',
+  'com.mx',
+  'com.tr',
+  'com.sg',
+  'com.hk',
+  'co.in',
+  'co.kr',
+  'co.il',
+]);
+
+/**
+ * The host one label up, or null if `host` is already a registrable domain
+ * (eTLD+1). Lets a subdomain with no icon fall back to its domain's icon.
+ * E.g. "login.example.com" -> "example.com", "example.com" -> null,
+ * "a.example.co.uk" -> "example.co.uk" -> null.
+ */
+export function parentHost(host: string): string | null {
+  const labels = host.split('.');
+  if (labels.length < 3) return null; // already at most eTLD+1
+  const rest = labels.slice(1);
+  // Stripping would leave a bare public suffix (e.g. "co.uk"): `host` is the
+  // registrable domain already.
+  if (rest.length === 2 && MULTI_LABEL_SUFFIXES.has(rest.join('.'))) return null;
+  return rest.join('.');
+}

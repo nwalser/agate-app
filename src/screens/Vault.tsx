@@ -24,8 +24,6 @@ import {
   FolderInput,
   KeyRound,
   Lock,
-  Monitor,
-  Moon,
   PanelLeftClose,
   PanelLeftOpen,
   Pencil,
@@ -38,7 +36,6 @@ import {
   ShieldCheck,
   Star,
   StickyNote,
-  Sun,
   Terminal,
   Timer,
   Trash2,
@@ -64,10 +61,10 @@ import { query, setQuery } from '../state/search.ts';
 import { clearPaletteSource, setPaletteSource } from '../state/palette.ts';
 import { isCommandQuery } from '../lib/command.ts';
 import { pushToast, toastError } from '../state/toast.ts';
-import { setTheme, theme, type ThemePref } from '../state/theme.ts';
+import { lastSync, setLastSync, setSyncState, syncRequest, syncState } from '../state/sync.ts';
 import ItemEditor from '../components/ItemEditor.tsx';
 import SecurityCenter from '../components/SecurityCenter.tsx';
-import SyncStatus, { SyncIcon, type SyncState } from '../components/SyncStatus.tsx';
+import SyncStatus, { SyncIcon } from '../components/SyncStatus.tsx';
 import CommandPalette, { type Command } from '../components/CommandPalette.tsx';
 import VaultList from '../components/VaultList.tsx';
 import FolderTree from '../components/FolderTree.tsx';
@@ -104,6 +101,10 @@ const CREATE_TYPES: { type: ItemType; label: string }[] = [
   { type: 'sshKey', label: 'SSH key' },
 ];
 
+// Singular create label for a type (e.g. the per-page "Add login" button).
+const createLabel = (t: ItemType): string =>
+  CREATE_TYPES.find((c) => c.type === t)?.label ?? 'item';
+
 // Left-rail filters. `unknown` items only appear under "All items".
 const TYPE_FILTERS: { type: ItemType; label: string }[] = [
   { type: 'login', label: 'Logins' },
@@ -126,14 +127,6 @@ type EditorState =
   | { mode: 'create'; createType: ItemType }
   | { mode: 'edit'; item: ItemDetail };
 
-// Header theme button cycles through these in order.
-const THEME_CYCLE: ThemePref[] = ['system', 'light', 'dark'];
-const THEME_META: Record<ThemePref, { icon: typeof Sun; label: string }> = {
-  system: { icon: Monitor, label: 'System theme' },
-  light: { icon: Sun, label: 'Light theme' },
-  dark: { icon: Moon, label: 'Dark theme' },
-};
-
 export default function Vault(props: { onLock: () => void; onOpenSettings: () => void }) {
   const [items, setItems] = createSignal<VaultItem[]>([]);
   const [folders, setFolders] = createSignal<Folder[]>([]);
@@ -148,11 +141,10 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
   const [detail, setDetail] = createSignal<ItemDetail | null>(null);
   const [revealed, setRevealed] = createSignal(false);
   const [totp, setTotp] = createSignal<TotpCode | null>(null);
-  // Sync status drives the cloud icon in the header. 'syncing' = in flight,
-  // 'error' = last attempt failed, 'idle' = up to date. `lastSync` is the epoch
-  // ms of the last successful sync (null until the first one completes).
-  const [syncState, setSyncState] = createSignal<SyncState>('idle');
-  const [lastSync, setLastSync] = createSignal<number | null>(null);
+  // Sync status (syncState / lastSync) now lives in state/sync.ts so the titlebar
+  // can show the cloud icon and trigger a manual sync; this screen still owns the
+  // actual sync logic (it reloads items/folders/health) — see the syncRequest
+  // effect below.
 
   // Multi-select state. `anchor` is the last clicked row for shift-range select.
   const [selectedIds, setSelectedIds] = createSignal<Set<string>>(new Set());
@@ -200,6 +192,14 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
   const [addMenuOpen, setAddMenuOpen] = createSignal(false);
   const [moveMenuOpen, setMoveMenuOpen] = createSignal(false);
   const [paletteOpen, setPaletteOpen] = createSignal(false);
+
+  // The current list page's type, if it's a type page (Logins/Cards/…). Drives
+  // the per-page Add button: a type page adds that type directly; All / Favorites
+  // / folders fall back to the type-picker menu.
+  const addType = createMemo<ItemType | null>(() => {
+    const f = filter();
+    return f.kind === 'type' ? f.itemType : null;
+  });
 
   // Column sort. `displayed` is the filtered list in the sorted order the rows
   // actually render in — selection (shift-range) and the For both key off it so
@@ -395,6 +395,11 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
   }
 
   const sync = () => runSync(true);
+
+  // The titlebar's sync button can't reach runSync (it holds the reload logic),
+  // so it bumps syncRequest and we run a manual sync here. Deferred so the
+  // initial mount value doesn't trigger a sync.
+  createEffect(on(syncRequest, () => void runSync(true), { defer: true }));
 
   // Re-sync + reload after any vault mutation, then clear selection.
   async function reloadAfterMutation() {
@@ -641,12 +646,6 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
     selectFilter({ kind: 'all' });
     clearSelection();
     setSelectedId(id);
-  }
-
-  // Cycle the header theme button through system -> light -> dark.
-  function cycleTheme() {
-    const idx = THEME_CYCLE.indexOf(theme());
-    setTheme(THEME_CYCLE[(idx + 1) % THEME_CYCLE.length]);
   }
 
   // ---- row context-menu actions (operate on a single right-clicked item) ----
@@ -897,62 +896,6 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
 
   return (
     <div class="vault">
-      <header class="vault-header">
-        <div class="vault-add-anchor">
-          <button class="vault-add" onClick={() => setAddMenuOpen((v) => !v)} title="Add item">
-            <Plus size={15} strokeWidth={1.75} /> Add
-          </button>
-          <Show when={addMenuOpen()}>
-            <>
-              <div class="vault-menu-backdrop" onClick={() => setAddMenuOpen(false)} />
-              <div class="vault-menu" role="menu">
-                <For each={CREATE_TYPES}>
-                  {(ct) => {
-                    const Icon = typeIcon(ct.type);
-                    return (
-                      <button
-                        class="vault-menu-item"
-                        role="menuitem"
-                        onClick={() => {
-                          setAddMenuOpen(false);
-                          openCreate(ct.type);
-                        }}
-                      >
-                        <Icon size={14} strokeWidth={1.6} />
-                        {ct.label}
-                      </button>
-                    );
-                  }}
-                </For>
-              </div>
-            </>
-          </Show>
-        </div>
-
-        <span class="spacer" />
-        <button
-          class="ghost icon-btn"
-          title={syncTooltip()}
-          disabled={syncState() === 'syncing'}
-          onClick={() => void sync()}
-        >
-          <SyncIcon state={syncState()} lastSync={lastSync()} />
-        </button>
-        <button class="ghost icon-btn" title={THEME_META[theme()].label} onClick={cycleTheme}>
-          <Switch fallback={<Monitor size={15} strokeWidth={1.75} />}>
-            <Match when={theme() === 'light'}>
-              <Sun size={15} strokeWidth={1.75} />
-            </Match>
-            <Match when={theme() === 'dark'}>
-              <Moon size={15} strokeWidth={1.75} />
-            </Match>
-          </Switch>
-        </button>
-        <button class="ghost icon-btn" title="Lock" onClick={() => props.onLock()}>
-          <Lock size={15} strokeWidth={1.75} />
-        </button>
-      </header>
-
       <div class="vault-body">
         <nav class="vault-rail" classList={{ collapsed: sidebarCollapsed() }}>
           <button
@@ -1064,6 +1007,59 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
           <Match when={view() === 'vault'}>
             <>
         <aside class="vault-list">
+          <Show when={view() === 'vault' && !inTrash()}>
+            <div class="vault-list-head">
+              <Show
+                when={addType()}
+                fallback={
+                  <div class="vault-add-anchor">
+                    <button
+                      class="vault-add"
+                      title="Add item"
+                      onClick={() => setAddMenuOpen((v) => !v)}
+                    >
+                      <Plus size={15} strokeWidth={1.75} /> Add
+                    </button>
+                    <Show when={addMenuOpen()}>
+                      <>
+                        <div class="vault-menu-backdrop" onClick={() => setAddMenuOpen(false)} />
+                        <div class="vault-menu" role="menu">
+                          <For each={CREATE_TYPES}>
+                            {(ct) => {
+                              const Icon = typeIcon(ct.type);
+                              return (
+                                <button
+                                  class="vault-menu-item"
+                                  role="menuitem"
+                                  onClick={() => {
+                                    setAddMenuOpen(false);
+                                    openCreate(ct.type);
+                                  }}
+                                >
+                                  <Icon size={14} strokeWidth={1.6} />
+                                  {ct.label}
+                                </button>
+                              );
+                            }}
+                          </For>
+                        </div>
+                      </>
+                    </Show>
+                  </div>
+                }
+              >
+                {(t) => (
+                  <button
+                    class="vault-add"
+                    title={`Add ${createLabel(t()).toLowerCase()}`}
+                    onClick={() => openCreate(t())}
+                  >
+                    <Plus size={15} strokeWidth={1.75} /> Add {createLabel(t()).toLowerCase()}
+                  </button>
+                )}
+              </Show>
+            </div>
+          </Show>
           <Show when={selectedCount() > 0}>
             <div class="vault-bulk">
               <span class="vault-bulk-count">{selectedCount()} selected</span>

@@ -100,7 +100,7 @@ fn build_fields(input: &ItemInput) -> Vec<Value> {
     input
         .fields
         .iter()
-        .map(|f| json!({ "name": f.name, "value": f.value, "type": f.field_type, "linkedId": null }))
+        .map(|f| json!({ "name": f.name, "value": f.value, "type": f.field_type, "linkedId": f.linked_id }))
         .collect()
 }
 
