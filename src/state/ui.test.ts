@@ -120,6 +120,49 @@ describe('ui state — sidebar width', () => {
   });
 });
 
+describe('ui state — item list width', () => {
+  beforeEach(() => localStorage.clear());
+
+  it('defaults to LIST_DEFAULT_WIDTH', async () => {
+    const m = await freshUi();
+    expect(m.listWidth()).toBe(m.LIST_DEFAULT_WIDTH);
+  });
+
+  it('setListWidth rounds, persists, and re-reads', async () => {
+    const m = await freshUi();
+    m.setListWidth(640.4);
+    expect(m.listWidth()).toBe(640);
+    expect(localStorage.getItem('agate.listWidth')).toBe('640');
+  });
+
+  it('clamps below the minimum and above the maximum', async () => {
+    const m = await freshUi();
+    m.setListWidth(10);
+    expect(m.listWidth()).toBe(m.LIST_MIN_WIDTH);
+    m.setListWidth(99999);
+    expect(m.listWidth()).toBe(m.LIST_MAX_WIDTH);
+  });
+
+  it('reads + clamps a persisted width at load', async () => {
+    const m = await freshUi({ 'agate.listWidth': '700' });
+    expect(m.listWidth()).toBe(700);
+    const tooWide = await freshUi({ 'agate.listWidth': '99999' });
+    expect(tooWide.listWidth()).toBe(tooWide.LIST_MAX_WIDTH);
+  });
+
+  it('falls back to the default on a bogus persisted value', async () => {
+    const m = await freshUi({ 'agate.listWidth': 'wide' });
+    expect(m.listWidth()).toBe(m.LIST_DEFAULT_WIDTH);
+  });
+
+  it('resetListWidth restores the default', async () => {
+    const m = await freshUi();
+    m.setListWidth(700);
+    m.resetListWidth();
+    expect(m.listWidth()).toBe(m.LIST_DEFAULT_WIDTH);
+  });
+});
+
 describe('ui state — row density', () => {
   beforeEach(() => localStorage.clear());
 

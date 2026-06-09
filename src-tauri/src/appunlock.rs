@@ -177,6 +177,18 @@ pub async fn unlock_all(
     finish_unlock(state, vmk).await
 }
 
+/// Verify the app password WITHOUT changing any session state — used to gate
+/// reprompt ("require master password to view") items behind a re-entry. Reuses
+/// the unlock derive/unwrap so the check matches `unlock_all` byte-for-byte; the
+/// unwrapped VMK is dropped (and zeroized) immediately, so nothing is unlocked,
+/// stored, or leaked. A wrong password returns `Ok(false)`, not an error.
+pub async fn verify_app_password(
+    state: &AppState,
+    app_password: Zeroizing<String>,
+) -> AgateResult<bool> {
+    Ok(unwrap_vmk_with_password(state, app_password).await.is_ok())
+}
+
 async fn unwrap_vmk_with_password(
     state: &AppState,
     app_password: Zeroizing<String>,

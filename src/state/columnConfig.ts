@@ -145,11 +145,16 @@ export function isFilterable(c: ColumnSpec): boolean {
 }
 
 // ---- grid track metrics -------------------------------------------------------
-// The list is a CSS grid whose `grid-template-columns` and total minimum width
-// are derived from the visible column set. Every column has a hard FLOOR (px) so
-// tracks can never collapse to zero and overlap their neighbours when the pane is
-// narrow — instead the table reaches its minimum width and scrolls horizontally.
-// A user-set drag width overrides both the flexible track and its floor.
+// The list is a CSS grid whose `grid-template-columns` is derived from the visible
+// column set. Every configurable track floors at 0 (`minmax(0, …)`) so the columns
+// COMPRESS to fit the list pane rather than overflowing it — the table never
+// scrolls horizontally, and the last (flexible) column always reaches the right
+// edge, flush against the detail pane. Each track still carries a natural width
+// (`min`, summed into `minWidth`) used as an informational metric, and a column's
+// preferred size is its `minmax` upper bound: fixed px for the icon columns, an
+// `fr` share for the text columns. A user drag-width caps a track to that width
+// (still shrinkable). The leading checkbox and trailing affordance tracks are the
+// only hard-fixed columns; everything between them flexes.
 
 /** Gap between grid tracks (px) — mirrors `gap` in the .vault-head/.vault-row CSS. */
 export const COL_GAP = 10;
@@ -157,65 +162,68 @@ export const COL_GAP = 10;
 export const CHECK_COL_PX = 22;
 /** Fixed trailing column for the favorite star / row affordances (px). */
 export const END_COL_PX = 76;
-/** Floor + flexible track for the always-on Name column. */
+/** Natural width + flexible track for the always-on Name column. */
 const NAME_COL_FLOOR = 150;
-const NAME_COL_TRACK = `minmax(${NAME_COL_FLOOR}px, 1.6fr)`;
+const NAME_COL_TRACK = `minmax(0, 1.6fr)`;
 
 interface Track {
   /** A single `grid-template-columns` entry. */
   template: string;
-  /** The smallest width this track can occupy (px) — feeds the table min-width. */
+  /** This track's natural width (px) — summed into the table's `minWidth`. */
   min: number;
 }
 
-/** The default track (template + floor) for a configurable column. */
+/** The default track (shrinkable template + natural width) for a column. */
 export function columnTrack(c: ColumnSpec): Track {
-  if (c.kind === 'custom') return { template: 'minmax(120px, 1fr)', min: 120 };
+  if (c.kind === 'custom') return { template: 'minmax(0, 1fr)', min: 120 };
   switch (c.id) {
     case 'type':
-      return { template: '96px', min: 96 };
+      return { template: 'minmax(0, 96px)', min: 96 };
     case 'totp':
-      return { template: '120px', min: 120 };
+      return { template: 'minmax(0, 120px)', min: 120 };
     case 'username':
-      return { template: 'minmax(120px, 1fr)', min: 120 };
+      return { template: 'minmax(0, 1fr)', min: 120 };
     case 'website':
-      return { template: 'minmax(130px, 1fr)', min: 130 };
+      return { template: 'minmax(0, 1fr)', min: 130 };
     case 'folder':
-      return { template: 'minmax(110px, 0.8fr)', min: 110 };
+      return { template: 'minmax(0, 0.8fr)', min: 110 };
     case 'password':
-      return { template: 'minmax(120px, 1fr)', min: 120 };
+      return { template: 'minmax(0, 1fr)', min: 120 };
     case 'security':
-      // A single right-aligned status badge (icon) — a tight fixed track is plenty.
-      return { template: '72px', min: 72 };
+      // A single right-aligned status badge (icon) — a tight track is plenty.
+      return { template: 'minmax(0, 72px)', min: 72 };
     case 'passkey':
-      // A single presence icon — tight fixed track.
-      return { template: '72px', min: 72 };
+      // A single presence icon — tight track.
+      return { template: 'minmax(0, 72px)', min: 72 };
   }
 }
 
-/** Resolve one column's track, honouring a user drag-width override. */
+/** Resolve one column's track, honouring a user drag-width override (as a cap). */
 function resolveTrack(c: ColumnSpec, widths: Record<string, number>): Track {
   const w = widths[columnKey(c)];
-  if (w) return { template: `${w}px`, min: w };
+  if (w) return { template: `minmax(0, ${w}px)`, min: w };
   return columnTrack(c);
 }
 
 export interface GridMetrics {
   /** Value for the `--vault-cols` custom property (grid-template-columns). */
   template: string;
-  /** Total minimum width of the table (px): all track floors + the gaps. */
+  /** The table's natural width (px): every track's natural width + the gaps.
+   *  Informational — tracks compress below this to fit a narrow pane. */
   minWidth: number;
 }
 
 /**
- * Build the grid template and the table's minimum width from the visible columns
- * (plus the fixed checkbox/name/end tracks). The min-width is what lets the table
- * scroll horizontally instead of squashing columns into each other.
+ * Build the grid template (and the table's natural width) from the visible columns
+ * plus the fixed checkbox/name/end tracks. Every configurable track is shrinkable,
+ * so the grid always fits the list pane width instead of scrolling horizontally.
  */
 export function gridMetrics(cols: ColumnSpec[], widths: Record<string, number>): GridMetrics {
   const tracks: Track[] = [{ template: `${CHECK_COL_PX}px`, min: CHECK_COL_PX }];
   const nameW = widths[NAME_COL_KEY];
-  tracks.push(nameW ? { template: `${nameW}px`, min: nameW } : { template: NAME_COL_TRACK, min: NAME_COL_FLOOR });
+  tracks.push(
+    nameW ? { template: `minmax(0, ${nameW}px)`, min: nameW } : { template: NAME_COL_TRACK, min: NAME_COL_FLOOR },
+  );
   for (const c of cols) tracks.push(resolveTrack(c, widths));
   tracks.push({ template: `${END_COL_PX}px`, min: END_COL_PX });
   const template = tracks.map((t) => t.template).join(' ');
@@ -256,29 +264,35 @@ function parseSpec(v: unknown): ColumnSpec | null {
   return null;
 }
 
+/** Validate an arbitrary value into a `ColumnConfig`, falling back field-by-field
+ *  to DEFAULT. Shared by `readColumnConfig` (localStorage) and the saved-view
+ *  snapshot parser (lib/sidebarConfig.ts) so both validate identically (no `any`). */
+export function parseColumnConfig(value: unknown): ColumnConfig {
+  if (typeof value !== 'object' || value === null) return { ...DEFAULT };
+  const o = value as Record<string, unknown>;
+  const columns = Array.isArray(o.columns)
+    ? o.columns.map(parseSpec).filter((x): x is ColumnSpec => x !== null)
+    : DEFAULT.columns;
+  const revealed = Array.isArray(o.revealed)
+    ? o.revealed.filter((x): x is string => typeof x === 'string')
+    : [];
+  const favicons = typeof o.favicons === 'boolean' ? o.favicons : DEFAULT.favicons;
+  const widths: Record<string, number> = {};
+  if (o.widths && typeof o.widths === 'object') {
+    for (const [k, v] of Object.entries(o.widths as Record<string, unknown>)) {
+      if (typeof v === 'number' && Number.isFinite(v) && v >= MIN_COL_WIDTH) widths[k] = v;
+    }
+  }
+  const groupBy = isGroupKey(o.groupBy) ? o.groupBy : null;
+  return { columns, revealed, favicons, widths, groupBy };
+}
+
 /** Read + validate the persisted config; corrupt/unavailable falls back to DEFAULT. */
 export function readColumnConfig(): ColumnConfig {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return DEFAULT;
-    const parsed: unknown = JSON.parse(raw);
-    if (typeof parsed !== 'object' || parsed === null) return DEFAULT;
-    const o = parsed as Record<string, unknown>;
-    const columns = Array.isArray(o.columns)
-      ? o.columns.map(parseSpec).filter((x): x is ColumnSpec => x !== null)
-      : DEFAULT.columns;
-    const revealed = Array.isArray(o.revealed)
-      ? o.revealed.filter((x): x is string => typeof x === 'string')
-      : [];
-    const favicons = typeof o.favicons === 'boolean' ? o.favicons : DEFAULT.favicons;
-    const widths: Record<string, number> = {};
-    if (o.widths && typeof o.widths === 'object') {
-      for (const [k, v] of Object.entries(o.widths as Record<string, unknown>)) {
-        if (typeof v === 'number' && Number.isFinite(v) && v >= MIN_COL_WIDTH) widths[k] = v;
-      }
-    }
-    const groupBy = isGroupKey(o.groupBy) ? o.groupBy : null;
-    return { columns, revealed, favicons, widths, groupBy };
+    return parseColumnConfig(JSON.parse(raw));
   } catch {
     // ignore: corrupt/unavailable config falls back to defaults
     return DEFAULT;

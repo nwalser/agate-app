@@ -23,6 +23,11 @@ pub async fn unlock_all(state: State<'_>, app_password: String) -> AgateResult<V
 }
 
 #[tauri::command]
+pub async fn verify_app_password(state: State<'_>, password: String) -> AgateResult<bool> {
+    appunlock::verify_app_password(&state, Zeroizing::new(password)).await
+}
+
+#[tauri::command]
 pub async fn unlock_connection_2fa(
     state: State<'_>,
     email: String,

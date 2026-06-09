@@ -1,12 +1,16 @@
-//! Windows Hello unlock commands (real impl on Windows; stubs elsewhere).
+//! Biometric unlock commands. Windows Hello on Windows (`hello.rs`); Touch ID /
+//! polkit on macOS/Linux (`hello_unix.rs` — authored on Windows, UNVERIFIED on
+//! those targets, see that file); a stub on any other platform.
 
 use super::State;
 use crate::dto::UnlockOutcome;
 use crate::error::AgateResult;
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 use crate::error::{AgateError, ErrorKind};
 #[cfg(target_os = "windows")]
 use crate::hello;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+use crate::hello_unix;
 use crate::secrets;
 
 #[tauri::command]
@@ -15,7 +19,11 @@ pub async fn hello_available() -> bool {
     {
         hello::available().await
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        hello_unix::available().await
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     {
         false
     }
@@ -27,16 +35,20 @@ pub async fn hello_enable(state: State<'_>) -> AgateResult<()> {
     {
         hello::enable(&state).await
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        hello_unix::enable(&state).await
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     {
         let _ = &state;
-        Err(AgateError::new(ErrorKind::Internal, "Windows Hello is only available on Windows."))
+        Err(AgateError::new(ErrorKind::Internal, "Biometric unlock isn't available on this platform."))
     }
 }
 
 #[tauri::command]
 pub async fn hello_disable(state: State<'_>) -> AgateResult<()> {
-    // Cross-platform: forget the stored VMK + clear the flag (no Hello API needed).
+    // Cross-platform: forget the stored VMK + clear the flag (no biometric API needed).
     secrets::delete_hello_blob()?;
     state.config.lock().await.hello_configured = false;
     state.save_config().await
@@ -51,9 +63,15 @@ pub async fn hello_unlock(
     {
         hello::unlock_all(&state, &window).await
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        // macOS/Linux consent gates don't need the window handle.
+        let _ = &window;
+        hello_unix::unlock_all(&state).await
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     {
         let _ = (&state, &window);
-        Err(AgateError::new(ErrorKind::Internal, "Windows Hello is only available on Windows."))
+        Err(AgateError::new(ErrorKind::Internal, "Biometric unlock isn't available on this platform."))
     }
 }

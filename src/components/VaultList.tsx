@@ -125,9 +125,9 @@ export default function VaultList(props: VaultListProps) {
     }
   });
 
-  // The grid template + the table's minimum width, derived from the visible
-  // columns and any user drag-widths. The min-width is what makes the table
-  // scroll horizontally instead of squashing columns into each other when narrow.
+  // The grid template, derived from the visible columns and any user drag-widths.
+  // Every configurable track is shrinkable, so the grid fits the list pane width
+  // (columns compress) rather than overflowing it.
   const metrics = createMemo(() => gridMetrics(columns().columns, columns().widths));
 
   const folderName = (id: string | null): string => {
@@ -310,16 +310,16 @@ export default function VaultList(props: VaultListProps) {
         ref={tableRef}
         class="vault-table"
         tabindex={0}
-        style={{ '--vault-cols': metrics().template, '--vault-min': `${metrics().minWidth}px` }}
+        style={{ '--vault-cols': metrics().template }}
         onKeyDown={(e) => props.onListKeyDown(e)}
         onPointerDown={onTablePointerDown}
         onPointerMove={onTablePointerMove}
         onPointerUp={onTablePointerUp}
         onContextMenu={onTableContextMenu}
       >
-        {/* Header + filter row are sticky as one block, so they pin vertically
-            yet scroll horizontally in lockstep with the rows (same scroll
-            container + the shared --vault-min keeps every track aligned). */}
+        {/* Header + filter row are sticky as one block, pinned vertically while the
+            rows scroll under them — same scroller + the shared --vault-cols
+            template keeps every track aligned. */}
         <div class="vault-thead">
           <VaultListHeader sortKey={props.sortKey} sortDir={props.sortDir} onSort={props.onSort} />
           <FilterRow />

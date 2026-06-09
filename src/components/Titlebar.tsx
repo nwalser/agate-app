@@ -29,6 +29,7 @@ import {
 } from '../lib/command.ts';
 import { query, setQuery } from '../state/search.ts';
 import { paletteSource } from '../state/palette.ts';
+import { recentIds } from '../state/recentItems.ts';
 import { connectionNav } from '../state/connections.ts';
 import { activeVault } from '../state/ui.ts';
 import { lastSync, requestSync, syncState } from '../state/sync.ts';
@@ -134,17 +135,32 @@ export default function Titlebar(props: { showSearch: boolean; onLock: () => voi
   const commandMode = () => isCommandQuery(query());
 
   // Top matches for the current query: action commands in `/` mode, otherwise
-  // live vault items wrapped as go-to commands. Ranked + capped for the preview.
+  // live vault items wrapped as go-to commands. With an empty query we surface
+  // recently-opened items (a focus-to-recents affordance). Ranked + capped.
   const results = createMemo<RankedCommand[]>(() => {
     const src = paletteSource();
     if (commandMode()) {
       return rankCommands(src.commands, commandTerm(query())).slice(0, RESULT_LIMIT);
     }
+    const q = query().trim();
+    if (q.length === 0) {
+      const byId = new Map(src.items.map((it) => [it.id, it] as const));
+      return recentIds()
+        .map((id) => byId.get(id))
+        .filter((it): it is VaultItem => it !== undefined)
+        .map((it) => ({
+          command: itemCommand(it, src.openItem),
+          spans: [{ text: it.name, matched: false }],
+        }));
+    }
     const itemCmds = src.items.map((it) => itemCommand(it, src.openItem));
     return rankCommands(itemCmds, query()).slice(0, RESULT_LIMIT);
   });
 
-  const dropdownOpen = () => focused() && query().trim().length > 0;
+  // Recents make the dropdown useful even with an empty field; otherwise it only
+  // opens once the user types.
+  const showingRecents = () => !commandMode() && query().trim().length === 0;
+  const dropdownOpen = () => focused() && (query().trim().length > 0 || results().length > 0);
   const clampedSelected = () => Math.min(selected(), Math.max(0, results().length - 1));
 
   function activate(index: number) {
@@ -279,6 +295,9 @@ export default function Titlebar(props: { showSearch: boolean; onLock: () => voi
             <Show when={dropdownOpen()}>
               {/* Keep mousedown from blurring the input before the click lands. */}
               <div class="titlebar-results" role="listbox" onMouseDown={(e) => e.preventDefault()}>
+                <Show when={showingRecents()}>
+                  <div class="titlebar-results-head">Recent</div>
+                </Show>
                 <Show
                   when={results().length > 0}
                   fallback={

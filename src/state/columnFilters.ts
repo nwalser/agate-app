@@ -18,6 +18,19 @@ export function toggleFiltersVisible() {
   setFiltersVisible((v) => !v);
 }
 
+/** Show or hide the per-column filter row (used when applying a saved view). */
+export function showColumnFilters(on: boolean) {
+  setFiltersVisible(on);
+}
+
+/** Replace every per-column filter at once (restoring a saved view's snapshot).
+ *  Drops empty values so `hasActiveFilters` stays accurate. */
+export function setAllColumnFilters(rec: Record<string, string>) {
+  const next: Record<string, string> = {};
+  for (const [k, v] of Object.entries(rec)) if (v) next[k] = v;
+  setFilters(next);
+}
+
 export function columnFilter(key: string): string {
   return filters()[key] ?? '';
 }

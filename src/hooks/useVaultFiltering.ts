@@ -169,6 +169,12 @@ export function useVaultFiltering(deps: {
     }
   }
 
+  // Set sort key + direction outright (restoring a saved view's snapshot).
+  function setSort(key: SortKey, dir: SortDir) {
+    setSortKey(key);
+    setSortDir(dir);
+  }
+
   // Folders scoped to the active vault (all folders when no vault is selected) —
   // drives the rail folder tree and the bulk "move to folder" targets.
   const scopedFolders = createMemo(() => {
@@ -183,6 +189,7 @@ export function useVaultFiltering(deps: {
     sortKey,
     sortDir,
     toggleSort,
+    setSort,
     inTrash,
     addType,
     folderNameOf,

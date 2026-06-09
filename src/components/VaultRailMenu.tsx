@@ -26,7 +26,6 @@ import type { Folder, HealthBand, VaultHealthReport, VaultItem } from '../lib/ty
 import type { VaultFilter } from '../lib/search.ts';
 import { type VaultView, filterEq } from '../lib/vaultConfig.ts';
 import {
-  QUERY_ICON,
   builtinFilter,
   entryMeta,
   isDividerId,
@@ -34,8 +33,8 @@ import {
   type CustomQuery,
   type SidebarBuiltinId,
 } from '../lib/sidebarConfig.ts';
+import { viewIcon } from '../lib/viewIcons.ts';
 import { addDivider, moveEntry, removeEntry, sidebar, toggleHidden, visibleEntries } from '../state/sidebar.ts';
-import { query } from '../state/search.ts';
 import FolderTree from './FolderTree.tsx';
 import { ContextMenu, CtxItem, CtxSep } from './ContextMenu.tsx';
 import { SyncIcon, type SyncState } from './SyncStatus.tsx';
@@ -47,6 +46,8 @@ export default function VaultRailMenu(props: {
   toggleSidebar: () => void;
   selectFilter: (f: VaultFilter) => void;
   onRunQuery: (q: CustomQuery) => void;
+  /** Id of the saved view currently being shown (drives the active highlight). */
+  activeViewId: string | null;
   scopedFolders: Folder[];
   items: VaultItem[];
   folderCreate: (account: string, fullName: string) => void;
@@ -163,10 +164,8 @@ export default function VaultRailMenu(props: {
             return (
               <FilterButton
                 label={q.name}
-                icon={QUERY_ICON}
-                active={
-                  props.view === 'vault' && filterEq(props.filter, q.filter) && query() === q.query
-                }
+                icon={viewIcon(q.icon)}
+                active={props.view === 'vault' && props.activeViewId === q.id}
                 onClick={() => props.onRunQuery(q)}
                 onContextMenu={(e) => openEntryMenu(e, q.id)}
               />

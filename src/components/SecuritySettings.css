@@ -76,3 +76,8 @@
   border-color: var(--primary);
   font-weight: 600;
 }
+
+/* Export button sits below the format picker. */
+.export-btn {
+  margin-top: 10px;
+}

@@ -675,6 +675,29 @@
   overflow: hidden;
 }
 
+/* Which of the user's accounts a breach hit (in the unified breach view). */
+.sec-breach-accounts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  margin: 6px 0 0;
+}
+.sec-account-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: var(--radius-sm);
+  color: var(--muted-foreground);
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+.sec-account-chip svg {
+  flex-shrink: 0;
+}
+
 .truncate {
   overflow: hidden;
   text-overflow: ellipsis;

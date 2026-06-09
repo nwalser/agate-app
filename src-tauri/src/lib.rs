@@ -14,9 +14,14 @@ mod dto;
 mod error;
 #[cfg(target_os = "windows")]
 mod hello;
+// Biometric unlock for non-Windows (Touch ID / polkit). ⚠️ authored on Windows,
+// unverified on its target platforms — see src/hello_unix.rs.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod hello_unix;
 mod mutate;
 mod proxy;
 mod qrscan;
+mod scancache;
 mod secrets;
 mod server;
 mod setup;
@@ -38,8 +43,14 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_log::Builder::new().build())
+        // Launch-at-login (toggled via the set_autostart/get_autostart commands).
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         // Remember the window's size/position/maximized state across restarts.
@@ -64,6 +75,7 @@ pub fn run() {
             configure_app_unlock,
             change_app_unlock,
             unlock_all,
+            verify_app_password,
             unlock_connection_2fa,
             send_connection_email_code,
             list_connections,
@@ -78,11 +90,18 @@ pub fn run() {
             sync_vault,
             list_items,
             list_folders,
+            list_collections,
+            list_sends,
+            delete_send,
+            download_attachment,
             item_detail,
             item_totp,
             scan_totp_qr,
             generate_password,
             generate_passphrase,
+            generate_username,
+            export_vault,
+            import_vault,
             save_item,
             clone_item,
             set_favorite,
@@ -93,12 +112,16 @@ pub fn run() {
             rename_folder,
             delete_folder,
             window_controls_layout,
+            get_autostart,
+            set_autostart,
             audit_offline,
             audit_exposed,
             set_darkweb_consent,
             darkweb_scan_email,
             darkweb_scan_vault,
             breach_directory,
+            cache_security_scans,
+            load_security_scans,
             hello_available,
             hello_enable,
             hello_disable,

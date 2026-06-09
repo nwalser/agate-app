@@ -1,21 +1,16 @@
 // Settings › Sidebar — customize the left nav rail: reorder entries (drag or
-// arrows), show/hide any entry, and manage saved custom queries (a name + search
-// text + base filter pinned to the rail). Reads/writes the sidebar store
-// (state/sidebar.ts); the rail re-renders live. Settings stays bottom-pinned and
-// is not listed here.
+// arrows), show/hide any entry, add divider lines, and manage saved VIEWS. A view
+// here is only created/renamed/re-iconed (name + icon) + reordered/deleted — its
+// actual list configuration (filter, search, per-column filters, column layout,
+// sort) is captured while *viewing* it (the "Save changes" bar on the vault
+// screen). Reads/writes the sidebar store (state/sidebar.ts); the rail re-renders
+// live. Settings stays bottom-pinned and is not listed here.
 
 import { createSignal, For, Show } from 'solid-js';
 import { ArrowDown, ArrowUp, Eye, EyeOff, GripVertical, Minus, Pencil, Plus, RotateCcw, Trash2, X } from 'lucide-solid';
 import type { IconComponent } from '../../lib/icon.ts';
-import type { ItemType } from '../../lib/types.ts';
-import { TYPE_FILTERS } from '../../lib/vaultConfig.ts';
-import {
-  QUERY_ICON,
-  entryMeta,
-  isBuiltinId,
-  isDividerId,
-  type SavedFilter,
-} from '../../lib/sidebarConfig.ts';
+import { entryMeta, isBuiltinId, isDividerId } from '../../lib/sidebarConfig.ts';
+import { DEFAULT_VIEW_ICON, VIEW_ICONS, viewIcon } from '../../lib/viewIcons.ts';
 import {
   addDivider,
   addQuery,
@@ -32,20 +27,11 @@ import {
 } from '../../state/sidebar.ts';
 import './SidebarSettings.css';
 
-type FilterKind = SavedFilter['kind'];
-
 function resolveRow(id: string): { label: string; icon: IconComponent } {
   if (isBuiltinId(id)) return entryMeta(id);
   if (isDividerId(id)) return { label: 'Divider', icon: Minus };
   const q = queryById(id);
-  return { label: q?.name ?? id, icon: QUERY_ICON };
-}
-
-function filterLabel(f: SavedFilter): string {
-  if (f.kind === 'type') return TYPE_FILTERS.find((t) => t.type === f.itemType)?.label ?? f.itemType;
-  if (f.kind === 'favorites') return 'Favorites';
-  if (f.kind === 'trash') return 'Trash';
-  return 'All items';
+  return { label: q?.name ?? id, icon: viewIcon(q?.icon) };
 }
 
 export default function SidebarSettings() {
@@ -60,24 +46,15 @@ export default function SidebarSettings() {
     setOverIdx(null);
   }
 
-  // Saved-query add/edit form state. editId === null → adding a new query.
+  // View add/edit form state. editId === null → adding a new view.
   const [editId, setEditId] = createSignal<string | null>(null);
   const [name, setName] = createSignal('');
-  const [text, setText] = createSignal('');
-  const [kind, setKind] = createSignal<FilterKind>('all');
-  const [itemType, setItemType] = createSignal<ItemType>('login');
-
-  function buildFilter(): SavedFilter {
-    const k = kind();
-    return k === 'type' ? { kind: 'type', itemType: itemType() } : { kind: k };
-  }
+  const [icon, setIcon] = createSignal<string>(DEFAULT_VIEW_ICON);
 
   function resetForm() {
     setEditId(null);
     setName('');
-    setText('');
-    setKind('all');
-    setItemType('login');
+    setIcon(DEFAULT_VIEW_ICON);
   }
 
   function beginEdit(id: string) {
@@ -85,28 +62,19 @@ export default function SidebarSettings() {
     if (!q) return;
     setEditId(id);
     setName(q.name);
-    setText(q.query);
-    setKind(q.filter.kind);
-    if (q.filter.kind === 'type') setItemType(q.filter.itemType);
+    setIcon(q.icon);
   }
 
   function submit(e: Event) {
     e.preventDefault();
     if (!name().trim()) return;
     const id = editId();
-    if (id) updateQuery(id, { name: name(), query: text(), filter: buildFilter() });
-    else addQuery({ name: name(), query: text(), filter: buildFilter() });
+    if (id) updateQuery(id, { name: name(), icon: icon() });
+    else addQuery({ name: name(), icon: icon() });
     resetForm();
   }
 
-  const customQueries = () => sidebar().queries;
-
-  const KINDS: { value: FilterKind; label: string }[] = [
-    { value: 'all', label: 'All' },
-    { value: 'favorites', label: 'Favorites' },
-    { value: 'trash', label: 'Trash' },
-    { value: 'type', label: 'Type' },
-  ];
+  const views = () => sidebar().queries;
 
   return (
     <div class="settings-page sidebar-settings">
@@ -197,47 +165,47 @@ export default function SidebarSettings() {
       </section>
 
       <section class="settings-section">
-        <h3>Custom queries</h3>
+        <h3>Saved views</h3>
         <p class="muted settings-help">
-          Pin a saved search to the rail. Clicking it scopes the list to the base filter and fills
-          the search box with your text.
+          Pin a view to the rail. Set its name + icon here; configure what it shows (filter,
+          search, columns, sort) while viewing it, then hit “Save changes”.
         </p>
 
-        <Show when={customQueries().length > 0}>
+        <Show when={views().length > 0}>
           <div class="sb-queries">
-            <For each={customQueries()}>
-              {(q) => (
-                <div class="sb-query">
-                  <QUERY_ICON size={15} strokeWidth={1.6} class="sb-row-icon" />
-                  <div class="sb-query-text">
-                    <span class="sb-query-name">{q.name}</span>
-                    <span class="sb-query-sub muted">
-                      {filterLabel(q.filter)}
-                      <Show when={q.query.trim()}> · “{q.query}”</Show>
-                    </span>
+            <For each={views()}>
+              {(q) => {
+                const Icon = viewIcon(q.icon);
+                return (
+                  <div class="sb-query">
+                    <Icon size={15} strokeWidth={1.6} class="sb-row-icon" />
+                    <div class="sb-query-text">
+                      <span class="sb-query-name">{q.name}</span>
+                      <span class="sb-query-sub muted">View</span>
+                    </div>
+                    <button class="ghost icon-btn sb-btn" title="Edit" onClick={() => beginEdit(q.id)}>
+                      <Pencil size={14} />
+                    </button>
+                    <button
+                      class="ghost icon-btn sb-btn"
+                      title="Delete"
+                      onClick={() => {
+                        if (editId() === q.id) resetForm();
+                        removeQuery(q.id);
+                      }}
+                    >
+                      <Trash2 size={14} />
+                    </button>
                   </div>
-                  <button class="ghost icon-btn sb-btn" title="Edit" onClick={() => beginEdit(q.id)}>
-                    <Pencil size={14} />
-                  </button>
-                  <button
-                    class="ghost icon-btn sb-btn"
-                    title="Delete"
-                    onClick={() => {
-                      if (editId() === q.id) resetForm();
-                      removeQuery(q.id);
-                    }}
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              )}
+                );
+              }}
             </For>
           </div>
         </Show>
 
         <form class="sb-form" onSubmit={submit}>
           <div class="sb-form-head">
-            <span class="sb-form-title">{editId() ? 'Edit query' : 'New query'}</span>
+            <span class="sb-form-title">{editId() ? 'Edit view' : 'New view'}</span>
             <Show when={editId()}>
               <button type="button" class="ghost icon-btn sb-btn" title="Cancel edit" onClick={resetForm}>
                 <X size={14} />
@@ -250,34 +218,27 @@ export default function SidebarSettings() {
             value={name()}
             onInput={(e) => setName(e.currentTarget.value)}
           />
-          <input
-            class="sb-input"
-            placeholder="Search text (optional)"
-            value={text()}
-            onInput={(e) => setText(e.currentTarget.value)}
-          />
-          <div class="sb-seg" role="group" aria-label="Base filter">
-            <For each={KINDS}>
-              {(k) => (
-                <button
-                  type="button"
-                  class="sb-seg-btn"
-                  classList={{ active: kind() === k.value }}
-                  aria-pressed={kind() === k.value}
-                  onClick={() => setKind(k.value)}
-                >
-                  {k.label}
-                </button>
-              )}
+          <div class="sb-icon-grid" role="group" aria-label="Icon">
+            <For each={VIEW_ICONS}>
+              {(opt) => {
+                const Icon = opt.icon;
+                return (
+                  <button
+                    type="button"
+                    class="sb-icon-btn"
+                    classList={{ active: icon() === opt.id }}
+                    aria-pressed={icon() === opt.id}
+                    title={opt.id}
+                    onClick={() => setIcon(opt.id)}
+                  >
+                    <Icon size={16} strokeWidth={1.6} />
+                  </button>
+                );
+              }}
             </For>
           </div>
-          <Show when={kind() === 'type'}>
-            <select class="sb-input" value={itemType()} onChange={(e) => setItemType(e.currentTarget.value as ItemType)}>
-              <For each={TYPE_FILTERS}>{(t) => <option value={t.type}>{t.label}</option>}</For>
-            </select>
-          </Show>
           <button type="submit" class="sb-add" disabled={!name().trim()}>
-            <Plus size={14} /> {editId() ? 'Save query' : 'Add query'}
+            <Plus size={14} /> {editId() ? 'Save view' : 'Add view'}
           </button>
         </form>
       </section>

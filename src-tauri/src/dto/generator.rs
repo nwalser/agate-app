@@ -50,3 +50,29 @@ impl Default for PassphraseGenOptions {
         Self { num_words: 3, word_separator: "-".into(), capitalize: true, include_number: true }
     }
 }
+
+/// Username-generator mode (closed set). Forwarded-email aliases (SimpleLogin,
+/// addy.io, …) are intentionally out of scope — these modes need no network.
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum UsernameMode {
+    /// `local+<random>@domain`, derived from a base email ("plus addressing").
+    PlusAddressed,
+    /// `<random>@domain` for a catch-all domain you control.
+    CatchAll,
+    /// A standalone random token (no email).
+    Random,
+}
+
+/// Username-generator options from the UI.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsernameGenOptions {
+    pub mode: UsernameMode,
+    /// Base email for plus-addressing (mode = `plusAddressed`).
+    #[serde(default)]
+    pub email: Option<String>,
+    /// Domain for catch-all addressing (mode = `catchAll`).
+    #[serde(default)]
+    pub domain: Option<String>,
+}

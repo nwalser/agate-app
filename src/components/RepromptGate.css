@@ -1,0 +1,39 @@
+.reprompt-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-toast);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.5);
+}
+.reprompt-card {
+  width: 100%;
+  max-width: 340px;
+  padding: 18px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+}
+.reprompt-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.reprompt-title svg {
+  color: var(--muted-foreground);
+}
+.reprompt-desc {
+  font-size: 12px;
+  margin: 6px 0 12px;
+}
+.reprompt-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}

@@ -4,7 +4,7 @@
 
 use bitwarden_generators::{PassphraseGeneratorRequest, PasswordGeneratorRequest};
 
-use crate::dto::PasswordGenOptions;
+use crate::dto::{PasswordGenOptions, UsernameGenOptions, UsernameMode};
 use crate::error::{AgateError, AgateResult, ErrorKind};
 use crate::state::AppState;
 
@@ -52,4 +52,56 @@ pub async fn generate_passphrase(
         .generator()
         .passphrase(request)
         .map_err(|e| AgateError::new(ErrorKind::Internal, format!("generate failed: {e}")))
+}
+
+/// Generate a random lowercase+digit token of `length` chars, via the SDK's
+/// password generator (reused so we don't ship a second RNG path).
+async fn random_token(state: &AppState, length: u8) -> AgateResult<String> {
+    let client = any_or_throwaway(state).await;
+    let request = PasswordGeneratorRequest {
+        lowercase: true,
+        uppercase: false,
+        numbers: true,
+        special: false,
+        length,
+        avoid_ambiguous: true,
+        ..Default::default()
+    };
+    client
+        .generator()
+        .password(request)
+        .map_err(|e| AgateError::new(ErrorKind::Internal, format!("generate failed: {e}")))
+}
+
+/// Generate a username / email alias. Plus-addressed and catch-all build off a
+/// random token; `random` returns the bare token. Forwarded-email services are
+/// intentionally out of scope (they need network + per-service API keys).
+pub async fn generate_username(
+    state: &AppState,
+    opts: UsernameGenOptions,
+) -> AgateResult<String> {
+    match opts.mode {
+        UsernameMode::Random => random_token(state, 12).await,
+        UsernameMode::PlusAddressed => {
+            let token = random_token(state, 8).await?;
+            let email = opts.email.unwrap_or_default();
+            let email = email.trim();
+            let (local, domain) = email
+                .split_once('@')
+                .ok_or_else(|| AgateError::bad_request("Enter a base email like you@example.com."))?;
+            if local.is_empty() || domain.is_empty() {
+                return Err(AgateError::bad_request("Enter a valid base email."));
+            }
+            Ok(format!("{local}+{token}@{domain}"))
+        }
+        UsernameMode::CatchAll => {
+            let token = random_token(state, 8).await?;
+            let domain = opts.domain.unwrap_or_default();
+            let domain = domain.trim().trim_start_matches('@');
+            if domain.is_empty() || !domain.contains('.') {
+                return Err(AgateError::bad_request("Enter a catch-all domain like example.com."));
+            }
+            Ok(format!("{token}@{domain}"))
+        }
+    }
 }

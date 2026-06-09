@@ -11,6 +11,9 @@
   /* Left navigation sidebar width — shared by the Vault rail and the Settings
      sub-nav so every sidebar lines up. Reference this, never a bare px. */
   --sidebar-width: 216px;
+  /* Item-list pane width (the list ↔ detail split). Both are drag-resizable and
+     re-applied from localStorage in App.tsx; these are the pre-JS fallbacks. */
+  --list-width: 560px;
 
   /* z-index scale — reference these, never bare literals (CLAUDE.md). Ordered:
      sticky table chrome < floating selection bar < dropdown menus < context
@@ -222,34 +225,50 @@ a {
   border: 2px solid var(--background);
 }
 
-/* Shared drag handle for resizing the left sidebar (SidebarResizer). Sits at the
-   seam between a sidebar and the content next to it, pinned to --sidebar-width so
-   it follows the live width while dragging. Rendered in the sidebar's flex parent
-   (.vault-body / .settings-layout), never inside the scrolling rail. */
-.sidebar-resizer {
+/* Shared drag handle for resizing a pane (Resizer). A thin vertical grab strip
+   with a hairline that lights up on hover/drag. Positioning is per-variant below. */
+.resizer {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: var(--sidebar-width);
   width: 9px;
-  margin-left: -4px;
   cursor: col-resize;
   z-index: 4;
   touch-action: none;
 }
-.sidebar-resizer::after {
+.resizer::after {
   content: '';
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 4px;
   width: 1px;
   background: transparent;
   transition: background 0.12s;
 }
-.sidebar-resizer:hover::after,
-.sidebar-resizer:active::after {
+.resizer:hover::after,
+.resizer:active::after {
   background: var(--primary);
+}
+
+/* Sidebar variant: sits at the rail seam, pinned to --sidebar-width so it follows
+   the live width while dragging. Rendered in the sidebar's flex parent
+   (.vault-body / .settings-layout), never inside the scrolling rail — so it may
+   overhang the seam with a negative margin. */
+.resizer.sidebar-resizer {
+  left: var(--sidebar-width);
+  margin-left: -4px;
+}
+.resizer.sidebar-resizer::after {
+  left: 4px;
+}
+
+/* Item-list variant: pinned to the list pane's own right edge. The list clips
+   overflow, so keep the handle inside its bounds (no negative margin). */
+.resizer.list-resizer {
+  right: 0;
+}
+.resizer.list-resizer::after {
+  right: 0;
 }
 
 /* While a sidebar drag is in flight, force the resize cursor everywhere and kill

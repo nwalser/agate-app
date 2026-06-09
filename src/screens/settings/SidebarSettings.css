@@ -135,6 +135,33 @@
   font-weight: 600;
 }
 
+/* Icon picker for a saved view: a wrapping grid of toggle buttons. */
+.sidebar-settings .sb-icon-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.sidebar-settings .sb-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+  color: var(--muted-foreground);
+}
+.sidebar-settings .sb-icon-btn:hover {
+  background: var(--card-hover);
+  color: var(--foreground);
+}
+.sidebar-settings .sb-icon-btn.active {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+}
+
 .sidebar-settings .sb-add {
   display: inline-flex;
   align-items: center;

@@ -14,15 +14,16 @@
 
 use std::collections::HashMap;
 
+use bitwarden_collections::collection::{Collection as VaultCollection, CollectionView};
 use bitwarden_core::UserId;
 use bitwarden_pm::PasswordManagerClient;
 use bitwarden_sync::SyncRequest;
 use bitwarden_vault::{
-    generate_totp, Cipher, CipherView, Folder as VaultFolder, FolderView,
+    generate_totp, Cipher, CipherView, Fido2CredentialView, Folder as VaultFolder, FolderView,
 };
 use chrono::Utc;
 
-use crate::dto::{Folder, ItemDetail, TotpCode, VaultItem};
+use crate::dto::{Collection, Folder, ItemDetail, PasskeyCredential, TotpCode, VaultItem};
 use crate::error::{AgateError, AgateResult, ErrorKind};
 use crate::server;
 use crate::state::AppState;
@@ -79,14 +80,14 @@ pub async fn sync(state: &AppState, force: bool) -> AgateResult<()> {
         return Err(AgateError::not_authenticated());
     }
 
-    let mut results: Vec<(String, Vec<Cipher>, Vec<VaultFolder>)> = Vec::new();
+    let mut results: Vec<(String, Vec<Cipher>, Vec<VaultFolder>, Vec<VaultCollection>)> = Vec::new();
     let mut first_err: Option<AgateError> = None;
     let mut any_ok = false;
     for (email, client) in clients {
         match sync_one(&client, force).await {
-            Ok((ciphers, folders)) => {
+            Ok((ciphers, folders, collections)) => {
                 any_ok = true;
-                results.push((email, ciphers, folders));
+                results.push((email, ciphers, folders, collections));
             }
             Err(e) => {
                 log::warn!("sync failed for a connection: {}", e.message);
@@ -99,10 +100,11 @@ pub async fn sync(state: &AppState, force: bool) -> AgateResult<()> {
 
     {
         let mut session = state.session.lock().await;
-        for (email, ciphers, folders) in results {
+        for (email, ciphers, folders, collections) in results {
             if let Some(conn) = session.connections.get_mut(&email) {
                 conn.ciphers = ciphers;
                 conn.folders = folders;
+                conn.collections = collections;
             }
         }
     }
@@ -139,7 +141,7 @@ async fn adopt_user_id(client: &PasswordManagerClient, profile_id: Option<uuid::
 async fn sync_one(
     client: &PasswordManagerClient,
     force: bool,
-) -> AgateResult<(Vec<Cipher>, Vec<VaultFolder>)> {
+) -> AgateResult<(Vec<Cipher>, Vec<VaultFolder>, Vec<VaultCollection>)> {
     let response = client
         .sync()
         .sync(SyncRequest { force, exclude_subdomains: None })
@@ -192,7 +194,17 @@ async fn sync_one(
         }
     }
 
-    Ok((ciphers, folders))
+    // Collections, like ciphers/folders, aren't materialized by the SDK — decode
+    // them from the sync response and cache for `list_collections`.
+    let mut collections: Vec<VaultCollection> = Vec::new();
+    for model in response.collections.unwrap_or_default() {
+        match VaultCollection::try_from(model) {
+            Ok(c) => collections.push(c),
+            Err(e) => log::warn!("skipping collection that failed to decode: {e}"),
+        }
+    }
+
+    Ok((ciphers, folders, collections))
 }
 
 /// Decrypt every unlocked connection's cached ciphers into one unified list,
@@ -223,11 +235,51 @@ pub async fn list_items(state: &AppState) -> AgateResult<Vec<VaultItem>> {
     Ok(items)
 }
 
-/// Find and decrypt one cipher (in `account_email`'s vault) into full detail.
+/// Find and decrypt one cipher (in `account_email`'s vault) into full detail,
+/// including its stored passkeys (FIDO2 credential metadata).
 pub async fn item_detail(state: &AppState, account_email: &str, id: &str) -> AgateResult<ItemDetail> {
-    let view = decrypt_one(state, account_email, id).await?;
+    let (client, cipher) = {
+        let session = state.session.lock().await;
+        let conn = session
+            .connections
+            .get(account_email)
+            .ok_or_else(AgateError::not_authenticated)?;
+        let client = PasswordManagerClient(conn.client.0.clone());
+        let cipher = conn
+            .ciphers
+            .iter()
+            .find(|c| c.id.map(|i| i.to_string()).as_deref() == Some(id))
+            .cloned()
+            .ok_or_else(|| AgateError::bad_request("No such item."))?;
+        (client, cipher)
+    };
+
+    let key_store = client.0.internal.get_key_store();
+    let view: CipherView = key_store
+        .decrypt(&cipher)
+        .map_err(|e| AgateError::new(ErrorKind::Crypto, format!("decrypt failed: {e}")))?;
     let label = label_for(&label_map(state).await, account_email);
-    Ok(view_to_detail(&view, account_email, &label))
+    let mut detail = view_to_detail(&view, account_email, &label);
+
+    // Passkey metadata is decrypted separately (the SDK keeps it sealed on the
+    // CipherView). Best-effort: an item with no passkeys simply yields none.
+    let mut ctx = key_store.context();
+    match cipher.decrypt_fido2_credentials(&mut ctx) {
+        Ok(creds) => detail.passkeys = creds.into_iter().map(passkey_to_dto).collect(),
+        Err(e) => log::warn!("passkey decrypt failed: {e}"),
+    }
+    Ok(detail)
+}
+
+fn passkey_to_dto(c: Fido2CredentialView) -> PasskeyCredential {
+    PasskeyCredential {
+        rp_id: c.rp_id,
+        rp_name: c.rp_name,
+        user_name: c.user_name,
+        user_display_name: c.user_display_name,
+        key_algorithm: c.key_algorithm,
+        creation_date: c.creation_date.to_rfc3339(),
+    }
 }
 
 /// Generate the current TOTP code for an item that has one.
@@ -308,6 +360,43 @@ pub async fn list_folders(state: &AppState) -> AgateResult<Vec<Folder>> {
                     account_label: label.clone(),
                 }),
                 Err(e) => log::warn!("skipping folder that failed to decrypt: {e}"),
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// List decrypted collections across every unlocked connection, stamped by
+/// account. Read-only browse — membership editing isn't supported yet. Mirrors
+/// `list_folders`: decrypts from each connection's cached collections.
+pub async fn list_collections(state: &AppState) -> AgateResult<Vec<Collection>> {
+    let labels = label_map(state).await;
+    let snapshot: Vec<(String, PasswordManagerClient, Vec<VaultCollection>)> = {
+        let session = state.session.lock().await;
+        session
+            .connections
+            .iter()
+            .map(|(email, c)| {
+                (email.clone(), PasswordManagerClient(c.client.0.clone()), c.collections.clone())
+            })
+            .collect()
+    };
+
+    let mut out = Vec::new();
+    for (email, client, collections) in snapshot {
+        let label = label_for(&labels, &email);
+        let key_store = client.0.internal.get_key_store();
+        for collection in &collections {
+            let decrypted: Result<CollectionView, _> = key_store.decrypt(collection);
+            match decrypted {
+                Ok(view) => out.push(Collection {
+                    id: view.id.map(|i| i.to_string()).unwrap_or_default(),
+                    name: view.name,
+                    organization_id: view.organization_id.to_string(),
+                    account_email: email.clone(),
+                    account_label: label.clone(),
+                }),
+                Err(e) => log::warn!("skipping collection that failed to decrypt: {e}"),
             }
         }
     }

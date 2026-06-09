@@ -14,8 +14,8 @@ import {
 const query = (over: Partial<CustomQuery> = {}): CustomQuery => ({
   id: 'query:abc',
   name: 'AWS',
-  query: 'aws',
-  filter: { kind: 'all' },
+  icon: 'bookmark',
+  config: { filter: { kind: 'all' }, query: 'aws', columnFilters: {} },
   ...over,
 });
 
@@ -82,15 +82,14 @@ describe('parseSavedFilter', () => {
 });
 
 describe('parseCustomQuery', () => {
-  it('accepts a well-formed query', () => {
+  // The new shape + legacy-upgrade + icon-fallback cases live in viewConfig.test.ts.
+  it('accepts a well-formed view (round-trips)', () => {
     expect(parseCustomQuery(query())).toEqual(query());
   });
 
-  it('rejects bad ids, empty names, missing query text, and bad filters', () => {
+  it('rejects bad ids, empty names, and non-objects', () => {
     expect(parseCustomQuery({ ...query(), id: 'abc' })).toBeNull();
     expect(parseCustomQuery({ ...query(), name: '   ' })).toBeNull();
-    expect(parseCustomQuery({ ...query(), query: 42 })).toBeNull();
-    expect(parseCustomQuery({ ...query(), filter: { kind: 'folder' } })).toBeNull();
     expect(parseCustomQuery(null)).toBeNull();
   });
 });

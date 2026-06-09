@@ -203,6 +203,54 @@ export interface ItemDetail {
   revisionDate: string;
   /** Creation timestamp (RFC 3339). */
   creationDate: string;
+  /** Collections this item belongs to (IDs; resolve to names via listCollections). */
+  collectionIds: string[];
+  /** File attachments (metadata; download via downloadAttachment). */
+  attachments: Attachment[];
+  /** Stored passkeys (FIDO2 credentials) on this login — display metadata only. */
+  passkeys: PasskeyCredential[];
+}
+
+/** A stored passkey (FIDO2 credential). Mirrors src-tauri dto PasskeyCredential. */
+export interface PasskeyCredential {
+  rpId: string;
+  rpName: string | null;
+  userName: string | null;
+  userDisplayName: string | null;
+  keyAlgorithm: string;
+  creationDate: string;
+}
+
+/** One file attachment on an item (metadata only). Mirrors src-tauri dto Attachment. */
+export interface Attachment {
+  id: string;
+  fileName: string | null;
+  sizeName: string | null;
+}
+
+/** A Bitwarden Send summary (ephemeral share). Mirrors src-tauri dto SendSummary. */
+export interface SendSummary {
+  id: string;
+  name: string;
+  /** 'text' or 'file'. */
+  sendType: string;
+  disabled: boolean;
+  hasPassword: boolean;
+  accessCount: number;
+  maxAccessCount: number | null;
+  deletionDate: string;
+  expirationDate: string | null;
+  accountEmail: string;
+  accountLabel: string;
+}
+
+/** A decrypted collection (shared-vault grouping). Mirrors src-tauri dto Collection. */
+export interface Collection {
+  id: string;
+  name: string;
+  organizationId: string;
+  accountEmail: string;
+  accountLabel: string;
 }
 
 export interface TotpCode {
@@ -235,6 +283,20 @@ export interface PassphraseGenOptions {
   wordSeparator: string;
   capitalize: boolean;
   includeNumber: boolean;
+}
+
+/** Vault-export file format (closed set). */
+export type ExportFormat = 'json' | 'csv';
+
+/** Username-generator mode (closed set; no forwarded-alias services). */
+export type UsernameMode = 'plusAddressed' | 'catchAll' | 'random';
+
+export interface UsernameGenOptions {
+  mode: UsernameMode;
+  /** Base email for plus-addressing (mode = 'plusAddressed'). */
+  email?: string | null;
+  /** Domain for catch-all addressing (mode = 'catchAll'). */
+  domain?: string | null;
 }
 
 // ---- Item create/edit input (mirrors src-tauri/src/dto.rs ItemInput) ----

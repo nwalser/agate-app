@@ -10,10 +10,10 @@ import {
   DIVIDER_PREFIX,
   SIDEBAR_STORAGE_KEY,
   type CustomQuery,
-  type SavedFilter,
   type SidebarConfig,
   type SidebarEntry,
   defaultSidebar,
+  defaultViewConfig,
   isBuiltinId,
   isDividerId,
   readSidebarConfig,
@@ -88,19 +88,21 @@ export function reorderEntry(from: number, to: number) {
   persist({ ...sidebar(), order });
 }
 
-/** Create a saved query (appended to the rail). Returns its new id, or null if the
- *  name is blank. */
-export function addQuery(input: { name: string; query: string; filter: SavedFilter }): string | null {
+/** Create a saved view (appended to the rail) with a name + icon and a default
+ *  empty config — its filter/column snapshot is set later while viewing. Returns
+ *  the new id, or null if the name is blank. */
+export function addQuery(input: { name: string; icon: string }): string | null {
   const name = input.name.trim();
   if (!name) return null;
   const id = `query:${crypto.randomUUID()}`;
-  const q: CustomQuery = { id, name, query: input.query, filter: input.filter };
+  const q: CustomQuery = { id, name, icon: input.icon, config: defaultViewConfig() };
   const cur = sidebar();
   persist({ ...cur, order: [...cur.order, id], queries: [...cur.queries, q] });
   return id;
 }
 
-/** Patch an existing saved query in place (name trimmed; blank name ignored). */
+/** Patch an existing saved view in place (name trimmed; blank name ignored).
+ *  Used by Settings (name/icon) and the in-view Save button (config). */
 export function updateQuery(id: string, patch: Partial<Omit<CustomQuery, 'id'>>) {
   const cur = sidebar();
   persist({

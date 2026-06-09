@@ -29,6 +29,18 @@ function persist(next: ColumnConfig) {
 
 export { columns };
 
+/** Replace the entire column config (visible set, order, reveal, favicons, widths,
+ *  group-by) — used to restore a saved view's layout snapshot. */
+export function applyColumnConfig(cfg: ColumnConfig) {
+  persist({
+    columns: cfg.columns.map((c) => ({ ...c })),
+    revealed: [...cfg.revealed],
+    favicons: cfg.favicons,
+    widths: { ...cfg.widths },
+    groupBy: cfg.groupBy,
+  });
+}
+
 export function isColumnVisible(c: ColumnSpec): boolean {
   const k = columnKey(c);
   return columns().columns.some((x) => columnKey(x) === k);

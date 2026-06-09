@@ -18,17 +18,26 @@ tauri-build = { version = "2", features = [] }
 # NOTE: do NOT add the "devtools" feature here — it would enable the web
 # inspector in RELEASE builds (a debug surface exposing decrypted secrets in the
 # DOM). Debug builds enable devtools automatically without the feature.
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-log = "2"
+# Launch-at-login. Driven from Rust commands (ManagerExt::autolaunch), so no JS
+# package is needed.
+tauri-plugin-autostart = "2"
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 tauri-plugin-window-state = "2"
+# Native open-file dialog for vault import (called from Rust; no JS capability
+# needed). Save/export writes to Downloads directly, so this is import-only.
+tauri-plugin-dialog = "2"
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Robust CSV reader for vault import (quoted fields, embedded newlines). Export
+# writes CSV by hand; import needs a real parser.
+csv = "1"
 thiserror = "2"
 log = "0.4"
 tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros", "time"] }
@@ -61,6 +70,7 @@ bitwarden-sync = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef8
 bitwarden-generators = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e" }
 bitwarden-api-api = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e" }
 bitwarden-collections = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e" }
+bitwarden-send = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e" }
 bitwarden-state = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e" }
 zxcvbn = "3.1"
 sha1 = "0.10"
@@ -69,6 +79,13 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 # SDK's identity client has no middleware hook, so we rewrite the one prelogin
 # path at the network edge. See proxy.rs.
 tiny_http = "0.12"
+
+# Cross-platform biometric consent (Touch ID on macOS, polkit on Linux) for the
+# non-Windows unlock path. ⚠️ The macOS/Linux arm (src/hello_unix.rs) is written
+# on a Windows host and is NOT compiled or run here — it must be built + verified
+# on that hardware before being relied upon.
+[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
+robius-authentication = "0.1"
 
 [target.'cfg(windows)'.dependencies]
 # Windows Hello (UserConsentVerifier) for passwordless unlock, and

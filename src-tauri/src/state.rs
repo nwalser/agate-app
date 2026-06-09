@@ -10,6 +10,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use bitwarden_collections::collection::Collection;
 use bitwarden_pm::PasswordManagerClient;
 use bitwarden_vault::{Cipher, Folder as VaultFolder};
 use serde::{Deserialize, Serialize};
@@ -113,11 +114,12 @@ pub struct LiveConnection {
     pub client: PasswordManagerClient,
     pub ciphers: Vec<Cipher>,
     pub folders: Vec<VaultFolder>,
+    pub collections: Vec<Collection>,
 }
 
 impl LiveConnection {
     pub fn new(client: PasswordManagerClient) -> Self {
-        Self { client, ciphers: Vec::new(), folders: Vec::new() }
+        Self { client, ciphers: Vec::new(), folders: Vec::new(), collections: Vec::new() }
     }
 }
 

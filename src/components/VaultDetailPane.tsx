@@ -7,15 +7,18 @@
 // The reveal toggle for the login password is driven by the screen's signal so it
 // resets on selection change; per-field secrets manage their own local toggle.
 
-import { For, Match, Show, Switch, createSignal } from 'solid-js';
+import { For, Match, Show, Switch, createSignal, onMount } from 'solid-js';
 import {
   Check,
   Copy,
   CreditCard,
+  Download,
   ExternalLink,
   Eye,
   EyeOff,
+  KeyRound,
   Link as LinkIcon,
+  Paperclip,
   Pencil,
   RotateCcw,
   ShieldAlert,
@@ -25,7 +28,9 @@ import {
   Trash2,
 } from 'lucide-solid';
 import { openUrl } from '@tauri-apps/plugin-opener';
-import type { CardInput, CustomField, ItemDetail, TotpCode } from '../lib/types.ts';
+import type { Attachment, BreachRecord, CardInput, CustomField, ItemDetail, TotpCode } from '../lib/types.ts';
+import { ipc } from '../lib/ipc.ts';
+import { pushToast, toastError } from '../state/toast.ts';
 import {
   cardExpiry,
   detectCardBrand,
@@ -38,6 +43,9 @@ import {
 } from '../lib/itemFields.ts';
 import type { SelectedSecurity } from '../hooks/useItemDetail.ts';
 import NotesView from './NotesView.tsx';
+import RepromptGate from './RepromptGate.tsx';
+import { isReprompted, markReprompted } from '../state/reprompt.ts';
+import { collectionNamesFor, loadCollections } from '../state/collections.ts';
 import { absoluteDate, relativeFromNow } from '../lib/dates.ts';
 import { ContextMenu, CtxItem, CtxSep, CtxTitle } from './ContextMenu.tsx';
 
@@ -58,6 +66,8 @@ export default function VaultDetailPane(props: {
   setRevealed: (v: boolean) => void;
   totp: TotpCode | null;
   selectedSecurity: SelectedSecurity;
+  /** Known data breaches this item's email(s) appear in (latest dark-web scan). */
+  selectedBreaches: BreachRecord[];
   copy: (label: string, value: string | null | undefined) => void;
   onFavorite: (d: ItemDetail) => void;
   onEdit: (d: ItemDetail) => void;
@@ -82,6 +92,35 @@ export default function VaultDetailPane(props: {
     e.stopPropagation();
     setFieldMenu({ x: e.clientX, y: e.clientY, ...payload });
   };
+
+  // Reprompt gate: a reprompt-protected item's secrets stay masked until the user
+  // re-enters the app password. `guard` runs the action immediately for normal
+  // items (or already-verified ones), else defers it behind the gate modal.
+  const [gate, setGate] = createSignal<{ run: () => void } | null>(null);
+  const repromptLocked = () => props.detail.reprompt && !isReprompted(props.detail.id);
+  function guard(action: () => void) {
+    if (repromptLocked()) setGate({ run: action });
+    else action();
+  }
+
+  // Resolve this item's collection IDs to names (loaded lazily once).
+  onMount(() => void loadCollections());
+  const collectionNames = () => collectionNamesFor(props.detail.collectionIds);
+
+  // Attachment download (fetch + decrypt in the backend, saved to Downloads).
+  // Reprompt-gated like the password reveal.
+  const [downloading, setDownloading] = createSignal<string | null>(null);
+  async function downloadAttachment(att: Attachment) {
+    setDownloading(att.id);
+    try {
+      const path = await ipc.downloadAttachment(props.detail.accountEmail, props.detail.id, att.id);
+      pushToast('success', `Saved ${att.fileName ?? 'attachment'} to ${path}`);
+    } catch (err) {
+      toastError(err);
+    } finally {
+      setDownloading(null);
+    }
+  }
 
   return (
     <div class="detail">
@@ -142,37 +181,46 @@ export default function VaultDetailPane(props: {
               />
             </Show>
             <Show when={login().password}>
-              <div
-                class="detail-field"
-                onContextMenu={(e) =>
-                  openFieldCtx(e, {
-                    label: 'Password',
-                    copy: () => props.copy('Password', login().password),
-                    reveal: { shown: props.revealed, toggle: () => props.setRevealed(!props.revealed) },
-                  })
-                }
-              >
-                <label>Password</label>
-                <div class="detail-value-row">
-                  <code class="detail-value mono">
-                    {props.revealed ? login().password : '••••••••••••'}
-                  </code>
-                  <button
-                    class="ghost icon-btn"
-                    title={props.revealed ? 'Hide' : 'Reveal'}
-                    onClick={() => props.setRevealed(!props.revealed)}
+              {(() => {
+                // Masked unless explicitly revealed AND (not reprompt-locked).
+                const pwShown = () => props.revealed && !repromptLocked();
+                return (
+                  <div
+                    class="detail-field"
+                    onContextMenu={(e) =>
+                      openFieldCtx(e, {
+                        label: 'Password',
+                        copy: () => guard(() => props.copy('Password', login().password)),
+                        reveal: {
+                          shown: pwShown(),
+                          toggle: () => guard(() => props.setRevealed(!props.revealed)),
+                        },
+                      })
+                    }
                   >
-                    {props.revealed ? <EyeOff size={14} /> : <Eye size={14} />}
-                  </button>
-                  <button
-                    class="ghost icon-btn"
-                    title="Copy"
-                    onClick={() => props.copy('Password', login().password)}
-                  >
-                    <Copy size={14} />
-                  </button>
-                </div>
-              </div>
+                    <label>Password</label>
+                    <div class="detail-value-row">
+                      <code class="detail-value mono">
+                        {pwShown() ? login().password : '••••••••••••'}
+                      </code>
+                      <button
+                        class="ghost icon-btn"
+                        title={pwShown() ? 'Hide' : 'Reveal'}
+                        onClick={() => guard(() => props.setRevealed(!props.revealed))}
+                      >
+                        {pwShown() ? <EyeOff size={14} /> : <Eye size={14} />}
+                      </button>
+                      <button
+                        class="ghost icon-btn"
+                        title="Copy"
+                        onClick={() => guard(() => props.copy('Password', login().password))}
+                      >
+                        <Copy size={14} />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
             </Show>
 
             <Show when={props.totp}>
@@ -295,42 +343,131 @@ export default function VaultDetailPane(props: {
         {(notes) => <NotesView notes={notes()} />}
       </Show>
 
-      {/* Security audit verdict, pinned to the bottom of the item view. */}
-      <Show when={props.selectedSecurity}>
-        {(sec) => {
-          const s = sec();
-          return (
-            <div class="detail-sec-section">
-              <label class="detail-sec-heading">Security</label>
-              <div class="detail-sec" classList={{ risk: s.kind === 'risk' }}>
-                <Show
-                  when={s.kind === 'risk' ? s : null}
-                  fallback={
-                    <>
-                      <ShieldCheck size={14} strokeWidth={1.75} />
-                      <span class="detail-sec-label">No known security issues</span>
-                    </>
-                  }
-                >
-                  {(risk) => (
-                    <>
-                      <ShieldAlert size={14} strokeWidth={1.75} />
-                      <div class="detail-sec-chips">
-                        <For each={risk().chips}>
-                          {(c) => (
-                            <span class="detail-sec-chip" classList={{ severe: c.severe }}>
-                              {c.label}
-                            </span>
-                          )}
-                        </For>
-                      </div>
-                    </>
-                  )}
-                </Show>
+      {/* Security audit verdict + breach affection, pinned to the bottom of the
+          item view. Shows when there's an offline verdict (logins) or the item's
+          email turns up in a known breach. */}
+      <Show when={props.selectedSecurity || props.selectedBreaches.length > 0}>
+        <div class="detail-sec-section">
+          <label class="detail-sec-heading">Security</label>
+
+          {/* The offline verdict. Suppress the clean "no issues" line when the item
+              is in a breach — the breach block below is the real verdict then. */}
+          <Show
+            when={
+              props.selectedSecurity &&
+              (props.selectedSecurity.kind === 'risk' || props.selectedBreaches.length === 0)
+                ? props.selectedSecurity
+                : null
+            }
+          >
+            {(sec) => {
+              const s = sec();
+              return (
+                <div class="detail-sec" classList={{ risk: s.kind === 'risk' }}>
+                  <Show
+                    when={s.kind === 'risk' ? s : null}
+                    fallback={
+                      <>
+                        <ShieldCheck size={14} strokeWidth={1.75} />
+                        <span class="detail-sec-label">No known security issues</span>
+                      </>
+                    }
+                  >
+                    {(risk) => (
+                      <>
+                        <ShieldAlert size={14} strokeWidth={1.75} />
+                        <div class="detail-sec-chips">
+                          <For each={risk().chips}>
+                            {(c) => (
+                              <span class="detail-sec-chip" classList={{ severe: c.severe }}>
+                                {c.label}
+                              </span>
+                            )}
+                          </For>
+                        </div>
+                      </>
+                    )}
+                  </Show>
+                </div>
+              );
+            }}
+          </Show>
+
+          <Show when={props.selectedBreaches.length > 0}>
+            <div class="detail-sec breach">
+              <ShieldAlert size={14} strokeWidth={1.75} />
+              <div class="detail-sec-breach-body">
+                <span class="detail-sec-breach-title">
+                  Found in {props.selectedBreaches.length} data breach
+                  {props.selectedBreaches.length === 1 ? '' : 'es'}
+                </span>
+                <div class="detail-sec-chips">
+                  <For each={props.selectedBreaches}>
+                    {(b) => <span class="detail-sec-chip severe">{b.name}</span>}
+                  </For>
+                </div>
               </div>
             </div>
-          );
-        }}
+          </Show>
+        </div>
+      </Show>
+
+      {/* Stored passkeys (FIDO2) — read-only display; use needs a browser extension. */}
+      <Show when={d().passkeys.length > 0}>
+        <div class="detail-field">
+          <label>Passkeys</label>
+          <For each={d().passkeys}>
+            {(pk) => (
+              <div class="detail-passkey">
+                <KeyRound size={14} strokeWidth={1.6} />
+                <span class="detail-passkey-info">
+                  <span class="detail-passkey-rp truncate">{pk.rpName || pk.rpId}</span>
+                  <Show when={pk.userName}>
+                    <span class="muted detail-passkey-user truncate">{pk.userName}</span>
+                  </Show>
+                </span>
+              </div>
+            )}
+          </For>
+        </div>
+      </Show>
+
+      {/* File attachments — download fetches + decrypts to the Downloads folder. */}
+      <Show when={d().attachments.length > 0}>
+        <div class="detail-field">
+          <label>Attachments</label>
+          <For each={d().attachments}>
+            {(att) => (
+              <div class="detail-attachment">
+                <Paperclip size={14} strokeWidth={1.6} />
+                <span class="detail-attachment-name truncate">{att.fileName ?? 'attachment'}</span>
+                <Show when={att.sizeName}>
+                  <span class="detail-attachment-size muted">{att.sizeName}</span>
+                </Show>
+                <button
+                  class="ghost icon-btn"
+                  title="Download"
+                  disabled={downloading() === att.id}
+                  onClick={() => guard(() => void downloadAttachment(att))}
+                >
+                  <Download size={14} />
+                </button>
+              </div>
+            )}
+          </For>
+        </div>
+      </Show>
+
+      {/* Collections this item belongs to (read-only). */}
+      <Show when={collectionNames().length > 0}>
+        <div class="detail-field">
+          <label>Collections</label>
+          <div class="detail-collections">
+            <For each={collectionNames()}>
+              {(name) => <span class="detail-collection-chip">{name}</span>}
+            </For>
+          </div>
+        </div>
       </Show>
 
       {/* Created / updated timestamps, pinned to the very bottom. */}
@@ -338,6 +475,22 @@ export default function VaultDetailPane(props: {
         <span title={absoluteDate(d().creationDate)}>Created {relativeFromNow(d().creationDate)}</span>
         <span title={absoluteDate(d().revisionDate)}>Updated {relativeFromNow(d().revisionDate)}</span>
       </div>
+
+      {/* Reprompt gate: re-verify the app password, then run the deferred action. */}
+      <Show when={gate()}>
+        {(g) => (
+          <RepromptGate
+            itemName={d().name}
+            onVerified={() => {
+              markReprompted(d().id);
+              const action = g().run;
+              setGate(null);
+              action();
+            }}
+            onClose={() => setGate(null)}
+          />
+        )}
+      </Show>
 
       {/* Right-click the header → the same actions as the buttons above. */}
       <Show when={headerMenu()}>

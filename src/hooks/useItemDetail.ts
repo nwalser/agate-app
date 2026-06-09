@@ -7,8 +7,10 @@
 
 import { type Accessor, createEffect, createMemo, createSignal, on, onCleanup } from 'solid-js';
 import { ipc } from '../lib/ipc.ts';
-import type { ItemDetail, TotpCode, VaultHealthReport } from '../lib/types.ts';
+import type { BreachRecord, ItemDetail, TotpCode, VaultHealthReport } from '../lib/types.ts';
 import { itemAuditChips } from '../lib/audit.ts';
+import { breachesForEmails, itemEmails } from '../lib/breachAggregation.ts';
+import { darkwebReport } from '../state/securityScans.ts';
 import { toastError } from '../state/toast.ts';
 
 export type SelectedSecurity =
@@ -35,6 +37,16 @@ export function useItemDetail(deps: {
     if (!d || !d.login || deps.inTrash() || !h) return null;
     const audit = h.atRisk.find((x) => x.id === d.id);
     return audit ? { kind: 'risk', chips: itemAuditChips(audit) } : { kind: 'ok' };
+  });
+
+  // Known data breaches the open item is caught up in: its email(s) (login
+  // username / identity email) matched against the latest dark-web scan. Empty when
+  // not yet scanned, in trash, or the item has no breached email.
+  const selectedBreaches = createMemo<BreachRecord[]>(() => {
+    const d = detail();
+    const report = darkwebReport();
+    if (!d || deps.inTrash() || !report) return [];
+    return breachesForEmails(report.accounts, itemEmails(d));
   });
 
   // Load detail + TOTP whenever selection changes.
@@ -81,7 +93,7 @@ export function useItemDetail(deps: {
     }),
   );
 
-  return { detail, setDetail, revealed, setRevealed, totp, selectedSecurity };
+  return { detail, setDetail, revealed, setRevealed, totp, selectedSecurity, selectedBreaches };
 }
 
 export type ItemDetailState = ReturnType<typeof useItemDetail>;

@@ -1,17 +1,19 @@
 /* Table shell. Reuses .vault-head / .vault-row / .vault-row-* from Vault.css
    (loaded globally); only list-table-specific bits live here. The grid template
-   (--vault-cols) and the table's min-width (--vault-min) are set inline per the
-   visible column set (see gridMetrics in state/columns.ts). */
+   (--vault-cols) is set inline per the visible column set (see gridMetrics in
+   state/columns.ts). */
 
-/* The single scroll container for BOTH axes. Columns have hard px floors (see
-   gridMetrics in state/columns.ts), so when the pane is too narrow the grid
-   reaches its --vault-min and scrolls horizontally instead of squashing columns
-   into each other. The header pins via position:sticky inside this same
-   scroller, so it scrolls horizontally with the rows but stays put vertically. */
+/* Vertical-only scroll container. Every configurable column track is shrinkable
+   (minmax(0, …) — see gridMetrics in state/columns.ts), so the grid always fits
+   this pane's width: columns compress instead of overflowing, and the last column
+   stays flush against the detail pane. Horizontal overflow is hidden so a wide
+   column set can never push a scrollbar in. The header pins via position:sticky
+   inside this same scroller. */
 .vault-table {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   scrollbar-gutter: stable;
   /* Anchors the absolutely-positioned marquee rectangle to the scrolled content. */
   position: relative;
@@ -42,18 +44,16 @@
 }
 
 /* Sticky header block (column titles + optional filter row). Opaque background
-   so scrolling rows don't bleed through; min-width matches the rows so every
-   track lines up at any horizontal scroll offset. */
+   so scrolling rows don't bleed through. Shares the rows' width (100% of the
+   scroller) and the same --vault-cols template, so every track lines up. */
 .vault-thead {
   position: sticky;
   top: 0;
   z-index: var(--z-list-sticky);
-  min-width: var(--vault-min);
   background: var(--background);
 }
 
 .vault-rows {
-  min-width: var(--vault-min);
   padding-top: 4px;
 }
 /* When rows are multi-selected the floating action bar overlays the bottom of

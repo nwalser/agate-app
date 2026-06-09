@@ -20,6 +20,7 @@ import {
   setLockOnMinimize,
   type AutoLockMinutes,
 } from '../state/autolock.ts';
+import ExportSettings from './ExportSettings.tsx';
 import './SecuritySettings.css';
 
 function clearLabel(seconds: ClipboardClearSeconds): string {
@@ -39,6 +40,7 @@ function timeoutLabel(minutes: AutoLockMinutes): string {
  */
 export default function SecuritySettings() {
   return (
+    <>
     <section class="settings-section">
       <h3>
         <ShieldAlert size={14} strokeWidth={1.75} /> Security monitoring
@@ -133,6 +135,8 @@ export default function SecuritySettings() {
         </For>
       </div>
     </section>
+    <ExportSettings />
+    </>
   );
 }
 

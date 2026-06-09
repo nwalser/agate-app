@@ -5,7 +5,8 @@
 use bitwarden_vault::{CipherRepromptType, CipherType, CipherView, FieldType};
 
 use crate::dto::{
-    CustomField, CustomFieldType, ItemDetail, ItemType, LoginDetail, LoginUri, VaultItem,
+    Attachment, CustomField, CustomFieldType, ItemDetail, ItemType, LoginDetail, LoginUri,
+    VaultItem,
 };
 
 /// Map the SDK field type to our closed `CustomFieldType`, preserving the exact
@@ -131,5 +132,21 @@ pub fn view_to_detail(view: &CipherView, account_email: &str, account_label: &st
         organization_id: view.organization_id.map(|i| i.to_string()),
         revision_date: view.revision_date.to_rfc3339(),
         creation_date: view.creation_date.to_rfc3339(),
+        collection_ids: view.collection_ids.iter().map(|c| c.to_string()).collect(),
+        attachments: view
+            .attachments
+            .as_ref()
+            .map(|atts| {
+                atts.iter()
+                    .filter_map(|a| {
+                        a.id.clone().map(|id| Attachment {
+                            id,
+                            file_name: a.file_name.clone(),
+                            size_name: a.size_name.clone(),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
     }
 }

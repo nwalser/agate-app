@@ -8,17 +8,25 @@
 import { For, createEffect, createMemo, createSignal, onCleanup, onMount, Match, Show, Switch } from 'solid-js';
 import { Plus, PanelRightClose, PanelRightOpen, RotateCcw, Star, Trash2, X, FolderInput } from 'lucide-solid';
 import type { VaultItem } from '../lib/types.ts';
-import type { ColumnSpec } from '../state/columns.ts';
+import { applyColumnConfig, columns, type ColumnSpec } from '../state/columns.ts';
+import { filters, setAllColumnFilters, showColumnFilters } from '../state/columnFilters.ts';
 import type { VaultFilter } from '../lib/search.ts';
-import type { CustomQuery } from '../lib/sidebarConfig.ts';
-import { setQuery } from '../state/search.ts';
+import type { CustomQuery, SavedFilter, ViewConfig } from '../lib/sidebarConfig.ts';
+import { queryById, updateQuery } from '../state/sidebar.ts';
+import { sameViewConfig } from '../lib/viewConfig.ts';
+import { query, setQuery } from '../state/search.ts';
 import { clearConnectionNav, setConnectionNav } from '../state/connections.ts';
+import { recordRecent } from '../state/recentItems.ts';
 import { lastSync, syncState } from '../state/sync.ts';
 import {
   activeVault,
   previewCollapsed,
+  resetListWidth,
+  resetSidebarWidth,
   rowDensity,
   setActiveVault,
+  setListWidth,
+  setSidebarWidth,
   sidebarCollapsed,
   toggleSidebar,
   togglePreview,
@@ -45,6 +53,7 @@ import CommandPalette from '../components/CommandPalette.tsx';
 import VaultList from '../components/VaultList.tsx';
 import GeneratorPage from '../components/GeneratorPage.tsx';
 import VaultRailMenu from '../components/VaultRailMenu.tsx';
+import Resizer from '../components/Resizer.tsx';
 import VaultDetailPane from '../components/VaultDetailPane.tsx';
 import VaultContextMenu, { type CtxMenuTarget } from '../components/VaultContextMenu.tsx';
 import { typeIcon } from '../lib/vaultIcons.ts';
@@ -102,9 +111,63 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
     showVaultView: () => setView('vault'),
   });
 
-  // Switch a rail filter and return to the vault view in one step.
+  // ---- saved views (full-snapshot, edited while viewing) ----
+  // Which saved view (if any) the list is currently showing. Set when a view is
+  // run; cleared when the user navigates to a plain rail page or switches vault.
+  const [activeViewId, setActiveViewId] = createSignal<string | null>(null);
+  const activeView = createMemo(() => {
+    const id = activeViewId();
+    return id ? queryById(id) : null;
+  });
+
+  // A view stores a portable SavedFilter; the live filter may be a folder filter
+  // (account-scoped), which a view can't represent → capture it as "all".
+  function toSavedFilter(f: VaultFilter): SavedFilter {
+    if (f.kind === 'type') return { kind: 'type', itemType: f.itemType };
+    if (f.kind === 'favorites' || f.kind === 'trash') return { kind: f.kind };
+    return { kind: 'all' };
+  }
+
+  // Snapshot the whole list configuration into a ViewConfig.
+  function captureView(): ViewConfig {
+    return {
+      filter: toSavedFilter(filtering.filter()),
+      query: query(),
+      columnFilters: { ...filters() },
+      columns: columns(),
+      sort: { key: filtering.sortKey(), dir: filtering.sortDir() },
+    };
+  }
+
+  // Restore a ViewConfig onto the live list (only the parts it carries).
+  function applyView(cfg: ViewConfig) {
+    filtering.setFilter(cfg.filter);
+    setQuery(cfg.query);
+    setAllColumnFilters(cfg.columnFilters);
+    if (Object.keys(cfg.columnFilters).length > 0) showColumnFilters(true);
+    if (cfg.columns) applyColumnConfig(cfg.columns);
+    if (cfg.sort) filtering.setSort(cfg.sort.key, cfg.sort.dir);
+  }
+
+  // True when the live list has diverged from the active view's saved snapshot.
+  const viewDirty = createMemo(() => {
+    const v = activeView();
+    return v ? !sameViewConfig(captureView(), v.config) : false;
+  });
+
+  function saveActiveView() {
+    const v = activeView();
+    if (v) updateQuery(v.id, { config: captureView() });
+  }
+  function discardViewChanges() {
+    const v = activeView();
+    if (v) applyView(v.config);
+  }
+
+  // Switch a rail filter and return to the vault view in one step (leaves any view).
   function selectFilter(f: VaultFilter) {
     setView('vault');
+    setActiveViewId(null);
     filtering.setFilter(f);
   }
 
@@ -136,12 +199,12 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
     }
   }
 
-  // Run a saved sidebar query: scope the list to its base filter and fill the
-  // titlebar search with its text, in the vault view.
+  // Open a saved view: apply its full snapshot and mark it active (so edits to the
+  // list surface the "unsaved changes" bar against this view).
   function runQuery(q: CustomQuery) {
     setView('vault');
-    filtering.setFilter(q.filter);
-    setQuery(q.query);
+    applyView(q.config);
+    setActiveViewId(q.id);
   }
 
   // Switch which connection the list is scoped to (null = all vaults merged).
@@ -150,6 +213,7 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
   function switchVault(email: string | null) {
     setActiveVault(email);
     setView('vault');
+    setActiveViewId(null);
     // A folder filter belongs to one account, so switching vaults invalidates it.
     if (filtering.filter().kind === 'folder') filtering.setFilter({ kind: 'all' });
     selection.clearSelection();
@@ -174,6 +238,7 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
     selectFilter({ kind: 'all' });
     selection.clearSelection();
     setSelectedId(id);
+    recordRecent(id);
   }
 
   // ---- back/forward navigation history ----
@@ -355,6 +420,7 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
           toggleSidebar={() => toggleSidebar()}
           selectFilter={selectFilter}
           onRunQuery={runQuery}
+          activeViewId={activeViewId()}
           scopedFolders={filtering.scopedFolders()}
           items={data.items()}
           folderCreate={(account, fullName) => void actions.folderCreate(account, fullName)}
@@ -369,6 +435,17 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
           syncTooltip={syncTooltip()}
           onOpenSettings={() => props.onOpenSettings()}
         />
+
+        {/* Drag handle at the rail's right edge. Hidden when the rail is collapsed
+            (it has its own fixed width then). */}
+        <Show when={!sidebarCollapsed()}>
+          <Resizer
+            variant="sidebar-resizer"
+            label="Resize sidebar"
+            onResize={setSidebarWidth}
+            onReset={resetSidebarWidth}
+          />
+        </Show>
 
         <Switch>
           <Match when={view() === 'security'}>
@@ -392,6 +469,22 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
                 classList={{ 'has-selection': selection.selectedCount() > 0, 'list-full': previewCollapsed() }}
                 data-density={rowDensity()}
               >
+                <Show when={viewDirty() && activeView()}>
+                  {(v) => (
+                    <div class="vault-view-bar">
+                      <span class="vault-view-bar-text">
+                        Unsaved changes to <strong>{v().name}</strong>
+                      </span>
+                      <span class="spacer" />
+                      <button class="ghost vault-view-bar-btn" onClick={() => discardViewChanges()}>
+                        Discard
+                      </button>
+                      <button class="vault-view-bar-btn primary" onClick={() => saveActiveView()}>
+                        Save changes
+                      </button>
+                    </div>
+                  )}
+                </Show>
                 <div class="vault-list-head">
                   <span class="vault-list-count">
                     {filtering.displayed().length} {filtering.displayed().length === 1 ? 'item' : 'items'}
@@ -553,6 +646,18 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
                     </button>
                   </Show>
                 </div>
+
+                {/* Drag handle at the list's right edge to resize the list ↔ detail
+                    split. Only meaningful while the detail pane is shown; when it's
+                    hidden the list spans the full width (no seam). */}
+                <Show when={!previewCollapsed()}>
+                  <Resizer
+                    variant="list-resizer"
+                    label="Resize item list"
+                    onResize={setListWidth}
+                    onReset={resetListWidth}
+                  />
+                </Show>
               </aside>
 
               {/* Detail (preview) pane. Hidden when the preview toggle is off, but always
@@ -587,6 +692,7 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
                         setRevealed={detailState.setRevealed}
                         totp={detailState.totp()}
                         selectedSecurity={detailState.selectedSecurity()}
+                        selectedBreaches={detailState.selectedBreaches()}
                         copy={(label, value) => void actions.copy(label, value)}
                         onFavorite={(item) => void actions.detailFavorite(item)}
                         onEdit={(item) => actions.openEdit(item)}

@@ -4,16 +4,27 @@
 // Output regenerates automatically as options change; Copy and Regenerate are the
 // two primary actions.
 
-import { createEffect, createSignal, Match, Show, Switch } from 'solid-js';
+import { createEffect, createSignal, For, Match, Show, Switch } from 'solid-js';
 import { Copy, RefreshCw } from 'lucide-solid';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { ipc } from '../lib/ipc.ts';
-import type { PassphraseGenOptions, PasswordGenOptions } from '../lib/types.ts';
+import type {
+  PassphraseGenOptions,
+  PasswordGenOptions,
+  UsernameGenOptions,
+  UsernameMode,
+} from '../lib/types.ts';
 import { pushToast, toastError } from '../state/toast.ts';
 import { pushGeneratorHistory } from '../state/generatorHistory.ts';
 import './GeneratorPage.css';
 
-type Mode = 'password' | 'passphrase';
+type Mode = 'password' | 'passphrase' | 'username';
+
+const USERNAME_MODES: { id: UsernameMode; label: string }[] = [
+  { id: 'plusAddressed', label: 'Plus-addressed' },
+  { id: 'catchAll', label: 'Catch-all' },
+  { id: 'random', label: 'Random' },
+];
 
 export default function GeneratorPage() {
   const [mode, setMode] = createSignal<Mode>('password');
@@ -33,6 +44,11 @@ export default function GeneratorPage() {
     capitalize: true,
     includeNumber: true,
   });
+  const [unOpts, setUnOpts] = createSignal<UsernameGenOptions>({
+    mode: 'plusAddressed',
+    email: '',
+    domain: '',
+  });
 
   function setPw<K extends keyof PasswordGenOptions>(key: K, value: PasswordGenOptions[K]) {
     setPwOpts({ ...pwOpts(), [key]: value });
@@ -40,10 +56,22 @@ export default function GeneratorPage() {
   function setPp<K extends keyof PassphraseGenOptions>(key: K, value: PassphraseGenOptions[K]) {
     setPpOpts({ ...ppOpts(), [key]: value });
   }
+  function setUn<K extends keyof UsernameGenOptions>(key: K, value: UsernameGenOptions[K]) {
+    setUnOpts({ ...unOpts(), [key]: value });
+  }
 
   const noCharSet = () => {
     const o = pwOpts();
     return !(o.uppercase || o.lowercase || o.numbers || o.special);
+  };
+
+  // Whether the username inputs are complete enough to generate (so the backend
+  // isn't called with an empty email/domain and made to toast an error).
+  const usernameReady = () => {
+    const o = unOpts();
+    if (o.mode === 'plusAddressed') return /.+@.+/.test((o.email ?? '').trim());
+    if (o.mode === 'catchAll') return /.+\..+/.test((o.domain ?? '').trim());
+    return true;
   };
 
   async function generate() {
@@ -54,8 +82,14 @@ export default function GeneratorPage() {
           return;
         }
         setOutput(await ipc.generatePassword(pwOpts()));
-      } else {
+      } else if (mode() === 'passphrase') {
         setOutput(await ipc.generatePassphrase(ppOpts()));
+      } else {
+        if (!usernameReady()) {
+          setOutput('');
+          return;
+        }
+        setOutput(await ipc.generateUsername(unOpts()));
       }
     } catch (err) {
       toastError(err);
@@ -64,9 +98,10 @@ export default function GeneratorPage() {
 
   // Regenerate whenever the mode or the active mode's options change.
   createEffect(() => {
-    mode();
-    if (mode() === 'password') pwOpts();
-    else ppOpts();
+    const m = mode();
+    if (m === 'password') pwOpts();
+    else if (m === 'passphrase') ppOpts();
+    else unOpts();
     void generate();
   });
 
@@ -111,11 +146,27 @@ export default function GeneratorPage() {
           >
             Passphrase
           </button>
+          <button
+            class="generator-mode-btn"
+            classList={{ active: mode() === 'username' }}
+            onClick={() => setMode('username')}
+          >
+            Username
+          </button>
         </div>
 
         <div class="generator-output">
           <code class="generator-value mono">
-            <Show when={output()} fallback={<span class="muted">Pick at least one character set.</span>}>
+            <Show
+              when={output()}
+              fallback={
+                <span class="muted">
+                  {mode() === 'username'
+                    ? 'Enter a base email or domain.'
+                    : 'Pick at least one character set.'}
+                </span>
+              }
+            >
               {output()}
             </Show>
           </code>
@@ -192,6 +243,54 @@ export default function GeneratorPage() {
                   <input type="checkbox" checked={ppOpts().includeNumber} onChange={(e) => setPp('includeNumber', e.currentTarget.checked)} /> Include number
                 </label>
               </div>
+            </section>
+          </Match>
+          <Match when={mode() === 'username'}>
+            <section class="generator-options">
+              <div class="generator-mode generator-submode">
+                <For each={USERNAME_MODES}>
+                  {(m) => (
+                    <button
+                      class="generator-mode-btn"
+                      classList={{ active: unOpts().mode === m.id }}
+                      onClick={() => setUn('mode', m.id)}
+                    >
+                      {m.label}
+                    </button>
+                  )}
+                </For>
+              </div>
+              <Switch>
+                <Match when={unOpts().mode === 'plusAddressed'}>
+                  <div class="field">
+                    <label>Base email</label>
+                    <input
+                      placeholder="you@example.com"
+                      value={unOpts().email ?? ''}
+                      onInput={(e) => setUn('email', e.currentTarget.value)}
+                    />
+                    <p class="muted generator-username-hint">
+                      Aliases like <code>you+abc123@example.com</code> all land in your inbox.
+                    </p>
+                  </div>
+                </Match>
+                <Match when={unOpts().mode === 'catchAll'}>
+                  <div class="field">
+                    <label>Catch-all domain</label>
+                    <input
+                      placeholder="example.com"
+                      value={unOpts().domain ?? ''}
+                      onInput={(e) => setUn('domain', e.currentTarget.value)}
+                    />
+                    <p class="muted generator-username-hint">
+                      Needs a domain configured to accept all addresses.
+                    </p>
+                  </div>
+                </Match>
+                <Match when={unOpts().mode === 'random'}>
+                  <p class="muted generator-username-hint">A random standalone username.</p>
+                </Match>
+              </Switch>
             </section>
           </Match>
         </Switch>

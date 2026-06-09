@@ -14,8 +14,7 @@ import { ipc } from '../lib/ipc.ts';
 import type { VaultHealthReport } from '../lib/types.ts';
 import { toastError } from '../state/toast.ts';
 import AtRiskView from './security/AtRiskView.tsx';
-import BreachDirectory from './security/BreachDirectory.tsx';
-import DarkWebBreachView from './security/DarkWebBreachView.tsx';
+import BreachMonitor from './security/BreachMonitor.tsx';
 import ExposedPasswordsView from './security/ExposedPasswordsView.tsx';
 import VaultHealth from './security/VaultHealth.tsx';
 import './SecurityCenter.css';
@@ -63,8 +62,7 @@ export default function SecurityCenter(props: { onOpenItem: (id: string) => void
               onViewAtRisk={() => setSubview('atRisk')}
             />
             <ExposedPasswordsView onOpenItem={props.onOpenItem} />
-            <DarkWebBreachView />
-            <BreachDirectory />
+            <BreachMonitor />
           </div>
         </Match>
       </Switch>

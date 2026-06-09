@@ -25,6 +25,7 @@ export {
   sortKeyOf,
   TYPE_LABELS,
   type BuiltinColumnId,
+  parseColumnConfig,
   type ColumnConfig,
   type ColumnSpec,
   type GridMetrics,
@@ -35,6 +36,7 @@ export {
 
 export {
   addCustomColumn,
+  applyColumnConfig,
   columns,
   isColumnVisible,
   isRevealed,

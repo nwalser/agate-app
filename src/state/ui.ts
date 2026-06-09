@@ -9,6 +9,7 @@ import { createSignal } from 'solid-js';
 
 const COLLAPSE_KEY = 'agate.sidebarCollapsed';
 const WIDTH_KEY = 'agate.sidebarWidth';
+const LIST_WIDTH_KEY = 'agate.listWidth';
 const PREVIEW_KEY = 'agate.previewCollapsed';
 const DENSITY_KEY = 'agate.rowDensity';
 const ACTIVE_VAULT_KEY = 'agate.activeVault';
@@ -81,6 +82,51 @@ export function setSidebarWidth(px: number) {
 /** Restore the default sidebar width (double-click the resize handle). */
 export function resetSidebarWidth() {
   setSidebarWidth(SIDEBAR_DEFAULT_WIDTH);
+}
+
+// ---- item-list width (drag-to-resize the list ↔ detail split) ----
+// The width of the item-list pane; the detail (preview) pane flexes to fill the
+// rest. Driven onto the `--list-width` CSS variable in App.tsx. Clamped so the
+// list keeps a usable minimum and can never push the detail pane off-screen.
+
+export const LIST_MIN_WIDTH = 380;
+export const LIST_MAX_WIDTH = 1200;
+export const LIST_DEFAULT_WIDTH = 560;
+
+function clampListWidth(px: number): number {
+  if (!Number.isFinite(px)) return LIST_DEFAULT_WIDTH;
+  return Math.min(LIST_MAX_WIDTH, Math.max(LIST_MIN_WIDTH, Math.round(px)));
+}
+
+function readListWidth(): number {
+  try {
+    const raw = localStorage.getItem(LIST_WIDTH_KEY);
+    if (raw === null) return LIST_DEFAULT_WIDTH;
+    const n = Number.parseInt(raw, 10);
+    return Number.isNaN(n) ? LIST_DEFAULT_WIDTH : clampListWidth(n);
+  } catch {
+    // ignore: storage unavailable → default width
+    return LIST_DEFAULT_WIDTH;
+  }
+}
+
+const [listWidth, setListWidthSignal] = createSignal(readListWidth());
+export { listWidth };
+
+/** Set the item-list pane width in px (drag-resize). Clamped + persisted. */
+export function setListWidth(px: number) {
+  const next = clampListWidth(px);
+  setListWidthSignal(next);
+  try {
+    localStorage.setItem(LIST_WIDTH_KEY, String(next));
+  } catch {
+    // ignore: persistence is best-effort; the in-memory signal still applies
+  }
+}
+
+/** Restore the default item-list width (double-click the resize handle). */
+export function resetListWidth() {
+  setListWidth(LIST_DEFAULT_WIDTH);
 }
 
 // ---- detail (preview) pane collapse ----

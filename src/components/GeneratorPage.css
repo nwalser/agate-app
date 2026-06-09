@@ -87,3 +87,16 @@
 .generator-sep {
   width: 80px;
 }
+
+/* Username sub-mode selector reuses the .generator-mode pill; this just trims the
+   gap so it sits tight above its input. */
+.generator-submode {
+  margin-bottom: 2px;
+}
+.generator-username-hint {
+  font-size: 11.5px;
+  margin: 6px 0 0;
+}
+.generator-username-hint code {
+  font-size: 11px;
+}

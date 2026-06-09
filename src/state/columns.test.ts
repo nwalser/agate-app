@@ -57,13 +57,28 @@ describe('columns store — widths (resize)', () => {
   });
 });
 
-describe('columns store — grid metrics (anti-squish)', () => {
-  it('every default column track has a non-zero floor', async () => {
+describe('columns store — grid metrics (fit-to-width)', () => {
+  it('every default column track has a non-zero natural floor (feeds minWidth)', async () => {
     const m = await freshColumns();
     for (const id of m.ALL_BUILTINS) {
       expect(m.columnTrack({ kind: 'builtin', id }).min).toBeGreaterThan(0);
     }
     expect(m.columnTrack({ kind: 'custom', field: 'x' }).min).toBeGreaterThan(0);
+  });
+
+  it('configurable column tracks are shrinkable (minmax floor 0) so the grid fits the pane instead of overflowing', async () => {
+    const m = await freshColumns();
+    // Flexible text columns and the fixed-size icon columns alike floor at 0, so
+    // when the list pane is narrow the tracks compress rather than forcing a
+    // horizontal scroll that would detach the last column from the detail pane.
+    expect(m.columnTrack({ kind: 'builtin', id: 'username' }).template).toBe('minmax(0, 1fr)');
+    expect(m.columnTrack({ kind: 'builtin', id: 'type' }).template).toBe('minmax(0, 96px)');
+    expect(m.columnTrack({ kind: 'custom', field: 'x' }).template).toBe('minmax(0, 1fr)');
+    // A user drag-width is an upper bound, not a hard size — it still shrinks to fit.
+    const { template } = m.gridMetrics([{ kind: 'builtin', id: 'username' }], {
+      'builtin:username': 300,
+    });
+    expect(template).toContain('minmax(0, 300px)');
   });
 
   it('builds the template: fixed checkbox · name · column tracks · fixed end', async () => {
@@ -107,13 +122,13 @@ describe('columns store — grid metrics (anti-squish)', () => {
     expect(two).toBeGreaterThan(one);
   });
 
-  it('a user drag-width overrides the track and its floor', async () => {
+  it('a user drag-width caps the track (still shrinkable) and feeds its natural width', async () => {
     const m = await freshColumns();
     const { template, minWidth } = m.gridMetrics([{ kind: 'builtin', id: 'username' }], {
       'builtin:username': 300,
       [m.NAME_COL_KEY]: 250,
     });
-    expect(template).toBe(`${m.CHECK_COL_PX}px 250px 300px ${m.END_COL_PX}px`);
+    expect(template).toBe(`${m.CHECK_COL_PX}px minmax(0, 250px) minmax(0, 300px) ${m.END_COL_PX}px`);
     // 22 + 250 + 300 + 76 + 3 gaps × 10
     expect(minWidth).toBe(m.CHECK_COL_PX + 250 + 300 + m.END_COL_PX + 3 * m.COL_GAP);
   });

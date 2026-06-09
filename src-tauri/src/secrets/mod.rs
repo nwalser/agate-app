@@ -44,13 +44,13 @@ mod kdf;
 mod keychain;
 
 // Flat re-export: every existing `crate::secrets::X` keeps resolving unchanged.
-pub use aad::{app_unlock_aad, cred_aad};
+pub use aad::{app_unlock_aad, cred_aad, scan_cache_aad};
 pub use envelope::{open_with_key, seal_with_key};
 pub use kdf::{derive_auk, fresh_pepper, fresh_salt};
 pub use keychain::{
-    delete_cred, delete_device_pepper, delete_hello_blob, delete_key, load_app_unlock, load_cred,
-    load_device_pepper, load_hello_blob, store_app_unlock, store_cred, store_device_pepper,
-    store_hello_blob,
+    delete_cred, delete_device_pepper, delete_hello_blob, delete_key, delete_scan_cache,
+    load_app_unlock, load_cred, load_device_pepper, load_hello_blob, load_scan_cache,
+    store_app_unlock, store_cred, store_device_pepper, store_hello_blob, store_scan_cache,
 };
 
 const KEYRING_SERVICE: &str = "com.agate.desktop";
@@ -61,6 +61,10 @@ pub const BLOB_VERSION: u32 = 2;
 pub const APP_UNLOCK_KEY: &str = "app-unlock";
 /// Fixed keychain entry name for the (DPAPI-wrapped) Hello-released AUK.
 pub const HELLO_AUK_KEY: &str = "hello-auk";
+/// Fixed keychain entry name for the cached breach/exposed scan results, sealed
+/// under the VMK (the results carry the user's emails + which breaches they're in
+/// — PII, so they're encrypted at rest like every other secret, never plaintext).
+pub const SCAN_CACHE_KEY: &str = "scan-cache";
 /// Fixed keychain entry name for the device pepper — a random secret that mixes
 /// into the AUK derivation when the user binds unlock to this machine. Because the
 /// keychain entry is OS-protected (DPAPI / Keychain / secret-service) to this user

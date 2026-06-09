@@ -3,6 +3,16 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Closed set of vault-export file formats (frontend → backend).
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ExportFormat {
+    /// Pretty JSON: an array of full item details (Agate's own shape).
+    Json,
+    /// Bitwarden-compatible CSV (login-centric columns).
+    Csv,
+}
+
 /// Closed set of Bitwarden item types.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -109,6 +119,12 @@ pub struct ItemDetail {
     pub revision_date: String,
     /// Creation timestamp (RFC 3339).
     pub creation_date: String,
+    /// Collections this item belongs to (IDs; resolve to names via list_collections).
+    pub collection_ids: Vec<String>,
+    /// File attachments on this item (metadata; download via download_attachment).
+    pub attachments: Vec<Attachment>,
+    /// Stored passkeys (FIDO2 credentials) on this login — display metadata only.
+    pub passkeys: Vec<PasskeyCredential>,
 }
 
 /// A generated TOTP code plus timing so the UI can render a countdown.
@@ -119,6 +135,67 @@ pub struct TotpCode {
     pub period: u32,
     /// Seconds remaining until this code rolls over.
     pub remaining: u32,
+}
+
+/// A stored passkey (FIDO2 credential) on a login — display metadata only; the
+/// private key material never leaves the backend. Standalone vaults can show and
+/// manage passkeys; using them for sign-in needs browser integration (extension).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PasskeyCredential {
+    /// Relying-party (site) id, e.g. "github.com".
+    pub rp_id: String,
+    pub rp_name: Option<String>,
+    pub user_name: Option<String>,
+    pub user_display_name: Option<String>,
+    pub key_algorithm: String,
+    /// Creation timestamp (RFC 3339).
+    pub creation_date: String,
+}
+
+/// One file attachment on an item (metadata only — bytes are fetched + decrypted
+/// on demand by `download_attachment`). The encryption key/URL stay in the backend.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Attachment {
+    pub id: String,
+    pub file_name: Option<String>,
+    /// Human-readable size, e.g. "12 KB" (from the SDK).
+    pub size_name: Option<String>,
+}
+
+/// A Bitwarden Send (ephemeral share) summary for the Sends manager. Named
+/// `SendSummary` to avoid colliding with the `Send` marker trait. Read + revoke
+/// only for now (create is a follow-up).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SendSummary {
+    pub id: String,
+    pub name: String,
+    /// "text" or "file".
+    pub send_type: String,
+    pub disabled: bool,
+    pub has_password: bool,
+    pub access_count: u32,
+    pub max_access_count: Option<u32>,
+    /// When the Send is auto-deleted (RFC 3339).
+    pub deletion_date: String,
+    /// Optional expiry (RFC 3339).
+    pub expiration_date: Option<String>,
+    pub account_email: String,
+    pub account_label: String,
+}
+
+/// A decrypted collection (a shared-vault grouping). Per-connection in the
+/// unified view, like folders. Read-only browsing for now.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Collection {
+    pub id: String,
+    pub name: String,
+    pub organization_id: String,
+    pub account_email: String,
+    pub account_label: String,
 }
 
 /// A vault folder. In the unified view folders are per-connection, so each

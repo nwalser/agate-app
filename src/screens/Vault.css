@@ -14,6 +14,39 @@
   padding: 2px 4px 6px;
   min-height: 32px;
 }
+
+/* "Unsaved changes to <view>" bar — shown above the list when the live config has
+   diverged from the active saved view. Save persists the snapshot, Discard reverts. */
+.vault-view-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 4px 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--primary) 8%, var(--surface));
+}
+.vault-view-bar-text {
+  color: var(--muted-foreground);
+}
+.vault-view-bar .spacer {
+  flex: 1;
+}
+.vault-view-bar-btn {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.vault-view-bar-btn.primary {
+  color: var(--primary-foreground);
+  background: var(--primary);
+  border: none;
+}
 .vault-list-count {
   font-size: 12px;
   color: var(--muted-foreground);
@@ -138,6 +171,8 @@
   flex: 1;
   display: flex;
   min-height: 0;
+  /* Anchors the absolutely-positioned SidebarResizer at the rail seam. */
+  position: relative;
 }
 
 .vault-rail {
@@ -267,9 +302,10 @@
    set on the inner .vault-table (see VaultList). position:relative anchors the
    floating multi-select action bar. */
 .vault-list {
-  flex: 1.3 1 0;
+  /* Drag-resizable: flex-basis is the user's --list-width; the detail pane flexes
+     to fill the rest. Can shrink (but not below min-width) on a narrow window. */
+  flex: 0 1 var(--list-width);
   min-width: 380px;
-  flex-shrink: 0;
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
@@ -281,6 +317,7 @@
 /* Detail pane hidden → the list spans the full width; drop the now-dangling
    right border. */
 .vault-list.list-full {
+  flex: 1 1 0;
   border-right: none;
 }
 
@@ -477,7 +514,10 @@ button.vault-head-cell.sorted {
 }
 
 .vault-detail {
-  flex: 1;
+  /* Flexes to fill whatever the resizable list pane leaves; keeps a usable floor
+     so dragging the list wide can't crush the detail/editor. */
+  flex: 1 1 0;
+  min-width: 320px;
   overflow-y: auto;
   padding: 22px 26px;
 }
@@ -545,6 +585,23 @@ button.vault-head-cell.sorted {
 }
 .detail-sec.risk {
   color: var(--warning);
+}
+/* Breach affection block: a second .detail-sec row (red), icon top-aligned over a
+   title + the breach-name chips. */
+.detail-sec.breach {
+  color: var(--destructive);
+  align-items: flex-start;
+  margin-top: 8px;
+}
+.detail-sec-breach-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.detail-sec-breach-title {
+  color: var(--foreground);
+  font-weight: 600;
 }
 .detail-sec svg {
   flex-shrink: 0;
@@ -636,6 +693,66 @@ button.vault-head-cell.sorted {
   padding-top: 10px;
   border-top: 1px solid var(--border);
   font-size: 11px;
+}
+
+/* Passkey rows in the detail pane (read-only). */
+.detail-passkey {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+}
+.detail-passkey > svg {
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+}
+.detail-passkey-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.detail-passkey-rp {
+  font-size: 12.5px;
+}
+.detail-passkey-user {
+  font-size: 11px;
+}
+
+/* Attachment rows in the detail pane. */
+.detail-attachment {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+}
+.detail-attachment > svg {
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+}
+.detail-attachment-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+}
+.detail-attachment-size {
+  flex-shrink: 0;
+  font-size: 11px;
+}
+
+/* Read-only collection chips in the detail pane. */
+.detail-collections {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.detail-collection-chip {
+  font-size: 11.5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  color: var(--muted-foreground);
 }
 
 /* Card "face" in the detail pane. */

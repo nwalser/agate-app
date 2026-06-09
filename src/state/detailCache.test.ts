@@ -35,6 +35,11 @@ function stubDetail(id: string, marker: string): ItemDetail {
     fields: [],
     folderId: null,
     organizationId: null,
+    revisionDate: '2025-01-01T00:00:00Z',
+    creationDate: '2025-01-01T00:00:00Z',
+    collectionIds: [],
+    attachments: [],
+    passkeys: [],
   };
 }
 

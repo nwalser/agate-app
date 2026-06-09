@@ -11,6 +11,13 @@ import type { ItemType } from './types.ts';
 import type { VaultFilter } from './search.ts';
 import { TYPE_FILTERS, type VaultView } from './vaultConfig.ts';
 import { typeIcon } from './vaultIcons.ts';
+import { DEFAULT_VIEW_ICON, isViewIcon } from './viewIcons.ts';
+import {
+  parseColumnConfig,
+  type ColumnConfig,
+  type SortDir,
+  type SortKey,
+} from '../state/columnConfig.ts';
 
 /** Built-in rail entries the user can show/hide/reorder. `type:*` are the per-type
  *  filters; `folders` is the whole folder-tree block. */
@@ -36,13 +43,37 @@ export type SavedFilter =
   | { kind: 'trash' }
   | { kind: 'type'; itemType: ItemType };
 
-/** A user-defined saved query pinned to the rail: a name + search text applied on
- *  top of a base filter. `id` is always `query:<uuid>`. */
+// Sort snapshot stored in a view (key + direction).
+export interface ViewSort {
+  key: SortKey;
+  dir: SortDir;
+}
+
+/** The full list snapshot a saved view captures: base filter, titlebar search,
+ *  per-column filters, and (optionally) the whole column layout + sort. `columns`
+ *  and `sort` are optional so a freshly-created or legacy view doesn't force a
+ *  layout — apply only touches the parts that are present. */
+export interface ViewConfig {
+  filter: SavedFilter;
+  query: string;
+  columnFilters: Record<string, string>;
+  columns?: ColumnConfig;
+  sort?: ViewSort;
+}
+
+/** Config a brand-new view starts from — everything else is set while viewing. */
+export function defaultViewConfig(): ViewConfig {
+  return { filter: { kind: 'all' }, query: '', columnFilters: {} };
+}
+
+/** A user-defined saved view pinned to the rail: a name + a pickable icon + a
+ *  captured list snapshot (see ViewConfig). `id` is always `query:<uuid>` (kept
+ *  for back-compat with the original "custom query" feature). */
 export interface CustomQuery {
   id: string;
   name: string;
-  query: string;
-  filter: SavedFilter;
+  icon: string;
+  config: ViewConfig;
 }
 
 export interface SidebarConfig {
@@ -187,15 +218,48 @@ export function parseSavedFilter(v: unknown): SavedFilter | null {
   return null;
 }
 
+const SORT_KEYS: SortKey[] = ['name', 'username', 'folder', 'type', 'security'];
+function parseSortKey(v: unknown): SortKey | null {
+  return typeof v === 'string' && (SORT_KEYS as string[]).includes(v) ? (v as SortKey) : null;
+}
+
+/** Validate an arbitrary value into a `ViewConfig`, defaulting missing pieces.
+ *  `columns` / `sort` are only set when present (so applying won't touch layout). */
+export function parseViewConfig(v: unknown): ViewConfig {
+  if (typeof v !== 'object' || v === null) return defaultViewConfig();
+  const o = v as Record<string, unknown>;
+  const filter = parseSavedFilter(o.filter) ?? { kind: 'all' };
+  const query = typeof o.query === 'string' ? o.query : '';
+  const columnFilters: Record<string, string> = {};
+  if (o.columnFilters && typeof o.columnFilters === 'object') {
+    for (const [k, val] of Object.entries(o.columnFilters as Record<string, unknown>)) {
+      if (typeof val === 'string' && val) columnFilters[k] = val;
+    }
+  }
+  const cfg: ViewConfig = { filter, query, columnFilters };
+  if (o.columns !== undefined) cfg.columns = parseColumnConfig(o.columns);
+  if (o.sort && typeof o.sort === 'object') {
+    const so = o.sort as Record<string, unknown>;
+    const key = parseSortKey(so.key);
+    if (key && (so.dir === 'asc' || so.dir === 'desc')) cfg.sort = { key, dir: so.dir };
+  }
+  return cfg;
+}
+
 export function parseCustomQuery(v: unknown): CustomQuery | null {
   if (typeof v !== 'object' || v === null) return null;
   const o = v as Record<string, unknown>;
   if (!isQueryId(o.id)) return null;
   if (typeof o.name !== 'string' || o.name.trim() === '') return null;
-  if (typeof o.query !== 'string') return null;
-  const filter = parseSavedFilter(o.filter);
-  if (!filter) return null;
-  return { id: o.id, name: o.name, query: o.query, filter };
+  const icon = isViewIcon(o.icon) ? o.icon : DEFAULT_VIEW_ICON;
+  // New shape carries an explicit `config`. Legacy shape is flat `{query, filter}`
+  // — upgrade it into a config (filter + search only; no layout snapshot).
+  if (o.config !== undefined) {
+    return { id: o.id, name: o.name, icon, config: parseViewConfig(o.config) };
+  }
+  const filter = parseSavedFilter(o.filter) ?? { kind: 'all' };
+  const query = typeof o.query === 'string' ? o.query : '';
+  return { id: o.id, name: o.name, icon, config: { filter, query, columnFilters: {} } };
 }
 
 /**

@@ -8,7 +8,7 @@ use zeroize::Zeroizing;
 
 use super::{
     b64, cred_key, AppUnlockBlob, SealedBlob, APP_UNLOCK_KEY, DEVICE_PEPPER_KEY, HELLO_AUK_KEY,
-    KEYRING_SERVICE,
+    KEYRING_SERVICE, SCAN_CACHE_KEY,
 };
 use crate::error::{AgateError, AgateResult, ErrorKind};
 
@@ -104,6 +104,31 @@ pub fn load_hello_blob() -> AgateResult<Option<Vec<u8>>> {
 
 pub fn delete_hello_blob() -> AgateResult<()> {
     delete_key(HELLO_AUK_KEY)
+}
+
+/// Store the sealed scan-result cache (breach/exposed results, sealed under the
+/// VMK by the caller).
+pub fn store_scan_cache(blob: &SealedBlob) -> AgateResult<()> {
+    let json = serde_json::to_string(blob)
+        .map_err(|e| AgateError::internal(format!("serialize scan cache: {e}")))?;
+    store_string(SCAN_CACHE_KEY, &json)
+}
+
+/// Load the sealed scan-result cache. `Ok(None)` == no cache yet; a parse failure
+/// is a loud `Keychain` error (corrupt), never silently treated as absent.
+pub fn load_scan_cache() -> AgateResult<Option<SealedBlob>> {
+    match load_string(SCAN_CACHE_KEY)? {
+        Some(json) => {
+            let blob = serde_json::from_str(&json)
+                .map_err(|e| AgateError::new(ErrorKind::Keychain, format!("corrupt scan cache: {e}")))?;
+            Ok(Some(blob))
+        }
+        None => Ok(None),
+    }
+}
+
+pub fn delete_scan_cache() -> AgateResult<()> {
+    delete_key(SCAN_CACHE_KEY)
 }
 
 /// Store the device pepper (base64). Machine binding ties the keychain entry to

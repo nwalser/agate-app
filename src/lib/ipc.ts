@@ -5,10 +5,13 @@ import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import type {
   AccountBreaches,
   BreachRecord,
+  Collection,
   ConnectionSummary,
   DarkWebReport,
+  ExportFormat,
   ExposedResult,
   Folder,
+  SendSummary,
   ItemDetail,
   ItemInput,
   LoginResult,
@@ -19,6 +22,7 @@ import type {
   TotpCode,
   TwoFactorInput,
   UnlockOutcome,
+  UsernameGenOptions,
   VaultHealthReport,
   VaultItem,
   WindowControlsLayout,
@@ -80,6 +84,10 @@ export const ipc = {
 
   unlockAll: (appPassword: string): Promise<UnlockOutcome[]> =>
     invoke('unlock_all', { appPassword }),
+
+  /** Verify the app password without unlocking — gates reprompt-protected items. */
+  verifyAppPassword: (password: string): Promise<boolean> =>
+    invoke('verify_app_password', { password }),
 
   unlockConnection2fa: (email: string, twoFactor: TwoFactorInput): Promise<void> =>
     invoke('unlock_connection_2fa', { email, twoFactor }),
@@ -146,6 +154,19 @@ export const ipc = {
 
   listFolders: (): Promise<Folder[]> => invoke('list_folders'),
 
+  listCollections: (): Promise<Collection[]> => invoke('list_collections'),
+
+  /** List Bitwarden Sends (ephemeral shares) across all unlocked connections. */
+  listSends: (): Promise<SendSummary[]> => invoke('list_sends'),
+
+  /** Revoke (delete) one Send. */
+  deleteSend: (accountEmail: string, sendId: string): Promise<void> =>
+    invoke('delete_send', { accountEmail, sendId }),
+
+  /** Download + decrypt one attachment to the Downloads folder; returns the path. */
+  downloadAttachment: (accountEmail: string, itemId: string, attachmentId: string): Promise<string> =>
+    invoke('download_attachment', { accountEmail, itemId, attachmentId }),
+
   itemDetail: (accountEmail: string, id: string): Promise<ItemDetail> =>
     invoke('item_detail', { accountEmail, id }),
 
@@ -160,6 +181,17 @@ export const ipc = {
 
   generatePassphrase: (options: PassphraseGenOptions): Promise<string> =>
     invoke('generate_passphrase', { options }),
+
+  generateUsername: (options: UsernameGenOptions): Promise<string> =>
+    invoke('generate_username', { options }),
+
+  /** Export all unlocked vaults to a JSON/CSV file in Downloads; returns the path. */
+  exportVault: (format: ExportFormat): Promise<string> =>
+    invoke('export_vault', { format }),
+
+  /** Import items from a user-picked CSV into a connection; returns the count created. */
+  importVault: (accountEmail: string | null): Promise<number> =>
+    invoke('import_vault', { accountEmail }),
 
   // ---- vault write operations ----
 
@@ -194,6 +226,12 @@ export const ipc = {
 
   windowControlsLayout: (): Promise<WindowControlsLayout> => invoke('window_controls_layout'),
 
+  // ---- startup (launch at login) ----
+
+  getAutostart: (): Promise<boolean> => invoke('get_autostart'),
+
+  setAutostart: (enabled: boolean): Promise<void> => invoke('set_autostart', { enabled }),
+
   // ---- security audit ----
 
   // Always sends the current audit config so every audit surface (Security
@@ -215,6 +253,14 @@ export const ipc = {
   darkwebScanVault: (): Promise<DarkWebReport> => invoke('darkweb_scan_vault'),
 
   breachDirectory: (): Promise<BreachRecord[]> => invoke('breach_directory'),
+
+  // Encrypted scan-result cache (sealed under the VMK in the keychain — see
+  // src-tauri/src/scancache.rs). `payload` is an opaque JSON string owned by
+  // state/securityScans.ts; load returns null when there's no (openable) cache.
+  cacheSecurityScans: (payload: string): Promise<void> =>
+    invoke('cache_security_scans', { payload }),
+
+  loadSecurityScans: (): Promise<string | null> => invoke('load_security_scans'),
 
   // ---- Windows Hello unlock ----
 

@@ -14,15 +14,31 @@
 //! - [`transform`] — pure `CipherView` → DTO mapping (list rows + `ItemDetail`).
 //! - [`generators`] — password / passphrase generation.
 
+mod attachments;
+mod export;
 mod generators;
+mod import;
 mod reads;
+mod sends;
 mod transform;
 
 // Read path consumed by the Tauri commands in `lib.rs`.
-pub use reads::{item_detail, item_totp, list_folders, list_items, sync};
+pub use reads::{item_detail, item_totp, list_collections, list_folders, list_items, sync};
 
 // Generation, also driven from `lib.rs`.
-pub use generators::{generate_passphrase, generate_password};
+pub use generators::{generate_passphrase, generate_password, generate_username};
+
+// Vault export (decrypt → JSON/CSV), driven from `lib.rs`.
+pub use export::export_string;
+
+// Vault import (CSV → create-ready inputs), driven from `lib.rs`.
+pub use import::parse_csv;
+
+// Attachment download (fetch + decrypt), driven from `lib.rs`.
+pub use attachments::download_attachment;
+
+// Bitwarden Send (list + revoke), driven from `lib.rs`.
+pub use sends::{delete_send, list_sends};
 
 // Per-connection helpers shared with the write path (`mutate`).
 pub(crate) use reads::{client_for, decrypt_one};

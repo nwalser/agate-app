@@ -19,8 +19,11 @@ import {
 } from './state/session.ts';
 import { toastError } from './state/toast.ts';
 import { runStartupUpdateCheck } from './state/update.ts';
+import { listWidth, sidebarWidth } from './state/ui.ts';
 import { useAutoLock } from './hooks/useAutoLock.ts';
 import { clearGeneratorHistory } from './state/generatorHistory.ts';
+import { clearReprompted } from './state/reprompt.ts';
+import { clearCollections } from './state/collections.ts';
 import './App.css';
 
 export default function App() {
@@ -33,6 +36,15 @@ export default function App() {
     void runStartupUpdateCheck();
   });
 
+  // Drive the user's chosen pane widths onto the shared CSS variables so every
+  // left sidebar (vault rail + Settings sub-nav) and the item-list pane track them
+  // live during a drag.
+  createEffect(() => {
+    const root = document.documentElement.style;
+    root.setProperty('--sidebar-width', `${sidebarWidth()}px`);
+    root.setProperty('--list-width', `${listWidth()}px`);
+  });
+
   const base = createMemo(() => screenForStatus(status()));
 
   // Search lives in the titlebar but only belongs to the vault list — hide it on
@@ -43,8 +55,10 @@ export default function App() {
     try {
       await ipc.lock();
       setShowSettings(false);
-      // Generated-secret buffer is session-only; wipe it when the vault closes.
+      // Session-only buffers wiped when the vault closes.
       clearGeneratorHistory();
+      clearReprompted();
+      clearCollections();
       await refreshSession();
     } catch (err) {
       toastError(err);

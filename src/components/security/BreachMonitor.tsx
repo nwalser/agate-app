@@ -1,9 +1,11 @@
-// "Dark web monitor" tab of the Security center: the periodic all-account breach
-// scan (XposedOrNot). Reads the scan-result signals from state/securityScans.ts
-// and the on/off toggle from state/security.ts; triggers a manual refresh via
-// runDarkwebScan. Renders the per-account breach results plus the grouped notices
-// for emails that were locked, pending, or errored this run. Reuses the .sec-*
-// classes from SecurityCenter.css (imported by the parent).
+// "Breaches" section of the Security center: the unified breach view. Folds the
+// old dark-web-monitor and breaches-directory tabs into one breach-centric list —
+// every known data breach one or more of YOUR accounts appears in, deduplicated
+// across accounts, each row showing which of your accounts it hit and what leaked.
+// Clean accounts are not listed (only breaches found are). Reads the cached scan
+// signals from state/securityScans.ts and the on/off toggle from state/security.ts;
+// a manual refresh re-runs the all-account scan. Reuses the .sec-* classes from
+// SecurityCenter.css (imported by the parent).
 
 import { createSignal, For, type JSX, Show } from 'solid-js';
 import {
@@ -15,11 +17,11 @@ import {
   Mail,
   RefreshCw,
   ShieldAlert,
-  ShieldOff,
+  ShieldCheck,
 } from 'lucide-solid';
-import type { AccountBreaches, BreachRecord } from '../../lib/types.ts';
+import type { RelevantBreach } from '../../lib/breachAggregation.ts';
 import { darkwebMonitor } from '../../state/security.ts';
-import { darkwebBusy, darkwebReport, darkwebRunAt, runDarkwebScan } from '../../state/securityScans.ts';
+import { darkwebBusy, darkwebReport, darkwebRunAt, relevantBreaches, runDarkwebScan } from '../../state/securityScans.ts';
 import { BreachDetails, DataClassChips, DisabledNotice, lastRun } from './shared.tsx';
 
 /** A labelled, collapsible-by-emptiness list of emails not in the checked set. */
@@ -43,14 +45,17 @@ function EmailNotice(props: { icon: JSX.Element; title: string; hint: string; em
   );
 }
 
-function BreachRow(props: { breach: BreachRecord }) {
-  const b = () => props.breach;
+/** One breach: a clickable summary that expands to full detail, with the affected
+ *  account emails shown beneath. */
+function BreachRow(props: { entry: RelevantBreach }) {
+  const b = () => props.entry.breach;
+  const accounts = () => props.entry.accounts;
   const [open, setOpen] = createSignal(false);
   return (
-    <li class="sec-breach" classList={{ open: open() }}>
+    <li class="sec-dir-item" classList={{ open: open() }}>
       <button
         type="button"
-        class="sec-breach-toggle"
+        class="sec-dir-toggle"
         aria-expanded={open()}
         onClick={() => setOpen(!open())}
       >
@@ -62,7 +67,23 @@ function BreachRow(props: { breach: BreachRecord }) {
             <CheckCircle2 size={11} strokeWidth={2} />
           </span>
         </Show>
+        <span class="spacer" />
+        <span class="sec-affected">
+          {accounts().length} account{accounts().length === 1 ? '' : 's'}
+        </span>
       </button>
+
+      {/* Which of your accounts this breach hit. */}
+      <div class="sec-breach-accounts">
+        <For each={accounts()}>
+          {(email) => (
+            <span class="sec-account-chip">
+              <Mail size={11} strokeWidth={1.75} /> <span class="truncate">{email}</span>
+            </span>
+          )}
+        </For>
+      </div>
+
       <Show
         when={open()}
         fallback={
@@ -77,60 +98,32 @@ function BreachRow(props: { breach: BreachRecord }) {
   );
 }
 
-function AccountResult(props: { account: AccountBreaches }) {
-  const a = () => props.account;
-  return (
-    <div class="sec-account">
-      <div class="sec-account-head">
-        <Mail size={13} strokeWidth={1.75} />
-        <span class="sec-account-email truncate">{a().email}</span>
-        <Show
-          when={a().breaches.length > 0}
-          fallback={
-            <span class="sec-account-clean">
-              <CheckCircle2 size={13} strokeWidth={1.75} /> Clean
-            </span>
-          }
-        >
-          <span class="sec-account-bad">
-            <ShieldOff size={13} strokeWidth={1.75} />
-            {a().breaches.length} breach{a().breaches.length === 1 ? '' : 'es'}
-          </span>
-        </Show>
-      </div>
+export default function BreachMonitor() {
+  // Count of the user's own accounts that appear in any breach (not clean ones).
+  const affectedAccounts = () =>
+    darkwebReport()?.accounts.filter((a) => a.breaches.length > 0).length ?? 0;
 
-      <Show when={a().exposedData.length > 0}>
-        <div class="sec-exposed-line">
-          <span class="muted">Leaked:</span>
-          <DataClassChips classes={a().exposedData} />
-        </div>
-      </Show>
-
-      <Show when={a().breaches.length > 0}>
-        <ul class="sec-breaches">
-          <For each={a().breaches}>{(b) => <BreachRow breach={b} />}</For>
-        </ul>
-      </Show>
-    </div>
-  );
-}
-
-export default function DarkWebBreachView() {
   return (
     <section class="sec-card">
       <div class="sec-card-head">
-        <h3><ShieldAlert size={14} strokeWidth={1.75} /> Dark web monitor</h3>
+        <h3><ShieldAlert size={14} strokeWidth={1.75} /> Breaches</h3>
         <span class="spacer" />
-        <button class="ghost sec-refresh" disabled={darkwebBusy() || !darkwebMonitor()} onClick={() => void runDarkwebScan()}>
+        <button
+          class="ghost sec-refresh"
+          disabled={darkwebBusy() || !darkwebMonitor()}
+          onClick={() => void runDarkwebScan()}
+        >
           <RefreshCw size={13} strokeWidth={1.75} class={darkwebBusy() ? 'spin' : ''} /> Refresh
         </button>
       </div>
 
       <Show when={darkwebMonitor()} fallback={<DisabledNotice what="The dark-web monitor" />}>
         <p class="muted sec-help">{lastRun(darkwebRunAt())}</p>
+
         <Show when={darkwebBusy() && !darkwebReport()}>
           <p class="sec-loading muted">Scanning your accounts for breaches…</p>
         </Show>
+
         <Show when={!darkwebReport() && !darkwebBusy()}>
           <div class="sec-empty-cta">
             <p class="muted sec-empty">No scan results yet.</p>
@@ -139,27 +132,33 @@ export default function DarkWebBreachView() {
             </button>
           </div>
         </Show>
+
         <Show when={darkwebReport()}>
           {(r) => (
             <>
-              <div class="sec-report-summary">
-                <span><strong>{r().accounts.length}</strong> checked</span>
-                <span class="sec-report-bad"><strong>{r().totalBreaches}</strong> breaches</span>
-                <span class="sec-report-good"><strong>{r().clean}</strong> clean</span>
-              </div>
-
               <Show
-                when={r().accounts.length > 0}
-                fallback={<p class="muted sec-empty">No account emails found in your vault.</p>}
+                when={relevantBreaches().length > 0}
+                fallback={
+                  <p class="sec-clean">
+                    <ShieldCheck size={14} strokeWidth={1.75} /> None of your accounts appear in known
+                    breaches.
+                  </p>
+                }
               >
-                <h4 class="sec-group-label">
-                  <CheckCircle2 size={12} strokeWidth={1.75} /> Checked emails ({r().accounts.length})
-                </h4>
-                <div class="sec-accounts">
-                  <For each={r().accounts}>{(acct) => <AccountResult account={acct} />}</For>
+                <div class="sec-report-summary">
+                  <span class="sec-report-bad">
+                    <strong>{relevantBreaches().length}</strong> breach{relevantBreaches().length === 1 ? '' : 'es'}
+                  </span>
+                  <span>
+                    <strong>{affectedAccounts()}</strong> of your account{affectedAccounts() === 1 ? '' : 's'} affected
+                  </span>
                 </div>
+                <ul class="sec-dir-list">
+                  <For each={relevantBreaches()}>{(entry) => <BreachRow entry={entry} />}</For>
+                </ul>
               </Show>
 
+              {/* Coverage caveats — emails the scan couldn't fully cover this run. */}
               <EmailNotice
                 icon={<Lock size={12} strokeWidth={1.75} />}
                 title="Vaults not read — connection locked"
@@ -191,6 +190,7 @@ export default function DarkWebBreachView() {
             </>
           )}
         </Show>
+
         <p class="sec-attrib">Breach data from XposedOrNot.</p>
       </Show>
     </section>

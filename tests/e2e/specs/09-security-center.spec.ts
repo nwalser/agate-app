@@ -27,10 +27,11 @@ describe('security center', () => {
     await gotoSecurity();
     await $('.sec-summary').waitForExist({ timeout: TIMEOUT.slow });
     // Section labels are upper-cased by CSS (text-transform), which the WebDriver
-    // rendered-text algorithm reflects — compare case-insensitively.
+    // rendered-text algorithm reflects — compare case-insensitively. The dark-web
+    // monitor + breach directory are now one combined "Breaches" section.
     const body = (await $('.sec-body').getText()).toLowerCase();
+    expect(body).to.contain('vault health');
     expect(body).to.contain('exposed passwords');
-    expect(body).to.contain('dark web monitor');
-    expect(body).to.contain('breaches affecting you');
+    expect(body).to.contain('breaches');
   });
 });

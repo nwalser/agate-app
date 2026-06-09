@@ -10,6 +10,15 @@ import { ipc } from '../../lib/ipc.ts';
 import { refreshSession, status } from '../../state/session.ts';
 import { pushToast, toastError } from '../../state/toast.ts';
 
+// Platform-appropriate name for the biometric unlock method (Windows Hello /
+// Touch ID / generic). The backend picks the matching consent gate per OS.
+const UA = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+const BIOMETRIC_NAME = /Mac/.test(UA)
+  ? 'Touch ID'
+  : /Windows/.test(UA)
+    ? 'Windows Hello'
+    : 'Biometric unlock';
+
 export default function UnlockSettings() {
   const [newPw, setNewPw] = createSignal('');
   const [confirmPw, setConfirmPw] = createSignal('');
@@ -57,11 +66,11 @@ export default function UnlockSettings() {
       if (status().helloConfigured) {
         await ipc.helloDisable();
         await refreshSession();
-        pushToast('success', 'Windows Hello unlock disabled.');
+        pushToast('success', `${BIOMETRIC_NAME} unlock disabled.`);
       } else {
         await ipc.helloEnable();
         await refreshSession();
-        pushToast('success', 'Windows Hello unlock enabled.');
+        pushToast('success', `${BIOMETRIC_NAME} unlock enabled.`);
       }
     } catch (err) {
       toastError(err);
@@ -82,7 +91,7 @@ export default function UnlockSettings() {
           subtitle="Always bound to this machine" />
         <MethodRow
           icon={Fingerprint}
-          label="Windows Hello"
+          label={BIOMETRIC_NAME}
           on={status().helloConfigured}
           unavailable={!helloAvailable()}
           subtitle="Face, fingerprint, or PIN"
@@ -122,17 +131,17 @@ export default function UnlockSettings() {
 
       <section class="settings-section">
         <h3>
-          <Fingerprint size={14} strokeWidth={1.75} /> Windows Hello
+          <Fingerprint size={14} strokeWidth={1.75} /> {BIOMETRIC_NAME}
         </h3>
         <p class="muted settings-help">
-          Unlock your vault with Windows Hello (face, fingerprint, or PIN) instead of typing a
+          Unlock your vault with {BIOMETRIC_NAME} (face, fingerprint, or PIN) instead of typing a
           password.
         </p>
         <Show
           when={helloAvailable()}
           fallback={
             <div class="settings-row settings-row-disabled">
-              <span class="muted">Windows Hello is not available on this device.</span>
+              <span class="muted">{BIOMETRIC_NAME} is not available on this device.</span>
             </div>
           }
         >
