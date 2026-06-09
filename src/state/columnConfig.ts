@@ -12,16 +12,32 @@ export type BuiltinColumnId =
   | 'type'
   | 'totp'
   | 'password'
-  | 'security';
+  | 'security'
+  | 'passkey';
 
 /** A visible column: a known built-in, or a custom field referenced by name. */
 export type ColumnSpec =
   | { kind: 'builtin'; id: BuiltinColumnId }
   | { kind: 'custom'; field: string };
 
-/** Columns the list can sort by (all derivable without fetching item detail). */
-export type SortKey = 'name' | 'username' | 'folder' | 'type';
+/** Columns the list can sort by (all derivable without fetching item detail).
+ *  `security` ranks rows by their offline-health status (passed into the list). */
+export type SortKey = 'name' | 'username' | 'folder' | 'type' | 'security';
 export type SortDir = 'asc' | 'desc';
+
+/** Categorical columns the list can group rows under (value available without
+ *  fetching item detail). Drives the optional group-header rows. */
+export type GroupKey = 'folder' | 'type' | 'security';
+
+export const GROUP_KEYS: GroupKey[] = ['folder', 'type', 'security'];
+
+/** Labels for the "Group by" picker (the per-group header text is derived from
+ *  the rows themselves — see `lib/grouping.ts`). */
+export const GROUP_LABELS: Record<GroupKey, string> = {
+  folder: 'Folder',
+  type: 'Type',
+  security: 'Security',
+};
 
 export interface ColumnConfig {
   /** Visible data columns after the always-on Name column, in display order. */
@@ -33,6 +49,8 @@ export interface ColumnConfig {
   /** Per-column pixel widths, keyed by `columnKey` (or `NAME_COL_KEY` for the
    *  always-on Name column). Absent = the column's default flexible width. */
   widths: Record<string, number>;
+  /** Group rows under header rows by this column's value, or null for a flat list. */
+  groupBy: GroupKey | null;
 }
 
 /** Width-map key for the always-on Name column. */
@@ -49,6 +67,7 @@ export const ALL_BUILTINS: BuiltinColumnId[] = [
   'totp',
   'password',
   'security',
+  'passkey',
 ];
 
 /** Display labels for item types — single source in `lib/labels.ts`, re-exported
@@ -81,8 +100,13 @@ export function builtinMeta(id: BuiltinColumnId): ColumnMeta {
       return { label: 'Password', sortable: false, secret: true, needsDetail: true };
     case 'security':
       // Rendered from the offline health report (passed into the list), not from
-      // per-item detail — so no detail fetch and not a sortable/secret column.
-      return { label: 'Security', sortable: false, secret: false, needsDetail: false };
+      // per-item detail — so no detail fetch, and not secret. Sortable: the list
+      // ranks rows by their health status from the same report.
+      return { label: 'Security', sortable: true, secret: false, needsDetail: false };
+    case 'passkey':
+      // Presence flag from the list row (`hasPasskey`) — an icon, not a value, so
+      // not sortable/secret and no detail fetch.
+      return { label: 'Passkey', sortable: false, secret: false, needsDetail: false };
   }
 }
 
@@ -101,6 +125,16 @@ export function sortKeyOf(c: ColumnSpec): SortKey | null {
   if (c.id === 'username') return 'username';
   if (c.id === 'folder') return 'folder';
   if (c.id === 'type') return 'type';
+  if (c.id === 'security') return 'security';
+  return null;
+}
+
+/** The group key a column maps to, or null if it can't group rows. */
+export function groupKeyOf(c: ColumnSpec): GroupKey | null {
+  if (c.kind !== 'builtin') return null;
+  if (c.id === 'folder') return 'folder';
+  if (c.id === 'type') return 'type';
+  if (c.id === 'security') return 'security';
   return null;
 }
 
@@ -151,7 +185,11 @@ export function columnTrack(c: ColumnSpec): Track {
     case 'password':
       return { template: 'minmax(120px, 1fr)', min: 120 };
     case 'security':
-      return { template: 'minmax(130px, 1.2fr)', min: 130 };
+      // A single right-aligned status badge (icon) — a tight fixed track is plenty.
+      return { template: '72px', min: 72 };
+    case 'passkey':
+      // A single presence icon — tight fixed track.
+      return { template: '72px', min: 72 };
   }
 }
 
@@ -197,10 +235,15 @@ export const DEFAULT: ColumnConfig = {
   revealed: [],
   favicons: true,
   widths: {},
+  groupBy: null,
 };
 
 function isBuiltinId(v: unknown): v is BuiltinColumnId {
   return typeof v === 'string' && (ALL_BUILTINS as string[]).includes(v);
+}
+
+function isGroupKey(v: unknown): v is GroupKey {
+  return typeof v === 'string' && (GROUP_KEYS as string[]).includes(v);
 }
 
 function parseSpec(v: unknown): ColumnSpec | null {
@@ -234,7 +277,8 @@ export function readColumnConfig(): ColumnConfig {
         if (typeof v === 'number' && Number.isFinite(v) && v >= MIN_COL_WIDTH) widths[k] = v;
       }
     }
-    return { columns, revealed, favicons, widths };
+    const groupBy = isGroupKey(o.groupBy) ? o.groupBy : null;
+    return { columns, revealed, favicons, widths, groupBy };
   } catch {
     // ignore: corrupt/unavailable config falls back to defaults
     return DEFAULT;

@@ -4,7 +4,7 @@
 // here live — one update path, not two.
 
 import { createSignal, onMount, Show } from 'solid-js';
-import { CheckCircle2, DownloadCloud, Info, RefreshCw } from 'lucide-solid';
+import { CheckCircle2, DownloadCloud, Info, RefreshCw, ShieldCheck } from 'lucide-solid';
 import { getName, getTauriVersion, getVersion } from '@tauri-apps/api/app';
 import {
   availableVersion,
@@ -129,6 +129,28 @@ export default function UpdatesSettings() {
           disabled={!updateConfig().autoCheck}
           onToggle={(v) => setUpdateOption('autoInstall', v)}
         />
+      </section>
+
+      {/* About — brand + the unofficial-client disclaimer. */}
+      <section class="settings-section settings-about">
+        <h3>
+          <ShieldCheck size={14} strokeWidth={1.75} /> About
+        </h3>
+        <div class="settings-about-brand">
+          <ShieldCheck size={22} strokeWidth={1.75} />
+          <div>
+            <div class="settings-about-name">Agate</div>
+            <Show when={version()}>
+              <div class="muted settings-about-version">Version {version()}</div>
+            </Show>
+          </div>
+        </div>
+        <p class="muted settings-help">
+          An unofficial, open-source desktop client for Bitwarden, built on Bitwarden's official Rust
+          SDK. Not affiliated with or endorsed by Bitwarden, Inc. "Bitwarden" is a trademark of
+          Bitwarden, Inc.
+        </p>
+        <p class="muted settings-foot">Agate · unofficial Bitwarden client · GPL-3.0</p>
       </section>
     </div>
   );

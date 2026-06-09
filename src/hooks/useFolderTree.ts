@@ -26,6 +26,7 @@ import {
 } from '../lib/folders.ts';
 import { type Editing, type Node, type TreeCtx } from '../lib/folderTree.ts';
 import { pushToast } from '../state/toast.ts';
+import { draggedItems } from '../state/itemDrag.ts';
 
 export interface FolderTreeProps {
   folders: Folder[];
@@ -36,6 +37,8 @@ export interface FolderTreeProps {
   onRename: (account: string, renames: { id: string; newName: string }[]) => void;
   onMove: (account: string, renames: { id: string; newName: string }[]) => void;
   onDelete: (account: string, folderIds: string[], itemIds: string[]) => void;
+  /** Drop vault items onto a folder: move the same-account `ids` into `folderId`. */
+  onDropItems: (account: string, folderId: string, ids: string[]) => void;
   /** Account a top-level "New folder" targets when no folders exist yet. */
   defaultAccount: string;
 }
@@ -200,8 +203,23 @@ export function useFolderTree(props: FolderTreeProps) {
     if (!target) return segments(dragged.name).length > 1; // already top-level → no-op
     return target.accountEmail === dragged.accountEmail && !isSelfOrDescendant(target, dragged);
   }
+  // Ids of the items being dragged that can land in `node` — i.e. those owned by
+  // the folder's account. Empty unless this is an item drag onto a real folder.
+  function itemsForNode(node: Node): string[] {
+    const items = draggedItems();
+    if (!items || !node.folderId) return [];
+    return items.filter((d) => d.accountEmail === node.accountEmail).map((d) => d.id);
+  }
   function tryDragOver(node: Node, e: DragEvent) {
     if (!node.folderId) return;
+    // An item drag (from the list) takes precedence over folder re-parenting.
+    if (draggedItems()) {
+      if (itemsForNode(node).length > 0) {
+        e.preventDefault();
+        if (dropKey() !== node.path) setDropKey(node.path);
+      }
+      return;
+    }
     const target = folderById(node.folderId);
     if (target && canDrop(target)) {
       e.preventDefault();
@@ -212,6 +230,13 @@ export function useFolderTree(props: FolderTreeProps) {
     if (dropKey() === key) setDropKey(null);
   }
   function drop(node: Node) {
+    // Item drop: move the matching-account items into this folder.
+    if (draggedItems()) {
+      const ids = itemsForNode(node);
+      endDrag();
+      if (ids.length > 0 && node.folderId) props.onDropItems(node.accountEmail, node.folderId, ids);
+      return;
+    }
     const id = dragId();
     const target = node.folderId ? folderById(node.folderId) : undefined;
     endDrag();

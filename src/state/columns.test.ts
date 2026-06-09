@@ -147,13 +147,44 @@ describe('columns store — reorder + reset', () => {
     m.toggleReveal('builtin:totp');
     m.setColumnWidth('builtin:username', 200);
     m.setFavicons(false);
+    m.setGroupBy('folder');
     m.resetColumns();
     expect(ids(m)).toEqual(['username', 'website']);
     expect(m.columns().revealed).toEqual([]);
     expect(m.columns().widths).toEqual({});
     expect(m.columns().favicons).toBe(true);
+    expect(m.columns().groupBy).toBe(null);
     // Persisted, not just in-memory.
     const raw = JSON.parse(localStorage.getItem('agate.columns') ?? '{}');
     expect(raw.columns.map((c: { id: string }) => c.id)).toEqual(['username', 'website']);
+  });
+});
+
+describe('columns store — grouping', () => {
+  beforeEach(() => localStorage.clear());
+
+  it('defaults to no grouping', async () => {
+    const m = await freshColumns();
+    expect(m.columns().groupBy).toBe(null);
+  });
+
+  it('setGroupBy persists the choice and clears back to null', async () => {
+    const m = await freshColumns();
+    m.setGroupBy('security');
+    expect(m.columns().groupBy).toBe('security');
+    expect(JSON.parse(localStorage.getItem('agate.columns') ?? '{}').groupBy).toBe('security');
+    m.setGroupBy(null);
+    expect(m.columns().groupBy).toBe(null);
+  });
+
+  it('drops an invalid persisted groupBy', async () => {
+    const m = await freshColumns({
+      columns: [{ kind: 'builtin', id: 'username' }],
+      revealed: [],
+      favicons: true,
+      widths: {},
+      groupBy: 'bogus',
+    });
+    expect(m.columns().groupBy).toBe(null);
   });
 });

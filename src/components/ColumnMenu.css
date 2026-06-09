@@ -45,7 +45,7 @@
   width: auto;
   accent-color: var(--primary);
 }
-/* Segmented control for row density. */
+/* Segmented control (row density + group-by). */
 .column-menu-seg {
   display: flex;
   gap: 2px;

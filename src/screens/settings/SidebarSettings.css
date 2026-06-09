@@ -1,0 +1,191 @@
+/* Settings › Sidebar editor. Reorder/visibility rows + saved-query manager.
+   Tracks the .column-menu-row drag affordances so the two reorder UIs read the
+   same. Design tokens only. */
+
+.sidebar-settings .sb-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+}
+.sidebar-settings .sb-row:hover {
+  background: var(--card-hover);
+}
+.sidebar-settings .sb-row.dragging {
+  opacity: 0.5;
+}
+.sidebar-settings .sb-row.dropover {
+  border-color: var(--primary);
+  background: var(--card-hover);
+}
+.sidebar-settings .sb-row.hidden .sb-name,
+.sidebar-settings .sb-row.hidden .sb-row-icon {
+  opacity: 0.45;
+}
+
+.sidebar-settings .sb-grip {
+  display: inline-flex;
+  align-items: center;
+  color: var(--subtle-foreground);
+  cursor: grab;
+  flex-shrink: 0;
+}
+.sidebar-settings .sb-row-icon {
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+.sidebar-settings .sb-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sidebar-settings .sb-btn {
+  padding: 5px;
+}
+
+/* ---- saved queries ---- */
+.sidebar-settings .sb-queries {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 12px;
+}
+.sidebar-settings .sb-query {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 6px;
+  border-bottom: 1px solid var(--border);
+}
+.sidebar-settings .sb-query:last-child {
+  border-bottom: none;
+}
+.sidebar-settings .sb-query-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.sidebar-settings .sb-query-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sidebar-settings .sb-query-sub {
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- add / edit form ---- */
+.sidebar-settings .sb-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+}
+.sidebar-settings .sb-form-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.sidebar-settings .sb-form-title {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.sidebar-settings .sb-input {
+  font-size: 12.5px;
+  padding: 7px 9px;
+}
+
+.sidebar-settings .sb-seg {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.sidebar-settings .sb-seg-btn {
+  flex: 1;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+}
+.sidebar-settings .sb-seg-btn:hover {
+  background: var(--card-hover);
+  color: var(--foreground);
+}
+.sidebar-settings .sb-seg-btn.active {
+  background: var(--card-hover);
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.sidebar-settings .sb-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--primary-foreground);
+  background: var(--primary);
+  border: none;
+  border-radius: var(--radius-sm);
+}
+.sidebar-settings .sb-add:disabled {
+  opacity: 0.5;
+}
+
+/* Secondary "Add divider" action under the entries list (less prominent than the
+   primary "Add query" button). */
+.sidebar-settings .sb-add-divider {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 8px;
+  padding: 7px 10px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  background: transparent;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+}
+.sidebar-settings .sb-add-divider:hover {
+  background: var(--card-hover);
+  color: var(--foreground);
+}
+
+.sidebar-settings .sb-reset {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.sidebar-settings .sb-reset:hover {
+  background: var(--card-hover);
+  color: var(--foreground);
+}
+.sidebar-settings .sb-reset svg {
+  flex-shrink: 0;
+}

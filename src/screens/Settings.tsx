@@ -3,31 +3,41 @@
 // so the settings surface is split into focused pages rather than one long scroll.
 // Reached from the sidebar.
 
-import { createSignal, For, Match, Switch } from 'solid-js';
-import { ArrowLeft, DownloadCloud, Gauge, Info, Palette, ShieldAlert, ShieldCheck, Users } from 'lucide-solid';
+import { createMemo, createSignal, For, Match, Show, Switch } from 'solid-js';
+import { ArrowLeft, DownloadCloud, Gauge, Info, Palette, PanelLeft, Search, ShieldAlert, ShieldCheck, Users } from 'lucide-solid';
 import AppearanceSettings from './settings/AppearanceSettings.tsx';
 import ConnectionsSettings from './settings/ConnectionsSettings.tsx';
 import UnlockSettings from './settings/UnlockSettings.tsx';
 import AuditSettings from './settings/AuditSettings.tsx';
 import UpdatesSettings from './settings/UpdatesSettings.tsx';
-import AboutSettings from './settings/AboutSettings.tsx';
+import SidebarSettings from './settings/SidebarSettings.tsx';
 import SecuritySettings from '../components/SecuritySettings.tsx';
 import './Settings.css';
 
-type Page = 'connections' | 'unlock' | 'security' | 'audits' | 'appearance' | 'updates' | 'about';
+type Page = 'connections' | 'unlock' | 'security' | 'audits' | 'appearance' | 'sidebar' | 'updates';
 
-const PAGES: { id: Page; label: string; icon: typeof Info }[] = [
-  { id: 'connections', label: 'Connections', icon: Users },
-  { id: 'unlock', label: 'Unlock', icon: ShieldCheck },
-  { id: 'security', label: 'Security', icon: ShieldAlert },
-  { id: 'audits', label: 'Audits', icon: Gauge },
-  { id: 'appearance', label: 'Appearance', icon: Palette },
-  { id: 'updates', label: 'Updates', icon: DownloadCloud },
-  { id: 'about', label: 'About', icon: Info },
+// `keywords` lets the nav filter match concepts that aren't in the visible label
+// (e.g. "clipboard" / "timeout" → Security, "theme" → Appearance).
+const PAGES: { id: Page; label: string; icon: typeof Info; keywords: string }[] = [
+  { id: 'connections', label: 'Connections', icon: Users, keywords: 'account email server login add remove' },
+  { id: 'unlock', label: 'Unlock', icon: ShieldCheck, keywords: 'password windows hello biometric pin device' },
+  { id: 'security', label: 'Security', icon: ShieldAlert, keywords: 'clipboard auto-lock timeout breach dark web exposed monitor' },
+  { id: 'audits', label: 'Audits', icon: Gauge, keywords: 'health score weak reused old totp threshold' },
+  { id: 'appearance', label: 'Appearance', icon: Palette, keywords: 'theme dark light density rows color' },
+  { id: 'sidebar', label: 'Sidebar', icon: PanelLeft, keywords: 'rail entries order saved queries' },
+  { id: 'updates', label: 'Updates', icon: DownloadCloud, keywords: 'version auto update install release about license credits' },
 ];
 
 export default function Settings(props: { onBack: () => void }) {
   const [page, setPage] = createSignal<Page>('connections');
+  const [filter, setFilter] = createSignal('');
+
+  // Pages whose label or keywords match the filter. Empty filter → all pages.
+  const shownPages = createMemo(() => {
+    const q = filter().trim().toLowerCase();
+    if (!q) return PAGES;
+    return PAGES.filter((p) => p.label.toLowerCase().includes(q) || p.keywords.includes(q));
+  });
 
   return (
     <div class="settings">
@@ -40,7 +50,16 @@ export default function Settings(props: { onBack: () => void }) {
 
       <div class="settings-layout">
         <nav class="settings-nav">
-          <For each={PAGES}>
+          <div class="settings-nav-search">
+            <Search size={14} strokeWidth={1.75} />
+            <input
+              type="text"
+              placeholder="Search settings"
+              value={filter()}
+              onInput={(e) => setFilter(e.currentTarget.value)}
+            />
+          </div>
+          <For each={shownPages()}>
             {(p) => {
               const Icon = p.icon;
               return (
@@ -56,6 +75,9 @@ export default function Settings(props: { onBack: () => void }) {
               );
             }}
           </For>
+          <Show when={shownPages().length === 0}>
+            <p class="settings-nav-empty muted">No settings match.</p>
+          </Show>
         </nav>
 
         <div class="settings-content">
@@ -77,11 +99,11 @@ export default function Settings(props: { onBack: () => void }) {
             <Match when={page() === 'appearance'}>
               <AppearanceSettings />
             </Match>
+            <Match when={page() === 'sidebar'}>
+              <SidebarSettings />
+            </Match>
             <Match when={page() === 'updates'}>
               <UpdatesSettings />
-            </Match>
-            <Match when={page() === 'about'}>
-              <AboutSettings />
             </Match>
           </Switch>
         </div>

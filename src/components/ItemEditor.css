@@ -190,6 +190,52 @@
   margin-top: 4px;
 }
 
+/* Generator history (recent values), shown under the Generate button. */
+.item-editor .ie-gen-history {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.item-editor .ie-gen-history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+.item-editor .ie-gen-history-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted-foreground);
+}
+.item-editor .ie-gen-history-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.item-editor .ie-gen-history-value {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  padding: 4px 6px;
+  font-family: var(--font-mono, monospace);
+  font-size: 11.5px;
+  color: var(--foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.item-editor .ie-gen-history-value:hover {
+  background: var(--card-hover);
+}
+
 /* checkboxes */
 .item-editor .ie-check {
   display: flex;

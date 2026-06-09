@@ -123,6 +123,20 @@ export function useBulkActions(deps: {
     }
   }
 
+  // Move an explicit set of ids (all owned by `account`) into `folderId` — the
+  // drag-and-drop drop handler (folder rail). Mirrors bulkMove but on a given set
+  // rather than the current selection.
+  async function moveIdsToFolder(account: string, folderId: string, ids: string[]) {
+    if (ids.length === 0) return;
+    try {
+      await ipc.moveItems(account, ids, folderId);
+      await reloadAfterMutation();
+      pushToast('success', `Moved ${ids.length} item${ids.length === 1 ? '' : 's'}.`);
+    } catch (err) {
+      toastError(err);
+    }
+  }
+
   async function bulkDelete(permanent: boolean) {
     const ids = [...deps.selectedIds()];
     if (ids.length === 0) return;
@@ -275,6 +289,22 @@ export function useBulkActions(deps: {
     }
   }
 
+  // Copy a named custom field's value from the list (the list cell shows the
+  // value but copying always pulls the freshly-decrypted detail to be correct).
+  async function copyFieldFor(item: VaultItem, fieldName: string) {
+    try {
+      const d = await ipc.itemDetail(item.accountEmail, item.id);
+      const field = d.fields.find((f) => f.name === fieldName);
+      if (!field || !field.value) {
+        pushToast('error', 'No value on this field.');
+        return;
+      }
+      await copy(fieldName, field.value);
+    } catch (err) {
+      toastError(err);
+    }
+  }
+
   async function openSiteFor(item: VaultItem) {
     try {
       const uri = await firstUri(item);
@@ -355,6 +385,7 @@ export function useBulkActions(deps: {
     copy,
     bulkFavorite,
     bulkMove,
+    moveIdsToFolder,
     bulkDelete,
     bulkRestore,
     detailClone,
@@ -368,6 +399,7 @@ export function useBulkActions(deps: {
     copyPasswordFor,
     copyTotpFor,
     copyUriFor,
+    copyFieldFor,
     openSiteFor,
     onEditorSaved,
     folderCreate,

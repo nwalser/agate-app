@@ -133,9 +133,7 @@ export default function DarkWebBreachView() {
         </Show>
         <Show when={!darkwebReport() && !darkwebBusy()}>
           <div class="sec-empty-cta">
-            <p class="muted sec-empty">
-              No scan results yet. Check your accounts against known breaches now.
-            </p>
+            <p class="muted sec-empty">No scan results yet.</p>
             <button class="primary sec-run-btn" disabled={darkwebBusy()} onClick={() => void runDarkwebScan()}>
               <RefreshCw size={13} strokeWidth={1.75} /> Run scan now
             </button>
@@ -165,13 +163,13 @@ export default function DarkWebBreachView() {
               <EmailNotice
                 icon={<Lock size={12} strokeWidth={1.75} />}
                 title="Vaults not read — connection locked"
-                hint="Their account email is still checked, but logins/identities stored inside weren't. Unlock the connection (it may need 2FA), then refresh."
+                hint="Email still checked; vault contents weren't. Unlock the connection (may need 2FA), then refresh."
                 emails={r().lockedConnections}
               />
               <EmailNotice
                 icon={<Hourglass size={12} strokeWidth={1.75} />}
                 title="Not checked yet"
-                hint="More emails than one run's rate-limit budget. These rotate into the next scans — refresh to check the next batch now."
+                hint="Over this run's rate-limit budget. Refresh to check the next batch."
                 emails={r().pending}
               />
               <Show when={r().errored.length > 0}>

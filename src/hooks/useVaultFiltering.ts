@@ -6,9 +6,10 @@
 // bulk "move to folder" targets use. Pure-ish (only IPC-free signal reads).
 
 import { type Accessor, createMemo, createSignal } from 'solid-js';
-import type { Folder, ItemType, VaultItem } from '../lib/types.ts';
+import type { Folder, ItemAudit, ItemType, VaultHealthReport, VaultItem } from '../lib/types.ts';
 import { filterItems, type VaultFilter } from '../lib/search.ts';
 import { isCommandQuery } from '../lib/command.ts';
+import { groupOf, type GroupContext } from '../lib/grouping.ts';
 import { query } from '../state/search.ts';
 import { filters, NAME_FILTER_KEY } from '../state/columnFilters.ts';
 import {
@@ -24,6 +25,8 @@ import { activeVault } from '../state/ui.ts';
 export function useVaultFiltering(deps: {
   items: Accessor<VaultItem[]>;
   folders: Accessor<Folder[]>;
+  /** Offline vault-health report — drives the Security sort + grouping ranks. */
+  health: Accessor<VaultHealthReport | null>;
 }) {
   // `query` is the shared titlebar search signal (state/search.ts) — the search
   // field now lives in the custom window titlebar, not this header.
@@ -77,9 +80,42 @@ export function useVaultFiltering(deps: {
     return base.filter((it) => applicable.every((f) => f.get(it).toLowerCase().includes(f.needle)));
   });
 
-  const displayed = createMemo(() => {
-    const dir = sortDir() === 'asc' ? 1 : -1;
-    const key = sortKey();
+  // At-risk logins indexed by id (for the Security sort + grouping). Empty until
+  // the first offline-health report arrives.
+  const atRiskById = createMemo(() => {
+    const map = new Map<string, ItemAudit>();
+    const r = deps.health();
+    if (r) for (const a of r.atRisk) map.set(a.id, a);
+    return map;
+  });
+
+  const groupCtx = (): GroupContext => ({
+    folderName: folderNameOf,
+    audit: (id) => atRiskById().get(id),
+    hasSecurityReport: deps.health() !== null,
+  });
+
+  // Security sort rank: higher = worse. 0 = unrated (non-login / no report) and
+  // always sorts last, regardless of direction.
+  const securityRank = (it: VaultItem): number => {
+    if (it.itemType !== 'login' || deps.health() === null) return 0;
+    const a = atRiskById().get(it.id);
+    if (!a) return 1; // audited-clean
+    return groupOf(it, 'security', groupCtx()).rank === 1 ? 3 : 2; // risk : warn
+  };
+
+  // The within-group sort comparator for the active column + direction.
+  const sortComparator = (key: SortKey, dir: number) => {
+    if (key === 'security') {
+      return (a: VaultItem, b: VaultItem): number => {
+        const ra = securityRank(a);
+        const rb = securityRank(b);
+        if (ra === 0 && rb !== 0) return 1;
+        if (ra !== 0 && rb === 0) return -1;
+        if (ra !== rb) return dir * (ra - rb);
+        return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+      };
+    }
     const val = (it: VaultItem): string => {
       switch (key) {
         case 'name':
@@ -90,15 +126,35 @@ export function useVaultFiltering(deps: {
           return folderNameOf(it.folderId);
         case 'type':
           return it.itemType;
+        default:
+          return '';
       }
     };
     // Stable, case-insensitive, locale-aware; empty values sort last.
-    return [...filtered()].sort((a, b) => {
+    return (a: VaultItem, b: VaultItem): number => {
       const av = val(a);
       const bv = val(b);
       if (!av && bv) return 1;
       if (av && !bv) return -1;
       return dir * av.localeCompare(bv, undefined, { sensitivity: 'base' });
+    };
+  };
+
+  const displayed = createMemo(() => {
+    const dir = sortDir() === 'asc' ? 1 : -1;
+    const cmpSort = sortComparator(sortKey(), dir);
+    const gb = columns().groupBy;
+    if (!gb) return [...filtered()].sort(cmpSort);
+    // Grouped: order by group (fixed natural order, independent of sort dir),
+    // then by the active sort within each group. The rows stay a flat array so
+    // selection ranges and the row `For` keep working on the displayed order.
+    const ctx = groupCtx();
+    return [...filtered()].sort((a, b) => {
+      const ga = groupOf(a, gb, ctx);
+      const gbv = groupOf(b, gb, ctx);
+      if (ga.rank !== gbv.rank) return ga.rank - gbv.rank;
+      if (ga.id !== gbv.id) return ga.label.localeCompare(gbv.label, undefined, { sensitivity: 'base' });
+      return cmpSort(a, b);
     });
   });
 

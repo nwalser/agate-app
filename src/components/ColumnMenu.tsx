@@ -15,6 +15,8 @@ import {
   columnKey,
   columnLabel,
   columns,
+  GROUP_KEYS,
+  GROUP_LABELS,
   isColumnVisible,
   isRevealed,
   moveColumn,
@@ -22,6 +24,7 @@ import {
   reorderColumn,
   resetColumns,
   setFavicons,
+  setGroupBy,
   toggleColumn,
   toggleReveal,
   type ColumnSpec,
@@ -96,6 +99,31 @@ export default function ColumnMenu(props: { onClose: () => void; anchor?: HTMLEl
           />
           Website favicons
         </label>
+
+        <div class="column-menu-sep" />
+        <div class="column-menu-label">Group by</div>
+        <div class="column-menu-seg" role="group" aria-label="Group rows by">
+          <button
+            class="column-menu-seg-btn"
+            classList={{ active: columns().groupBy === null }}
+            aria-pressed={columns().groupBy === null}
+            onClick={() => setGroupBy(null)}
+          >
+            None
+          </button>
+          <For each={GROUP_KEYS}>
+            {(k) => (
+              <button
+                class="column-menu-seg-btn"
+                classList={{ active: columns().groupBy === k }}
+                aria-pressed={columns().groupBy === k}
+                onClick={() => setGroupBy(k)}
+              >
+                {GROUP_LABELS[k]}
+              </button>
+            )}
+          </For>
+        </div>
 
         <div class="column-menu-sep" />
         <div class="column-menu-label">Shown columns</div>

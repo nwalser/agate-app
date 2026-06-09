@@ -59,9 +59,7 @@ export default function BreachDirectory() {
   return (
     <section class="sec-card">
       <h3><Database size={14} strokeWidth={1.75} /> Breaches affecting you</h3>
-      <p class="muted sec-help">
-        Known data breaches that one or more of your accounts appear in, and what each one exposed.
-      </p>
+      <p class="muted sec-help">Breaches your accounts appear in, and what each exposed.</p>
 
       <Show when={darkwebMonitor()} fallback={<DisabledNotice what="The dark-web monitor" />}>
         <Show

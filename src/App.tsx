@@ -1,6 +1,8 @@
-import { createMemo, createSignal, Match, onMount, Show, Switch } from 'solid-js';
+import { createEffect, createMemo, createSignal, Match, onMount, Show, Switch } from 'solid-js';
 import Titlebar from './components/Titlebar.tsx';
 import ToastHost from './components/Toast.tsx';
+import OfflineBanner from './components/OfflineBanner.tsx';
+import ShortcutsOverlay from './components/ShortcutsOverlay.tsx';
 import AppUnlockSetup from './screens/AppUnlockSetup.tsx';
 import Onboarding from './screens/Onboarding.tsx';
 import Unlock from './screens/Unlock.tsx';
@@ -17,6 +19,8 @@ import {
 } from './state/session.ts';
 import { toastError } from './state/toast.ts';
 import { runStartupUpdateCheck } from './state/update.ts';
+import { useAutoLock } from './hooks/useAutoLock.ts';
+import { clearGeneratorHistory } from './state/generatorHistory.ts';
 import './App.css';
 
 export default function App() {
@@ -39,15 +43,24 @@ export default function App() {
     try {
       await ipc.lock();
       setShowSettings(false);
+      // Generated-secret buffer is session-only; wipe it when the vault closes.
+      clearGeneratorHistory();
       await refreshSession();
     } catch (err) {
       toastError(err);
     }
   }
 
+  // Idle vault timeout: auto-lock after inactivity (and on minimize, if enabled)
+  // while unlocked. Reads its config from state/autolock.ts (Settings → Security).
+  useAutoLock({ unlocked: () => status().unlocked, lock: () => void lock() });
+
   return (
     <>
       <Titlebar showSearch={showSearch()} onLock={() => void lock()} />
+      <Show when={ready() && base() === 'vault'}>
+        <OfflineBanner />
+      </Show>
       <Show when={ready()} fallback={<div class="app-loading muted">Loading…</div>}>
         <Switch>
           {/* First run: create the one app password that unlocks every connection. */}
@@ -76,6 +89,7 @@ export default function App() {
         </Switch>
       </Show>
       <ToastHost />
+      <ShortcutsOverlay />
     </>
   );
 }

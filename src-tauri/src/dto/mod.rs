@@ -104,6 +104,7 @@ mod mirror_tests {
                 username: Some("u".into()),
                 uri: Some("https://x".into()),
                 has_totp: true,
+                has_passkey: false,
                 favorite: false,
                 deleted: false,
                 folder_id: None,

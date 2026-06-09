@@ -37,13 +37,14 @@ pub(super) fn view_to_list_item(
     account_email: &str,
     account_label: &str,
 ) -> VaultItem {
-    let (username, has_totp, uri) = match &view.login {
+    let (username, has_totp, uri, has_passkey) = match &view.login {
         Some(login) => (
             login.username.clone(),
             login.totp.is_some(),
             login.uris.as_ref().and_then(|uris| uris.iter().find_map(|u| u.uri.clone())),
+            login.fido2_credentials.as_ref().map(|c| !c.is_empty()).unwrap_or(false),
         ),
-        None => (None, false, None),
+        None => (None, false, None, false),
     };
     VaultItem {
         id: view.id.map(|i| i.to_string()).unwrap_or_default(),
@@ -54,6 +55,7 @@ pub(super) fn view_to_list_item(
         username,
         uri,
         has_totp,
+        has_passkey,
         favorite: view.favorite,
         deleted: view.deleted_date.is_some(),
         folder_id: view.folder_id.map(|i| i.to_string()),
@@ -127,5 +129,7 @@ pub fn view_to_detail(view: &CipherView, account_email: &str, account_label: &st
         fields,
         folder_id: view.folder_id.map(|i| i.to_string()),
         organization_id: view.organization_id.map(|i| i.to_string()),
+        revision_date: view.revision_date.to_rfc3339(),
+        creation_date: view.creation_date.to_rfc3339(),
     }
 }

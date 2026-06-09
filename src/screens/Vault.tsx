@@ -5,10 +5,14 @@
 // lifting lives in src/hooks/* and the VaultRailMenu / VaultDetailPane /
 // VaultContextMenu subcomponents; this file switches views and threads props.
 
-import { For, createMemo, createSignal, onCleanup, onMount, Match, Show, Switch } from 'solid-js';
+import { For, createEffect, createMemo, createSignal, onCleanup, onMount, Match, Show, Switch } from 'solid-js';
 import { Plus, PanelRightClose, PanelRightOpen, RotateCcw, Star, Trash2, X, FolderInput } from 'lucide-solid';
 import type { VaultItem } from '../lib/types.ts';
+import type { ColumnSpec } from '../state/columns.ts';
 import type { VaultFilter } from '../lib/search.ts';
+import type { CustomQuery } from '../lib/sidebarConfig.ts';
+import { setQuery } from '../state/search.ts';
+import { clearConnectionNav, setConnectionNav } from '../state/connections.ts';
 import { lastSync, syncState } from '../state/sync.ts';
 import {
   activeVault,
@@ -67,7 +71,7 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
 
   // ---- hooks: data → filtering → selection → detail → mutations → commands ----
   const data = useVaultData();
-  const filtering = useVaultFiltering({ items: data.items, folders: data.folders });
+  const filtering = useVaultFiltering({ items: data.items, folders: data.folders, health: data.health });
   const selection = useVaultSelection({
     displayed: filtering.displayed,
     setSelectedId,
@@ -104,6 +108,42 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
     filtering.setFilter(f);
   }
 
+  // Copy a single list cell's value. Secret columns (password/TOTP) and custom
+  // fields pull the freshly-decrypted detail; plain columns copy the row value.
+  function copyCell(item: VaultItem, col: ColumnSpec) {
+    if (col.kind === 'custom') {
+      void actions.copyFieldFor(item, col.field);
+      return;
+    }
+    switch (col.id) {
+      case 'username':
+        void actions.copy('Username', item.username);
+        break;
+      case 'website':
+        void actions.copy('Website', item.uri);
+        break;
+      case 'folder':
+        void actions.copy('Folder', filtering.folderNameOf(item.folderId));
+        break;
+      case 'password':
+        void actions.copyPasswordFor(item);
+        break;
+      case 'totp':
+        void actions.copyTotpFor(item);
+        break;
+      default:
+        break; // type / security / passkey aren't copyable values
+    }
+  }
+
+  // Run a saved sidebar query: scope the list to its base filter and fill the
+  // titlebar search with its text, in the vault view.
+  function runQuery(q: CustomQuery) {
+    setView('vault');
+    filtering.setFilter(q.filter);
+    setQuery(q.query);
+  }
+
   // Switch which connection the list is scoped to (null = all vaults merged).
   // Records the choice, returns to the vault view, and (for a specific, unlocked
   // connection) makes it the backend's default target for new items.
@@ -119,6 +159,14 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
         // ignore: a locked connection can't be the active target; filter still applies
       });
   }
+
+  // Publish the connection list + switch handler so the titlebar's connection
+  // dropdown (outside this tree, in App.tsx) can switch vaults. Re-runs as the
+  // connection list changes; cleared when the Vault unmounts (lock / logout).
+  createEffect(() => {
+    setConnectionNav({ connections: data.connections(), switchVault });
+  });
+  onCleanup(clearConnectionNav);
 
   // Reveal a single item: switch to the all-items vault view and select it.
   // Shared by the command palette, the titlebar search, and the security center.
@@ -305,15 +353,14 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
           filter={filtering.filter()}
           sidebarCollapsed={sidebarCollapsed()}
           toggleSidebar={() => toggleSidebar()}
-          connections={data.connections()}
-          activeVault={activeVault()}
-          switchVault={switchVault}
           selectFilter={selectFilter}
+          onRunQuery={runQuery}
           scopedFolders={filtering.scopedFolders()}
           items={data.items()}
           folderCreate={(account, fullName) => void actions.folderCreate(account, fullName)}
           folderApplyRenames={(account, renames, done) => void actions.folderApplyRenames(account, renames, done)}
           folderDelete={(account, folderIds, itemIds) => void actions.folderDelete(account, folderIds, itemIds)}
+          folderDropItems={(account, folderId, ids) => void actions.moveIdsToFolder(account, folderId, ids)}
           defaultAccount={data.createAccount()}
           health={data.health()}
           setView={setView}
@@ -419,9 +466,16 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
                   selectedId={selectedId()}
                   selectedCount={selection.selectedCount()}
                   isSelected={selection.isSelected}
+                  cursorId={selection.cursorId()}
                   onRowClick={selection.onRowClick}
                   onRowContextMenu={openCtxMenu}
                   onCheckboxToggle={selection.onCheckboxToggle}
+                  onCopyCell={copyCell}
+                  onListKeyDown={selection.handleListKeyDown}
+                  onMarqueeSelect={selection.marqueeSelect}
+                  enableItemDrag={filtering.filter().kind !== 'trash'}
+                  onCreateItem={(type) => actions.openCreate(type)}
+                  onSelectAll={selection.selectAll}
                   emptyMessage={data.items().length === 0 ? 'Vault is empty or not synced.' : 'No matches.'}
                   cacheToken={actions.cacheToken()}
                   security={data.health()}

@@ -154,6 +154,8 @@ export interface VaultItem {
   /** First login URI (not secret) — website column + favicon host. */
   uri: string | null;
   hasTotp: boolean;
+  /** Whether the login has at least one stored passkey (FIDO2 credential). */
+  hasPasskey: boolean;
   favorite: boolean;
   deleted: boolean;
   folderId: string | null;
@@ -197,6 +199,10 @@ export interface ItemDetail {
   fields: CustomField[];
   folderId: string | null;
   organizationId: string | null;
+  /** Last-modified timestamp (RFC 3339) — shown as "updated X ago" in the pane. */
+  revisionDate: string;
+  /** Creation timestamp (RFC 3339). */
+  creationDate: string;
 }
 
 export interface TotpCode {

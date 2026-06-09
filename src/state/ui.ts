@@ -8,6 +8,7 @@
 import { createSignal } from 'solid-js';
 
 const COLLAPSE_KEY = 'agate.sidebarCollapsed';
+const WIDTH_KEY = 'agate.sidebarWidth';
 const PREVIEW_KEY = 'agate.previewCollapsed';
 const DENSITY_KEY = 'agate.rowDensity';
 const ACTIVE_VAULT_KEY = 'agate.activeVault';
@@ -34,6 +35,52 @@ export function toggleSidebar() {
   } catch {
     // ignore: persistence is best-effort; the in-memory signal still applies
   }
+}
+
+// ---- sidebar width (drag-to-resize) ----
+// The shared width of every left sidebar (the vault rail + the Settings sub-nav),
+// driven onto the `--sidebar-width` CSS variable in App.tsx. Persisted like the
+// collapse flag; clamped to a sane range so a dragged or tampered value can never
+// hide the sidebar or eat the whole window.
+
+export const SIDEBAR_MIN_WIDTH = 160;
+export const SIDEBAR_MAX_WIDTH = 420;
+export const SIDEBAR_DEFAULT_WIDTH = 216;
+
+function clampWidth(px: number): number {
+  if (!Number.isFinite(px)) return SIDEBAR_DEFAULT_WIDTH;
+  return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(px)));
+}
+
+function readWidth(): number {
+  try {
+    const raw = localStorage.getItem(WIDTH_KEY);
+    if (raw === null) return SIDEBAR_DEFAULT_WIDTH;
+    const n = Number.parseInt(raw, 10);
+    return Number.isNaN(n) ? SIDEBAR_DEFAULT_WIDTH : clampWidth(n);
+  } catch {
+    // ignore: storage unavailable → default width
+    return SIDEBAR_DEFAULT_WIDTH;
+  }
+}
+
+const [sidebarWidth, setWidthSignal] = createSignal(readWidth());
+export { sidebarWidth };
+
+/** Set the shared sidebar width in px (drag-resize). Clamped + persisted. */
+export function setSidebarWidth(px: number) {
+  const next = clampWidth(px);
+  setWidthSignal(next);
+  try {
+    localStorage.setItem(WIDTH_KEY, String(next));
+  } catch {
+    // ignore: persistence is best-effort; the in-memory signal still applies
+  }
+}
+
+/** Restore the default sidebar width (double-click the resize handle). */
+export function resetSidebarWidth() {
+  setSidebarWidth(SIDEBAR_DEFAULT_WIDTH);
 }
 
 // ---- detail (preview) pane collapse ----

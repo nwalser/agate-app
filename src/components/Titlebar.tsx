@@ -29,9 +29,12 @@ import {
 } from '../lib/command.ts';
 import { query, setQuery } from '../state/search.ts';
 import { paletteSource } from '../state/palette.ts';
+import { connectionNav } from '../state/connections.ts';
+import { activeVault } from '../state/ui.ts';
 import { lastSync, requestSync, syncState } from '../state/sync.ts';
 import { setTheme, theme, type ThemePref } from '../state/theme.ts';
 import { SyncIcon } from './SyncStatus.tsx';
+import VaultSwitcher from './VaultSwitcher.tsx';
 import './Titlebar.css';
 
 // Theme button cycles through these in order (mirrors the old vault header).
@@ -62,6 +65,19 @@ const DEFAULT_LAYOUT: WindowControlsLayout = {
 // How many preview rows the search dropdown shows at once.
 const RESULT_LIMIT = 8;
 
+// Human "time since" for the sync status label. Recomputed as the titlebar's
+// `now` clock ticks, so it reads "synced 2m ago" and keeps counting up without a
+// fresh sync. The caller clamps a just-set timestamp to "just now" via the floor.
+function relTime(ts: number, now: number): string {
+  const sec = Math.max(0, Math.floor((now - ts) / 1000));
+  if (sec < 60) return 'just now';
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  return `${Math.floor(hr / 24)}d ago`;
+}
+
 // Wrap a vault item as a runnable command for the normal-search preview.
 function itemCommand(it: VaultItem, openItem: (id: string) => void): Command {
   return {
@@ -83,6 +99,22 @@ export default function Titlebar(props: { showSearch: boolean; onLock: () => voi
     if (syncState() === 'syncing') return 'Syncing…';
     if (syncState() === 'error') return 'Sync failed — click to retry';
     return lastSync() === null ? 'Not synced yet — click to sync' : 'Synced — click to sync now';
+  };
+
+  // A coarse clock that ticks every 30s so the sync status' relative time
+  // ("synced 2m ago") re-renders on its own, not only when a sync fires.
+  const [now, setNow] = createSignal(Date.now());
+  onMount(() => {
+    const t = setInterval(() => setNow(Date.now()), 30_000);
+    onCleanup(() => clearInterval(t));
+  });
+
+  // Visible sync status text, shown beside the cloud icon in the actions cluster.
+  const syncLabel = () => {
+    if (syncState() === 'syncing') return 'Syncing…';
+    if (syncState() === 'error') return 'Sync failed';
+    const ts = lastSync();
+    return ts === null ? 'Not synced' : `Synced ${relTime(ts, now())}`;
   };
 
   // Tracks the OS maximize state so the maximize button shows the right glyph
@@ -214,6 +246,18 @@ export default function Titlebar(props: { showSearch: boolean; onLock: () => voi
         Agate
       </div>
 
+      {/* Connection switcher — only on the vault screen, and only when there's
+          more than one connection to switch between. */}
+      <Show when={props.showSearch && connectionNav().connections.length > 1}>
+        <div class="titlebar-conn">
+          <VaultSwitcher
+            connections={connectionNav().connections}
+            active={activeVault()}
+            onSelect={connectionNav().switchVault}
+          />
+        </div>
+      </Show>
+
       <div class="titlebar-center" data-tauri-drag-region>
         <Show when={props.showSearch}>
           <div class="titlebar-search">
@@ -293,12 +337,13 @@ export default function Titlebar(props: { showSearch: boolean; onLock: () => voi
       <Show when={props.showSearch}>
         <div class="titlebar-actions">
           <button
-            class="titlebar-btn"
+            class="titlebar-btn titlebar-sync"
             title={syncTitle()}
             disabled={syncState() === 'syncing'}
             onClick={() => requestSync()}
           >
             <SyncIcon state={syncState()} lastSync={lastSync()} />
+            <span class="titlebar-sync-label">{syncLabel()}</span>
           </button>
           <button class="titlebar-btn" title={THEME_LABEL[theme()]} onClick={cycleTheme}>
             <Switch fallback={<Monitor size={15} strokeWidth={1.75} />}>

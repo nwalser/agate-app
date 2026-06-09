@@ -10,6 +10,7 @@ import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { ipc } from '../lib/ipc.ts';
 import type { PassphraseGenOptions, PasswordGenOptions } from '../lib/types.ts';
 import { pushToast, toastError } from '../state/toast.ts';
+import { pushGeneratorHistory } from '../state/generatorHistory.ts';
 import './GeneratorPage.css';
 
 type Mode = 'password' | 'passphrase';
@@ -73,10 +74,19 @@ export default function GeneratorPage() {
     if (!output()) return;
     try {
       await writeText(output());
+      // Copying is an intentional "I want this value" — record it (unlike the
+      // auto-regenerate effect, which would flood history on every slider tick).
+      pushGeneratorHistory(output());
       pushToast('success', 'Copied.');
     } catch (err) {
       toastError(err);
     }
+  }
+
+  // Explicit "make me a new one" — generate, then record the result.
+  async function regenerate() {
+    await generate();
+    pushGeneratorHistory(output());
   }
 
   return (
@@ -109,7 +119,7 @@ export default function GeneratorPage() {
               {output()}
             </Show>
           </code>
-          <button class="ghost icon-btn" title="Regenerate" onClick={() => void generate()}>
+          <button class="ghost icon-btn" title="Regenerate" onClick={() => void regenerate()}>
             <RefreshCw size={15} strokeWidth={1.75} />
           </button>
           <button class="ghost icon-btn" title="Copy" disabled={!output()} onClick={() => void copy()}>

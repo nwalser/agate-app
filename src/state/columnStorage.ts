@@ -13,6 +13,7 @@ import {
   STORAGE_KEY,
   type ColumnConfig,
   type ColumnSpec,
+  type GroupKey,
 } from './columnConfig.ts';
 
 const [columns, setColumnsSignal] = createSignal<ColumnConfig>(readColumnConfig());
@@ -99,6 +100,7 @@ export function resetColumns() {
     revealed: [],
     favicons: DEFAULT.favicons,
     widths: {},
+    groupBy: null,
   });
 }
 
@@ -118,4 +120,9 @@ export function toggleReveal(key: string) {
 
 export function setFavicons(on: boolean) {
   persist({ ...columns(), favicons: on });
+}
+
+/** Group rows under header rows by a column's value, or null for a flat list. */
+export function setGroupBy(key: GroupKey | null) {
+  persist({ ...columns(), groupBy: key });
 }

@@ -21,3 +21,12 @@ export function itemAuditChips(a: ItemAudit): AuditChip[] {
     a.noTotp && { label: 'No 2FA', severe: false },
   ].filter((c): c is AuditChip => Boolean(c));
 }
+
+/**
+ * Worst severity for an at-risk item: `risk` when any severe flag (reused / weak
+ * / insecure URL) is present, else `warn` (minor flags only). The single source
+ * for the Security column's badge colour and its sort/group ranking.
+ */
+export function auditSeverity(a: ItemAudit): 'warn' | 'risk' {
+  return itemAuditChips(a).some((c) => c.severe) ? 'risk' : 'warn';
+}

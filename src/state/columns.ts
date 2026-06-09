@@ -16,6 +16,9 @@ export {
   columnTrack,
   END_COL_PX,
   gridMetrics,
+  GROUP_KEYS,
+  GROUP_LABELS,
+  groupKeyOf,
   isFilterable,
   MIN_COL_WIDTH,
   NAME_COL_KEY,
@@ -25,6 +28,7 @@ export {
   type ColumnConfig,
   type ColumnSpec,
   type GridMetrics,
+  type GroupKey,
   type SortDir,
   type SortKey,
 } from './columnConfig.ts';
@@ -41,6 +45,7 @@ export {
   resetColumnWidth,
   setColumnWidth,
   setFavicons,
+  setGroupBy,
   toggleColumn,
   toggleReveal,
 } from './columnStorage.ts';

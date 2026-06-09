@@ -1,19 +1,18 @@
-// Sidebar vault switcher: scope the list to one connection or merge them all.
-//
-// The unified list still exists ("All vaults"), but a single click swaps to any
-// one connection's vault — the separation the user asked for, without losing the
-// merged view. Renders compactly when the sidebar is collapsed (icon + popover).
+// Connection (vault) switcher — lives in the window titlebar. Scopes the item
+// list to one connection or merges them all ("All vaults"). Only rendered when
+// there is more than one connection; with a single account there is nothing to
+// switch. The unified merged view stays available as the first menu entry.
 
 import { createSignal, For, Show } from 'solid-js';
-import { Check, ChevronsUpDown, Layers, Lock, Vault as VaultIcon } from 'lucide-solid';
+import { Check, ChevronsUpDown, Layers, Lock } from 'lucide-solid';
 import type { ConnectionSummary } from '../lib/types.ts';
+import { accountColorVar } from '../lib/accountColor.ts';
 import './VaultSwitcher.css';
 
 export default function VaultSwitcher(props: {
   connections: ConnectionSummary[];
   /** null = all vaults merged; otherwise the scoped connection email. */
   active: string | null;
-  collapsed: boolean;
   onSelect: (email: string | null) => void;
 }) {
   const [open, setOpen] = createSignal(false);
@@ -27,19 +26,23 @@ export default function VaultSwitcher(props: {
   }
 
   return (
-    <div class="vault-switcher" classList={{ collapsed: props.collapsed }}>
+    <div class="vault-switcher">
       <button
         class="vault-switcher-btn"
-        title={props.collapsed ? `Vault: ${label()}` : 'Switch vault'}
+        title={`Vault: ${label()} — switch vault`}
+        aria-haspopup="menu"
+        aria-expanded={open()}
         onClick={() => setOpen((v) => !v)}
       >
-        <Show when={props.active} fallback={<Layers size={16} strokeWidth={1.6} />}>
-          <VaultIcon size={16} strokeWidth={1.6} />
+        <Show when={props.active} fallback={<Layers size={15} strokeWidth={1.6} />}>
+          <span
+            class="vault-switcher-dot"
+            style={{ background: accountColorVar(props.active ?? '') }}
+            aria-hidden="true"
+          />
         </Show>
-        <Show when={!props.collapsed}>
-          <span class="vault-switcher-label truncate">{label()}</span>
-          <ChevronsUpDown size={14} strokeWidth={1.6} class="vault-switcher-caret" />
-        </Show>
+        <span class="vault-switcher-label truncate">{label()}</span>
+        <ChevronsUpDown size={13} strokeWidth={1.6} class="vault-switcher-caret" />
       </button>
 
       <Show when={open()}>
@@ -62,7 +65,11 @@ export default function VaultSwitcher(props: {
                   onClick={() => pick(conn.email)}
                 >
                   <Show when={conn.unlocked} fallback={<Lock size={15} strokeWidth={1.6} />}>
-                    <VaultIcon size={15} strokeWidth={1.6} />
+                    <span
+                      class="vault-switcher-dot"
+                      style={{ background: accountColorVar(conn.email) }}
+                      aria-hidden="true"
+                    />
                   </Show>
                   <span class="vault-switcher-item-text">
                     <span class="truncate">{conn.email}</span>

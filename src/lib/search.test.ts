@@ -12,6 +12,7 @@ function item(partial: Partial<VaultItem>): VaultItem {
     username: partial.username ?? null,
     uri: partial.uri ?? null,
     hasTotp: partial.hasTotp ?? false,
+    hasPasskey: partial.hasPasskey ?? false,
     favorite: partial.favorite ?? false,
     deleted: partial.deleted ?? false,
     folderId: partial.folderId ?? null,

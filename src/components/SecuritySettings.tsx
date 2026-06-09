@@ -1,5 +1,5 @@
 import { For } from 'solid-js';
-import { ClipboardCopy, ShieldAlert } from 'lucide-solid';
+import { ClipboardCopy, Lock, ShieldAlert } from 'lucide-solid';
 import {
   darkwebMonitor,
   exposedCheck,
@@ -12,10 +12,24 @@ import {
   setClipboardClearSeconds,
   type ClipboardClearSeconds,
 } from '../state/clipboard.ts';
+import {
+  AUTO_LOCK_OPTIONS,
+  autoLockMinutes,
+  lockOnMinimize,
+  setAutoLockMinutes,
+  setLockOnMinimize,
+  type AutoLockMinutes,
+} from '../state/autolock.ts';
 import './SecuritySettings.css';
 
 function clearLabel(seconds: ClipboardClearSeconds): string {
   return seconds === 0 ? 'Never' : `${seconds}s`;
+}
+
+function timeoutLabel(minutes: AutoLockMinutes): string {
+  if (minutes === 0) return 'Never';
+  if (minutes === 60) return '1h';
+  return `${minutes}m`;
 }
 
 /**
@@ -55,6 +69,45 @@ export default function SecuritySettings() {
           </span>
         </span>
         <Toggle checked={darkwebMonitor()} onChange={(v) => void setDarkwebMonitor(v)} label="Dark-web monitor" />
+      </div>
+
+      <h3 class="sec-subhead">
+        <Lock size={14} strokeWidth={1.75} /> Vault timeout
+      </h3>
+      <p class="muted settings-help">
+        Lock every connection automatically after this much inactivity. The stored master passwords
+        stay sealed; unlocking re-opens them. <strong>Never</strong> keeps the vault unlocked until
+        you lock it yourself.
+      </p>
+      <div class="clip-options" role="radiogroup" aria-label="Auto-lock idle timeout">
+        <For each={AUTO_LOCK_OPTIONS}>
+          {(opt) => (
+            <button
+              type="button"
+              role="radio"
+              aria-checked={autoLockMinutes() === opt}
+              class="clip-option"
+              classList={{ active: autoLockMinutes() === opt }}
+              onClick={() => setAutoLockMinutes(opt)}
+            >
+              {timeoutLabel(opt)}
+            </button>
+          )}
+        </For>
+      </div>
+      <div class="settings-row sec-toggle-row">
+        <span class="sec-toggle-text">
+          <span class="sec-toggle-label">Lock when minimized</span>
+          <span class="muted sec-toggle-desc">
+            Lock immediately whenever the window is minimized or hidden, regardless of the idle
+            timeout.
+          </span>
+        </span>
+        <Toggle
+          checked={lockOnMinimize()}
+          onChange={(v) => setLockOnMinimize(v)}
+          label="Lock when minimized"
+        />
       </div>
 
       <h3 class="sec-subhead">

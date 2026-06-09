@@ -25,6 +25,14 @@
   flex-shrink: 0;
 }
 
+/* Connection switcher pill, between the brand and the centered search. */
+.titlebar-conn {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding-right: 4px;
+}
+
 /* Grows to fill the gap between brand and controls; the search field floats
    centered within it. Stays in the layout (and draggable) even when search is
    hidden so the brand/controls keep their edges. */
@@ -148,6 +156,22 @@
   cursor: default;
   background: transparent;
   color: var(--muted-foreground);
+}
+
+/* The sync button carries a text status, so it sizes to its content instead of
+   the fixed icon-button width. */
+.titlebar-actions .titlebar-sync {
+  width: auto;
+  gap: 7px;
+  padding: 0 10px;
+}
+.titlebar-sync-label {
+  font-size: 11.5px;
+  white-space: nowrap;
+  color: var(--muted-foreground);
+}
+.titlebar-sync:hover .titlebar-sync-label {
+  color: var(--foreground);
 }
 
 .titlebar-controls {

@@ -32,6 +32,9 @@ pub struct VaultItem {
     /// website column and favicon host. None for non-logins / no URI.
     pub uri: Option<String>,
     pub has_totp: bool,
+    /// Whether the login has at least one stored passkey (FIDO2 credential).
+    /// Presence only — the credential material is never sent to the frontend.
+    pub has_passkey: bool,
     pub favorite: bool,
     pub deleted: bool,
     pub folder_id: Option<String>,
@@ -102,6 +105,10 @@ pub struct ItemDetail {
     pub fields: Vec<CustomField>,
     pub folder_id: Option<String>,
     pub organization_id: Option<String>,
+    /// Last-modified timestamp (RFC 3339). Shown as "updated X ago" in the pane.
+    pub revision_date: String,
+    /// Creation timestamp (RFC 3339).
+    pub creation_date: String,
 }
 
 /// A generated TOTP code plus timing so the UI can render a countdown.

@@ -3,10 +3,16 @@
 // the generated string back via `onGenerated`. Reuses the editor's `.ie-gen-*`
 // CSS classes (the parent imports ItemEditor.css), so it must render inside that
 // scope to pick them up.
-import { createSignal, Show } from 'solid-js';
-import { Dices } from 'lucide-solid';
+import { createSignal, For, Show } from 'solid-js';
+import { Copy, Dices, History, Trash2 } from 'lucide-solid';
+import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { ipc } from '../lib/ipc.ts';
 import { toastError } from '../state/toast.ts';
+import {
+  clearGeneratorHistory,
+  generatorHistory,
+  pushGeneratorHistory,
+} from '../state/generatorHistory.ts';
 
 type GenMode = 'password' | 'passphrase';
 
@@ -46,8 +52,18 @@ export default function PasswordGenerator(props: {
           avoidAmbiguous: true,
         });
       }
+      pushGeneratorHistory(result);
       props.onGenerated(result);
       setGenOpen(false);
+    } catch (err) {
+      toastError(err);
+    }
+  }
+
+  // Copy a past value to the clipboard without disturbing the edited field.
+  async function copyEntry(value: string) {
+    try {
+      await writeText(value);
     } catch (err) {
       toastError(err);
     }
@@ -175,6 +191,38 @@ export default function PasswordGenerator(props: {
           <button class="primary ie-gen-go" onClick={() => void generate()}>
             Generate &amp; use
           </button>
+
+          <Show when={generatorHistory().length > 0}>
+            <div class="ie-gen-history">
+              <div class="ie-gen-history-head">
+                <span class="ie-gen-history-title">
+                  <History size={12} strokeWidth={1.75} /> Recent
+                </span>
+                <button class="ghost icon-btn" title="Clear history" onClick={() => clearGeneratorHistory()}>
+                  <Trash2 size={12} strokeWidth={1.75} />
+                </button>
+              </div>
+              <For each={generatorHistory()}>
+                {(entry) => (
+                  <div class="ie-gen-history-row">
+                    <button
+                      class="ie-gen-history-value"
+                      title="Use this value"
+                      onClick={() => {
+                        props.onGenerated(entry.value);
+                        setGenOpen(false);
+                      }}
+                    >
+                      {entry.value}
+                    </button>
+                    <button class="ghost icon-btn" title="Copy" onClick={() => void copyEntry(entry.value)}>
+                      <Copy size={12} strokeWidth={1.75} />
+                    </button>
+                  </div>
+                )}
+              </For>
+            </div>
+          </Show>
         </div>
       </Show>
     </div>

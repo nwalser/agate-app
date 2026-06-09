@@ -8,8 +8,8 @@
 import { createSignal, For, Show } from 'solid-js';
 import { ChevronDown, ChevronUp, Filter, SlidersHorizontal } from 'lucide-solid';
 import {
-  builtinMeta,
   columnKey,
+  columnLabel,
   columns,
   MIN_COL_WIDTH,
   NAME_COL_KEY,
@@ -46,9 +46,14 @@ export default function VaultListHeader(props: {
       <For each={columns().columns}>
         {(col) => {
           const sk = sortKeyOf(col);
+          // The Security column is a right-aligned icon column with no title — its
+          // header is the (empty) sort affordance + the chevron when it's active.
+          const isSecurity = col.kind === 'builtin' && col.id === 'security';
           return sk ? (
             <SortHeader
-              label={builtinMeta(col.kind === 'builtin' ? col.id : 'username').label}
+              label={isSecurity ? '' : columnLabel(col)}
+              title={isSecurity ? 'Sort by security status' : undefined}
+              align={isSecurity ? 'end' : 'start'}
               colKey={columnKey(col)}
               active={props.sortKey === sk}
               dir={props.sortDir}
@@ -56,9 +61,7 @@ export default function VaultListHeader(props: {
             />
           ) : (
             <span class="vault-head-cell vault-head-resizable">
-              <span class="vault-head-label">
-                {col.kind === 'builtin' ? builtinMeta(col.id).label : col.field}
-              </span>
+              <span class="vault-head-label">{columnLabel(col)}</span>
               <ColResize colKey={columnKey(col)} />
             </span>
           );
@@ -97,14 +100,21 @@ function SortHeader(props: {
   active: boolean;
   dir: SortDir;
   onClick: () => void;
+  /** Header alignment within its track ('end' for the icon-only Security column). */
+  align?: 'start' | 'end';
+  /** Optional tooltip — useful when the header has no visible label. */
+  title?: string;
 }) {
   return (
     <button
       class="vault-head-cell sortable vault-head-resizable"
-      classList={{ sorted: props.active }}
+      classList={{ sorted: props.active, 'align-end': props.align === 'end' }}
+      title={props.title}
       onClick={() => props.onClick()}
     >
-      <span class="vault-head-label">{props.label}</span>
+      <Show when={props.label}>
+        <span class="vault-head-label">{props.label}</span>
+      </Show>
       <Show when={props.active}>
         <Show
           when={props.dir === 'asc'}

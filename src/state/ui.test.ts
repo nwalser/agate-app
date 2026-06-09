@@ -72,6 +72,54 @@ describe('ui state — preview (detail) pane', () => {
   });
 });
 
+describe('ui state — sidebar width', () => {
+  beforeEach(() => localStorage.clear());
+
+  it('defaults to SIDEBAR_DEFAULT_WIDTH', async () => {
+    const m = await freshUi();
+    expect(m.sidebarWidth()).toBe(m.SIDEBAR_DEFAULT_WIDTH);
+  });
+
+  it('setSidebarWidth rounds, persists, and re-reads', async () => {
+    const m = await freshUi();
+    m.setSidebarWidth(240.6);
+    expect(m.sidebarWidth()).toBe(241);
+    expect(localStorage.getItem('agate.sidebarWidth')).toBe('241');
+  });
+
+  it('clamps below the minimum', async () => {
+    const m = await freshUi();
+    m.setSidebarWidth(10);
+    expect(m.sidebarWidth()).toBe(m.SIDEBAR_MIN_WIDTH);
+  });
+
+  it('clamps above the maximum', async () => {
+    const m = await freshUi();
+    m.setSidebarWidth(9999);
+    expect(m.sidebarWidth()).toBe(m.SIDEBAR_MAX_WIDTH);
+  });
+
+  it('reads + clamps a persisted width at load', async () => {
+    const m = await freshUi({ 'agate.sidebarWidth': '300' });
+    expect(m.sidebarWidth()).toBe(300);
+    const tooWide = await freshUi({ 'agate.sidebarWidth': '5000' });
+    expect(tooWide.sidebarWidth()).toBe(tooWide.SIDEBAR_MAX_WIDTH);
+  });
+
+  it('falls back to the default on a bogus persisted value', async () => {
+    const m = await freshUi({ 'agate.sidebarWidth': 'wide' });
+    expect(m.sidebarWidth()).toBe(m.SIDEBAR_DEFAULT_WIDTH);
+  });
+
+  it('resetSidebarWidth restores the default', async () => {
+    const m = await freshUi();
+    m.setSidebarWidth(300);
+    m.resetSidebarWidth();
+    expect(m.sidebarWidth()).toBe(m.SIDEBAR_DEFAULT_WIDTH);
+    expect(localStorage.getItem('agate.sidebarWidth')).toBe(String(m.SIDEBAR_DEFAULT_WIDTH));
+  });
+});
+
 describe('ui state — row density', () => {
   beforeEach(() => localStorage.clear());
 

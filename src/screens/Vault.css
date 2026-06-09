@@ -141,7 +141,7 @@
 }
 
 .vault-rail {
-  width: 216px;
+  width: var(--sidebar-width);
   flex-shrink: 0;
   border-right: 1px solid var(--border);
   overflow-y: auto;
@@ -418,10 +418,14 @@ button.vault-head-cell.sorted {
 .vault-row.active {
   background: var(--card-hover);
   box-shadow: inset 2px 0 0 var(--primary);
+  /* Square the corners while selected so the blue edge bar runs full-height
+     instead of being clipped into a rounded "partial border". */
+  border-radius: 0;
 }
 .vault-row.multi-selected {
   background: var(--card-hover);
   box-shadow: inset 2px 0 0 var(--primary);
+  border-radius: 0;
 }
 
 .vault-row-check {
@@ -510,14 +514,28 @@ button.vault-head-cell.sorted {
   color: var(--destructive);
 }
 
-/* Per-item security audit banner under the title. Clean = success-tinted icon
-   with neutral text; at-risk = warning icon plus per-flag chips. Chip colours
-   mirror SecurityCenter's .sec-chip / .sec-class.severe. */
+/* Per-item security audit, pinned to the bottom of the detail pane. A labelled
+   section separated from the fields above; clean = success-tinted icon with
+   neutral text, at-risk = warning icon plus per-flag chips. Chip colours mirror
+   SecurityCenter's .sec-chip / .sec-class.severe. */
+.detail-sec-section {
+  margin-top: 20px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.detail-sec-heading {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted-foreground);
+}
 .detail-sec {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 18px;
   padding: 8px 11px;
   border-radius: var(--radius-sm);
   background: var(--surface);
@@ -607,6 +625,17 @@ button.vault-head-cell.sorted {
   padding: 10px 11px;
   font-family: inherit;
   font-size: 12.5px;
+}
+
+/* Created / updated timestamps footer at the bottom of the detail pane. */
+.detail-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
 }
 
 /* Card "face" in the detail pane. */

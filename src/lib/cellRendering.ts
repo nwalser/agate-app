@@ -8,7 +8,7 @@
 import type { ColumnSpec } from '../state/columnConfig.ts';
 import { columnKey, TYPE_LABELS } from '../state/columnConfig.ts';
 import type { ItemAudit, ItemDetail, TotpCode, VaultItem } from './types.ts';
-import { itemAuditChips, type AuditChip } from './audit.ts';
+import { auditSeverity, itemAuditChips } from './audit.ts';
 
 /**
  * What a vault-list cell should display. A discriminated union so the renderer
@@ -17,8 +17,9 @@ import { itemAuditChips, type AuditChip } from './audit.ts';
  *  - `text`    — a plain string value, with optional styling flags.
  *  - `secret`  — a masked placeholder for an un-revealed secret column.
  *  - `totp`    — a revealed one-time code (possibly still loading: `code` null).
- *  - `secOk`   — the audited-clean tick for the Security column.
- *  - `secChips`— the Security column's flag chips for an at-risk login.
+ *  - `secBadge`— the Security column's single status badge (ok/warn/risk) with a
+ *               tooltip listing the flags.
+ *  - `passkey` — the Passkey column's presence icon for a login with a FIDO2 cred.
  */
 export type CellContent =
   | { kind: 'blank' }
@@ -32,8 +33,11 @@ export type CellContent =
     }
   | { kind: 'secret'; mask: string }
   | { kind: 'totp'; code: TotpCode | undefined }
-  | { kind: 'secOk' }
-  | { kind: 'secChips'; chips: AuditChip[] };
+  | { kind: 'secBadge'; status: SecurityStatus; tooltip: string }
+  | { kind: 'passkey' };
+
+/** Security column status: clean / minor issues only / at least one severe issue. */
+export type SecurityStatus = 'ok' | 'warn' | 'risk';
 
 /** Lookups the cell logic needs from the surrounding list (kept side-effect-free). */
 export interface CellContext {
@@ -69,6 +73,9 @@ export function cellContent(item: VaultItem, col: ColumnSpec, ctx: CellContext):
       return passwordCell(item, columnKey(col), ctx);
     case 'security':
       return securityCell(item, ctx);
+    case 'passkey':
+      // Logins with a stored passkey only; blank for everything else.
+      return item.itemType === 'login' && item.hasPasskey ? { kind: 'passkey' } : { kind: 'blank' };
   }
 }
 
@@ -77,8 +84,17 @@ function securityCell(item: VaultItem, ctx: CellContext): CellContent {
   // first report arrives.
   if (item.itemType !== 'login' || !ctx.hasSecurityReport) return { kind: 'blank' };
   const audit = ctx.audit(item.id);
-  if (!audit) return { kind: 'secOk' };
-  return { kind: 'secChips', chips: itemAuditChips(audit) };
+  if (!audit) return { kind: 'secBadge', status: 'ok', tooltip: 'No known security issues' };
+  // Collapse the per-flag chips into one status: red when any severe flag (reused
+  // / weak / insecure URL) is present, amber when only minor flags are. The
+  // tooltip still spells out every flag.
+  const chips = itemAuditChips(audit);
+  if (chips.length === 0) return { kind: 'secBadge', status: 'ok', tooltip: 'No known security issues' };
+  return {
+    kind: 'secBadge',
+    status: auditSeverity(audit),
+    tooltip: chips.map((c) => c.label).join(', '),
+  };
 }
 
 function passwordCell(item: VaultItem, key: string, ctx: CellContext): CellContent {

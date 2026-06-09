@@ -26,9 +26,11 @@ describe('security center', () => {
   it('stacks every security section on one page (no tabs)', async () => {
     await gotoSecurity();
     await $('.sec-summary').waitForExist({ timeout: TIMEOUT.slow });
-    const body = await $('.sec-body').getText();
-    expect(body).to.contain('Exposed passwords');
-    expect(body).to.contain('Dark web monitor');
-    expect(body).to.contain('Breaches affecting you');
+    // Section labels are upper-cased by CSS (text-transform), which the WebDriver
+    // rendered-text algorithm reflects — compare case-insensitively.
+    const body = (await $('.sec-body').getText()).toLowerCase();
+    expect(body).to.contain('exposed passwords');
+    expect(body).to.contain('dark web monitor');
+    expect(body).to.contain('breaches affecting you');
   });
 });
