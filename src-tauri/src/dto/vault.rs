@@ -1,0 +1,227 @@
+//! Vault item DTOs: list rows, full item detail, folders, TOTP, and the
+//! create/edit input shapes (frontend → backend). Mirrors `src/lib/types.ts`.
+
+use serde::{Deserialize, Serialize};
+
+/// Closed set of Bitwarden item types.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ItemType {
+    Login,
+    SecureNote,
+    Card,
+    Identity,
+    SshKey,
+    Unknown,
+}
+
+/// Row in the vault list (no secrets beyond what a list needs).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultItem {
+    pub id: String,
+    /// Which connection (account email) this item belongs to — routes every
+    /// per-item operation to the right unlocked client in the unified list.
+    pub account_email: String,
+    /// Human label for the owning connection's server (badge in the list).
+    pub account_label: String,
+    pub name: String,
+    pub item_type: ItemType,
+    pub username: Option<String>,
+    /// First login URI (decrypted; URIs are not secret). Powers the list's
+    /// website column and favicon host. None for non-logins / no URI.
+    pub uri: Option<String>,
+    pub has_totp: bool,
+    pub favorite: bool,
+    pub deleted: bool,
+    pub folder_id: Option<String>,
+    pub organization_id: Option<String>,
+}
+
+/// A single login URI (with its match strategy so edits round-trip).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoginUri {
+    pub uri: Option<String>,
+    pub match_type: Option<u8>,
+}
+
+/// Login-type detail.
+#[derive(Debug, Clone, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct LoginDetail {
+    pub username: Option<String>,
+    pub password: Option<String>,
+    /// The TOTP secret/URI itself (so an edit can preserve it).
+    pub totp: Option<String>,
+    pub uris: Vec<LoginUri>,
+    pub has_totp: bool,
+}
+
+/// Closed set of custom-field kinds on a decrypted item (backend → frontend).
+/// camelCase yields exactly "text" / "hidden" / "boolean" / "linked" — the same
+/// wire values the frontend contract expects.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum CustomFieldType {
+    Text,
+    Hidden,
+    Boolean,
+    Linked,
+}
+
+/// A custom field on an item.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomField {
+    pub name: Option<String>,
+    pub value: Option<String>,
+    pub field_type: CustomFieldType,
+    /// For linked fields: the numeric `LinkedIdType` target (None otherwise).
+    pub linked_id: Option<u32>,
+}
+
+/// Full decrypted item detail for the detail pane and the editor (prefill).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ItemDetail {
+    pub id: String,
+    /// Owning connection (account email) — routes edits/clones/TOTP correctly.
+    pub account_email: String,
+    pub account_label: String,
+    pub name: String,
+    pub item_type: ItemType,
+    pub favorite: bool,
+    /// Whether "require master password to view" (reprompt) is set.
+    pub reprompt: bool,
+    pub notes: Option<String>,
+    pub login: Option<LoginDetail>,
+    pub card: Option<CardInput>,
+    pub identity: Option<IdentityInput>,
+    pub ssh_key: Option<SshKeyInput>,
+    pub fields: Vec<CustomField>,
+    pub folder_id: Option<String>,
+    pub organization_id: Option<String>,
+}
+
+/// A generated TOTP code plus timing so the UI can render a countdown.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TotpCode {
+    pub code: String,
+    pub period: u32,
+    /// Seconds remaining until this code rolls over.
+    pub remaining: u32,
+}
+
+/// A vault folder. In the unified view folders are per-connection, so each
+/// carries its owning account; "move to folder" is scoped to that account.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Folder {
+    pub id: Option<String>,
+    pub name: String,
+    #[serde(default)]
+    pub account_email: String,
+    #[serde(default)]
+    pub account_label: String,
+}
+
+// ---------------------------------------------------------------------------
+// Item create/edit input (frontend → backend). Discriminated by `itemType`;
+// only the matching sub-object is read. Mirrors `src/lib/types.ts` ItemInput.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UriInput {
+    pub uri: Option<String>,
+    /// 0=Domain,1=Host,2=StartsWith,3=Exact,4=Regex,5=Never; null = default.
+    pub match_type: Option<u8>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoginInput {
+    pub username: Option<String>,
+    pub password: Option<String>,
+    pub totp: Option<String>,
+    #[serde(default)]
+    pub uris: Vec<UriInput>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CardInput {
+    pub cardholder_name: Option<String>,
+    pub number: Option<String>,
+    pub brand: Option<String>,
+    pub exp_month: Option<String>,
+    pub exp_year: Option<String>,
+    pub code: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IdentityInput {
+    pub title: Option<String>,
+    pub first_name: Option<String>,
+    pub middle_name: Option<String>,
+    pub last_name: Option<String>,
+    pub username: Option<String>,
+    pub company: Option<String>,
+    pub ssn: Option<String>,
+    pub passport_number: Option<String>,
+    pub license_number: Option<String>,
+    pub email: Option<String>,
+    pub phone: Option<String>,
+    pub address1: Option<String>,
+    pub address2: Option<String>,
+    pub address3: Option<String>,
+    pub city: Option<String>,
+    pub state: Option<String>,
+    pub postal_code: Option<String>,
+    pub country: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshKeyInput {
+    pub private_key: String,
+    pub public_key: String,
+    pub fingerprint: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FieldInput {
+    pub name: Option<String>,
+    pub value: Option<String>,
+    /// 0=Text,1=Hidden,2=Boolean,3=Linked
+    pub field_type: u8,
+    /// For linked fields: the numeric `LinkedIdType` target (None otherwise).
+    pub linked_id: Option<u32>,
+}
+
+/// One create-or-edit payload for any item type.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ItemInput {
+    /// Present → edit; absent → create.
+    pub id: Option<String>,
+    pub item_type: ItemType,
+    pub name: String,
+    pub folder_id: Option<String>,
+    pub organization_id: Option<String>,
+    #[serde(default)]
+    pub favorite: bool,
+    #[serde(default)]
+    pub reprompt: bool,
+    pub notes: Option<String>,
+    pub login: Option<LoginInput>,
+    pub card: Option<CardInput>,
+    pub identity: Option<IdentityInput>,
+    pub ssh_key: Option<SshKeyInput>,
+    #[serde(default)]
+    pub fields: Vec<FieldInput>,
+}

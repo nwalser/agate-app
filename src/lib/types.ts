@@ -176,8 +176,7 @@ export interface LoginDetail {
 export interface CustomField {
   name: string | null;
   value: string | null;
-  /** "text" | "hidden" | "boolean" | "linked" */
-  fieldType: string;
+  fieldType: 'text' | 'hidden' | 'boolean' | 'linked';
   /** For linked fields: the numeric LinkedIdType target (null otherwise). */
   linkedId: number | null;
 }

@@ -2,9 +2,22 @@
 //! (`VaultItem` list rows and `ItemDetail`), including the `CustomField`
 //! construction. No SDK calls and no state — just shape conversion.
 
-use bitwarden_vault::{CipherRepromptType, CipherType, CipherView};
+use bitwarden_vault::{CipherRepromptType, CipherType, CipherView, FieldType};
 
-use crate::dto::{CustomField, ItemDetail, ItemType, LoginDetail, LoginUri, VaultItem};
+use crate::dto::{
+    CustomField, CustomFieldType, ItemDetail, ItemType, LoginDetail, LoginUri, VaultItem,
+};
+
+/// Map the SDK field type to our closed `CustomFieldType`, preserving the exact
+/// wire values the frontend expects (`text` / `hidden` / `boolean` / `linked`).
+fn field_type_to_dto(t: FieldType) -> CustomFieldType {
+    match t {
+        FieldType::Hidden => CustomFieldType::Hidden,
+        FieldType::Boolean => CustomFieldType::Boolean,
+        FieldType::Linked => CustomFieldType::Linked,
+        _ => CustomFieldType::Text,
+    }
+}
 
 pub(super) fn cipher_type_to_dto(t: CipherType) -> ItemType {
     match t {
@@ -91,7 +104,7 @@ pub fn view_to_detail(view: &CipherView, account_email: &str, account_label: &st
                 .map(|f| CustomField {
                     name: f.name.clone(),
                     value: f.value.clone(),
-                    field_type: format!("{:?}", f.r#type).to_lowercase(),
+                    field_type: field_type_to_dto(f.r#type),
                     linked_id: f.linked_id.map(u32::from),
                 })
                 .collect()
