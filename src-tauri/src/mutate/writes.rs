@@ -1,7 +1,7 @@
-//! Vault write operations: create / edit / delete / restore / move / favorite /
-//! clone items, and folder create / rename. Every operation routes to a specific
-//! connection by `account_email` (the unified list mixes accounts, so the caller
-//! always says which vault an item lives in / a new item goes into).
+//! Item write operations: create / edit / delete / restore / move / favorite /
+//! clone. Every operation routes to a specific connection by `account_email` (the
+//! unified list mixes accounts, so the caller always says which vault an item lives
+//! in / a new item goes into).
 //!
 //! The SDK's typed `CipherCreateRequest`/`CipherEditRequest` live in private
 //! modules and aren't nameable from outside the crate, so we reproduce the
@@ -13,19 +13,19 @@
 //! to `None`); edit round-trips the decrypted `CipherView` through JSON so fields
 //! we don't enumerate (key, password_history, dates…) are preserved.
 
-use bitwarden_api_api::models::{CipherRequestModel, FolderRequestModel};
+use bitwarden_api_api::models::CipherRequestModel;
 use bitwarden_pm::PasswordManagerClient;
-use bitwarden_vault::{Cipher, CipherId, CipherView, FolderAddEditRequest, FolderId};
+use bitwarden_vault::{Cipher, CipherId, CipherView};
+use chrono::Utc;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 
-use crate::dto::{CardInput, Folder, IdentityInput, ItemInput, ItemType, LoginInput, SshKeyInput};
+use crate::dto::{CardInput, IdentityInput, ItemInput, ItemType, LoginInput, SshKeyInput};
 use crate::error::{AgateError, AgateResult, ErrorKind};
-use crate::server;
 use crate::state::AppState;
 use crate::vault::{client_for, decrypt_one};
 
-fn op_err(kind: ErrorKind, what: &str, e: impl std::fmt::Display) -> AgateError {
+pub(super) fn op_err(kind: ErrorKind, what: &str, e: impl std::fmt::Display) -> AgateError {
     AgateError::new(kind, format!("{what}: {e}"))
 }
 
@@ -33,16 +33,8 @@ fn build_err(e: impl std::fmt::Display) -> AgateError {
     AgateError::new(ErrorKind::BadRequest, format!("invalid item data: {e}"))
 }
 
-/// Server label for one connection (for stamping returned folders).
-async fn account_label(state: &AppState, email: &str) -> String {
-    let cfg = state.config.lock().await;
-    cfg.server_for(email)
-        .map(|s| server::server_label(&s))
-        .unwrap_or_else(|| email.to_string())
-}
-
 /// Parse a string id into a typed SDK id via serde (CipherId/FolderId/OrganizationId).
-fn parse_id<T: DeserializeOwned>(s: &str) -> AgateResult<T> {
+pub(super) fn parse_id<T: DeserializeOwned>(s: &str) -> AgateResult<T> {
     serde_json::from_value(Value::String(s.to_string()))
         .map_err(|_| AgateError::bad_request("invalid id"))
 }
@@ -118,6 +110,11 @@ fn cipher_type_int(t: ItemType) -> AgateResult<i64> {
 
 /// Build a fresh `CipherView` (as JSON) for a create.
 fn create_view_json(input: &ItemInput) -> AgateResult<Value> {
+    // The server is authoritative for creation/revision dates on a new cipher and
+    // overwrites whatever we send, so the value only has to be a valid RFC 3339
+    // timestamp. Use "now" rather than a frozen literal so it's correct on the
+    // off-chance anything reads it before the post-create re-sync.
+    let now = Utc::now().to_rfc3339();
     let mut v = json!({
         "id": null,
         "organizationId": input.organization_id,
@@ -140,9 +137,9 @@ fn create_view_json(input: &ItemInput) -> AgateResult<Value> {
         "attachmentDecryptionFailures": null,
         "fields": build_fields(input),
         "passwordHistory": null,
-        "creationDate": "2025-01-01T00:00:00Z",
+        "creationDate": now,
         "deletedDate": null,
-        "revisionDate": "2025-01-01T00:00:00Z",
+        "revisionDate": now,
         "archivedDate": null,
     });
     set_type_payload(&mut v, input)?;
@@ -298,7 +295,7 @@ pub async fn move_items(
 ) -> AgateResult<()> {
     let client = client_for(state, account_email).await?;
     let cipher_ids: Vec<CipherId> = ids.iter().map(|s| parse_id(s)).collect::<AgateResult<_>>()?;
-    let folder = parse_opt_id::<FolderId>(&folder_id)?;
+    let folder = parse_opt_id::<bitwarden_vault::FolderId>(&folder_id)?;
     client
         .vault()
         .ciphers()
@@ -337,90 +334,4 @@ pub async fn restore_items(state: &AppState, account_email: &str, ids: Vec<Strin
         .await
         .map_err(|e| op_err(ErrorKind::Network, "Restore failed", e))?;
     Ok(())
-}
-
-/// Encrypt a folder name and create (no id) or rename (with id) it via the raw
-/// `folders_api()`, returning the server's folder id. We bypass the SDK's
-/// high-level `FoldersClient::{create,edit}` because both are repository-backed
-/// (`repository.require()` / `get`), and Agate registers no folder repository —
-/// so they'd error even when the server write succeeded. This mirrors how cipher
-/// writes go straight through `ciphers_api()` in `encrypt_and_push`.
-async fn push_folder(
-    client: &PasswordManagerClient,
-    id: Option<&str>,
-    name: &str,
-) -> AgateResult<Option<String>> {
-    let internal = &client.0.internal;
-    let key_store = internal.get_key_store();
-    let model: FolderRequestModel = key_store
-        .encrypt(FolderAddEditRequest { name: name.to_string() })
-        .map_err(|e| op_err(ErrorKind::Crypto, "encrypt folder", e))?;
-    let api = internal.get_api_configurations();
-    let folders_api = api.api_client.folders_api();
-    let resp = match id {
-        Some(id) => folders_api
-            .put(id, Some(model))
-            .await
-            .map_err(|e| op_err(ErrorKind::Network, "Rename folder failed", e))?,
-        None => folders_api
-            .post(Some(model))
-            .await
-            .map_err(|e| op_err(ErrorKind::Network, "Create folder failed", e))?,
-    };
-    Ok(resp.id.map(|i| i.to_string()))
-}
-
-/// Create a personal folder in one account.
-pub async fn create_folder(state: &AppState, account_email: &str, name: String) -> AgateResult<Folder> {
-    if name.trim().is_empty() {
-        return Err(AgateError::bad_request("Folder name is required."));
-    }
-    let client = client_for(state, account_email).await?;
-    let id = push_folder(&client, None, &name).await?;
-    Ok(Folder {
-        id,
-        name,
-        account_email: account_email.to_string(),
-        account_label: account_label(state, account_email).await,
-    })
-}
-
-/// Delete a single folder entity in one account. The server clears the folder
-/// association on any item that referenced it (those items move to "No folder" —
-/// deleting a folder never deletes its items). Subtree deletes + explicit item
-/// reassignment are orchestrated by the frontend (it has the decrypted folder +
-/// item lists and re-syncs after), so this stays a thin one-folder wrapper.
-///
-/// No SDK high-level `delete` exists, so we hit the raw `folders_api()` the same
-/// way `encrypt_and_push` reaches `ciphers_api()`. The SDK's local folder repo
-/// goes stale after this raw delete; the post-mutation re-sync refreshes it.
-pub async fn delete_folder(state: &AppState, account_email: &str, id: &str) -> AgateResult<()> {
-    // Validate the id shape before touching the network.
-    let _: FolderId = parse_id(id)?;
-    let client = client_for(state, account_email).await?;
-    let api = client.0.internal.get_api_configurations();
-    api.api_client
-        .folders_api()
-        .delete(id)
-        .await
-        .map_err(|e| op_err(ErrorKind::Network, "Delete folder failed", e))?;
-    Ok(())
-}
-
-/// Rename an existing folder in one account.
-pub async fn rename_folder(state: &AppState, account_email: &str, id: &str, name: String) -> AgateResult<Folder> {
-    if name.trim().is_empty() {
-        return Err(AgateError::bad_request("Folder name is required."));
-    }
-    // Validate the id shape before touching the network.
-    let _: FolderId = parse_id(id)?;
-    let client = client_for(state, account_email).await?;
-    push_folder(&client, Some(id), &name).await?;
-    Ok(Folder {
-        // A rename keeps the same id; echo the caller's (the response repeats it).
-        id: Some(id.to_string()),
-        name,
-        account_email: account_email.to_string(),
-        account_label: account_label(state, account_email).await,
-    })
 }

@@ -1,12 +1,12 @@
-//! Vault operations across all unlocked connections: sync, the unified item list,
-//! item detail, TOTP, and password generation.
+//! The read path: sync, the unified item list, item detail, TOTP, and folders.
 //!
 //! In the unified model every read aggregates across every unlocked connection and
 //! stamps each row/detail with its owning account (`account_email` + a label), and
 //! every per-item operation routes by `(account_email, id)` to the right client.
 //!
-//! All SDK calls are isolated here. The read path decrypts each cipher to a full
-//! `CipherView` (a stable SDK type) rather than the more volatile `CipherListView`.
+//! All SDK read calls are isolated here. The read path decrypts each cipher to a
+//! full `CipherView` (a stable SDK type) rather than the more volatile
+//! `CipherListView`.
 //!
 //! NOTE (unstable SDK): `sync()` returns the raw `SyncResponseModel`; the SDK does
 //! not materialize ciphers into a repository on its own. We convert the API models
@@ -15,35 +15,19 @@
 use std::collections::HashMap;
 
 use bitwarden_core::UserId;
-use bitwarden_generators::{PassphraseGeneratorRequest, PasswordGeneratorRequest};
 use bitwarden_pm::PasswordManagerClient;
 use bitwarden_sync::SyncRequest;
 use bitwarden_vault::{
-    generate_totp, Cipher, CipherRepromptType, CipherType, CipherView, Folder as VaultFolder,
-    FolderView,
+    generate_totp, Cipher, CipherView, Folder as VaultFolder, FolderView,
 };
 use chrono::Utc;
 
-use crate::dto::{
-    CustomField, Folder, ItemDetail, ItemType, LoginDetail, LoginUri, PasswordGenOptions, TotpCode,
-    VaultItem,
-};
+use crate::dto::{Folder, ItemDetail, TotpCode, VaultItem};
 use crate::error::{AgateError, AgateResult, ErrorKind};
 use crate::server;
 use crate::state::AppState;
 
-fn cipher_type_to_dto(t: CipherType) -> ItemType {
-    match t {
-        CipherType::Login => ItemType::Login,
-        CipherType::SecureNote => ItemType::SecureNote,
-        CipherType::Card => ItemType::Card,
-        CipherType::Identity => ItemType::Identity,
-        CipherType::SshKey => ItemType::SshKey,
-        CipherType::BankAccount | CipherType::DriversLicense | CipherType::Passport => {
-            ItemType::Unknown
-        }
-    }
-}
+use super::transform::{view_to_detail, view_to_list_item};
 
 /// A fresh handle to one connection's unlocked client, or a typed error.
 pub(crate) async fn client_for(state: &AppState, account_email: &str) -> AgateResult<PasswordManagerClient> {
@@ -56,7 +40,7 @@ pub(crate) async fn client_for(state: &AppState, account_email: &str) -> AgateRe
 }
 
 /// Any unlocked client (for account-agnostic ops like generation), or a throwaway.
-async fn any_or_throwaway(state: &AppState) -> PasswordManagerClient {
+pub(super) async fn any_or_throwaway(state: &AppState) -> PasswordManagerClient {
     match state.session.lock().await.connections.values().next() {
         Some(c) => PasswordManagerClient(c.client.0.clone()),
         None => PasswordManagerClient::new(None),
@@ -239,105 +223,11 @@ pub async fn list_items(state: &AppState) -> AgateResult<Vec<VaultItem>> {
     Ok(items)
 }
 
-fn view_to_list_item(view: &CipherView, account_email: &str, account_label: &str) -> VaultItem {
-    let (username, has_totp, uri) = match &view.login {
-        Some(login) => (
-            login.username.clone(),
-            login.totp.is_some(),
-            login.uris.as_ref().and_then(|uris| uris.iter().find_map(|u| u.uri.clone())),
-        ),
-        None => (None, false, None),
-    };
-    VaultItem {
-        id: view.id.map(|i| i.to_string()).unwrap_or_default(),
-        account_email: account_email.to_string(),
-        account_label: account_label.to_string(),
-        name: view.name.clone(),
-        item_type: cipher_type_to_dto(view.r#type),
-        username,
-        uri,
-        has_totp,
-        favorite: view.favorite,
-        deleted: view.deleted_date.is_some(),
-        folder_id: view.folder_id.map(|i| i.to_string()),
-        organization_id: view.organization_id.map(|i| i.to_string()),
-    }
-}
-
 /// Find and decrypt one cipher (in `account_email`'s vault) into full detail.
 pub async fn item_detail(state: &AppState, account_email: &str, id: &str) -> AgateResult<ItemDetail> {
     let view = decrypt_one(state, account_email, id).await?;
     let label = label_for(&label_map(state).await, account_email);
     Ok(view_to_detail(&view, account_email, &label))
-}
-
-/// Map a decrypted `CipherView` into the frontend `ItemDetail` DTO.
-pub fn view_to_detail(view: &CipherView, account_email: &str, account_label: &str) -> ItemDetail {
-    let login = view.login.as_ref().map(|l| LoginDetail {
-        username: l.username.clone(),
-        password: l.password.clone(),
-        totp: l.totp.clone(),
-        uris: l
-            .uris
-            .as_ref()
-            .map(|uris| {
-                uris.iter()
-                    .map(|u| LoginUri { uri: u.uri.clone(), match_type: u.r#match.map(|m| m as u8) })
-                    .collect()
-            })
-            .unwrap_or_default(),
-        has_totp: l.totp.as_ref().map(|t| !t.is_empty()).unwrap_or(false),
-    });
-
-    let card = view
-        .card
-        .as_ref()
-        .and_then(|c| serde_json::to_value(c).ok())
-        .and_then(|v| serde_json::from_value(v).ok());
-    let identity = view
-        .identity
-        .as_ref()
-        .and_then(|i| serde_json::to_value(i).ok())
-        .and_then(|v| serde_json::from_value(v).ok());
-    let ssh_key = view
-        .ssh_key
-        .as_ref()
-        .and_then(|s| serde_json::to_value(s).ok())
-        .and_then(|v| serde_json::from_value(v).ok());
-
-    let fields = view
-        .fields
-        .as_ref()
-        .map(|fields| {
-            fields
-                .iter()
-                .map(|f| CustomField {
-                    name: f.name.clone(),
-                    value: f.value.clone(),
-                    field_type: format!("{:?}", f.r#type).to_lowercase(),
-                    linked_id: f.linked_id.map(u32::from),
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-
-    ItemDetail {
-        id: view.id.map(|i| i.to_string()).unwrap_or_default(),
-        account_email: account_email.to_string(),
-        account_label: account_label.to_string(),
-        name: view.name.clone(),
-        item_type: cipher_type_to_dto(view.r#type),
-        favorite: view.favorite,
-        reprompt: matches!(view.reprompt, CipherRepromptType::Password),
-        notes: view.notes.clone(),
-        login,
-        card,
-        identity,
-        ssh_key,
-        fields,
-        folder_id: view.folder_id.map(|i| i.to_string()),
-        organization_id: view.organization_id.map(|i| i.to_string()),
-    }
 }
 
 /// Generate the current TOTP code for an item that has one.
@@ -422,50 +312,6 @@ pub async fn list_folders(state: &AppState) -> AgateResult<Vec<Folder>> {
         }
     }
     Ok(out)
-}
-
-/// Generate a password with the given options (no unlocked vault required).
-pub async fn generate_password(state: &AppState, opts: PasswordGenOptions) -> AgateResult<String> {
-    if !(opts.uppercase || opts.lowercase || opts.numbers || opts.special) {
-        return Err(AgateError::bad_request("Select at least one character set."));
-    }
-    let length = opts.length.clamp(5, 128);
-    let client = any_or_throwaway(state).await;
-
-    let request = PasswordGeneratorRequest {
-        lowercase: opts.lowercase,
-        uppercase: opts.uppercase,
-        numbers: opts.numbers,
-        special: opts.special,
-        length,
-        avoid_ambiguous: opts.avoid_ambiguous,
-        min_number: opts.min_number,
-        min_special: opts.min_special,
-        ..Default::default()
-    };
-    client
-        .generator()
-        .password(request)
-        .map_err(|e| AgateError::new(ErrorKind::Internal, format!("generate failed: {e}")))
-}
-
-/// Generate a passphrase (EFF wordlist) with the given options.
-pub async fn generate_passphrase(
-    state: &AppState,
-    opts: crate::dto::PassphraseGenOptions,
-) -> AgateResult<String> {
-    let num_words = opts.num_words.clamp(3, 20);
-    let client = any_or_throwaway(state).await;
-    let request = PassphraseGeneratorRequest {
-        num_words,
-        word_separator: if opts.word_separator.is_empty() { "-".into() } else { opts.word_separator },
-        capitalize: opts.capitalize,
-        include_number: opts.include_number,
-    };
-    client
-        .generator()
-        .passphrase(request)
-        .map_err(|e| AgateError::new(ErrorKind::Internal, format!("generate failed: {e}")))
 }
 
 #[cfg(test)]
