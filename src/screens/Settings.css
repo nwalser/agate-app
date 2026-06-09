@@ -267,3 +267,71 @@ input[type='range'] {
 .settings-about-version {
   font-size: 12px;
 }
+
+/* Connections: per-account card with badges, actions, and inline edit/unlock. */
+.settings-account-card {
+  border-bottom: 1px solid var(--border);
+}
+.settings-account-card:last-of-type {
+  border-bottom: none;
+}
+.settings-account {
+  border-bottom: none;
+}
+.settings-account-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.settings-account-actions {
+  flex-shrink: 0;
+}
+.settings-badge {
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+  border: 1px solid var(--border-strong);
+  color: var(--muted-foreground);
+}
+.settings-badge-ok {
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 40%, transparent);
+}
+.settings-badge-warn {
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 40%, transparent);
+}
+.settings-badge-muted {
+  color: var(--muted-foreground);
+}
+
+/* Inline edit / unlock form under a connection row. */
+.settings-conn-form {
+  margin: 2px 0 12px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+}
+.settings-conn-form-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.settings-conn-form-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.settings-conn-form .field {
+  margin-bottom: 10px;
+}
+.settings-conn-form .full {
+  margin-top: 4px;
+}

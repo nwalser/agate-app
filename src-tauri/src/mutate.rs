@@ -359,6 +359,28 @@ pub async fn create_folder(state: &AppState, account_email: &str, name: String) 
     })
 }
 
+/// Delete a single folder entity in one account. The server clears the folder
+/// association on any item that referenced it (those items move to "No folder" —
+/// deleting a folder never deletes its items). Subtree deletes + explicit item
+/// reassignment are orchestrated by the frontend (it has the decrypted folder +
+/// item lists and re-syncs after), so this stays a thin one-folder wrapper.
+///
+/// No SDK high-level `delete` exists, so we hit the raw `folders_api()` the same
+/// way `encrypt_and_push` reaches `ciphers_api()`. The SDK's local folder repo
+/// goes stale after this raw delete; the post-mutation re-sync refreshes it.
+pub async fn delete_folder(state: &AppState, account_email: &str, id: &str) -> AgateResult<()> {
+    // Validate the id shape before touching the network.
+    let _: FolderId = parse_id(id)?;
+    let client = client_for(state, account_email).await?;
+    let api = client.0.internal.get_api_configurations();
+    api.api_client
+        .folders_api()
+        .delete(id)
+        .await
+        .map_err(|e| op_err(ErrorKind::Network, "Delete folder failed", e))?;
+    Ok(())
+}
+
 /// Rename an existing folder in one account.
 pub async fn rename_folder(state: &AppState, account_email: &str, id: &str, name: String) -> AgateResult<Folder> {
     if name.trim().is_empty() {

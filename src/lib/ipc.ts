@@ -94,9 +94,38 @@ export const ipc = {
     server: ServerConfig,
     email: string,
     password: string,
+    storeCredentials: boolean,
     twoFactor?: TwoFactorInput,
   ): Promise<LoginResult> =>
-    invoke('add_connection', { server, email, password, twoFactor: twoFactor ?? null }),
+    invoke('add_connection', {
+      server,
+      email,
+      password,
+      storeCredentials,
+      twoFactor: twoFactor ?? null,
+    }),
+
+  updateConnection: (
+    email: string,
+    server: ServerConfig,
+    storeCredentials: boolean,
+    password?: string,
+    twoFactor?: TwoFactorInput,
+  ): Promise<LoginResult> =>
+    invoke('update_connection', {
+      email,
+      server,
+      storeCredentials,
+      password: password ?? null,
+      twoFactor: twoFactor ?? null,
+    }),
+
+  unlockConnection: (
+    email: string,
+    password: string,
+    twoFactor?: TwoFactorInput,
+  ): Promise<LoginResult> =>
+    invoke('unlock_connection', { email, password, twoFactor: twoFactor ?? null }),
 
   sendEmailCode: (server: ServerConfig, email: string, password: string): Promise<void> =>
     invoke('send_email_code', { server, email, password }),
@@ -153,6 +182,9 @@ export const ipc = {
 
   renameFolder: (accountEmail: string, id: string, name: string): Promise<Folder> =>
     invoke('rename_folder', { accountEmail, id, name }),
+
+  deleteFolder: (accountEmail: string, id: string): Promise<void> =>
+    invoke('delete_folder', { accountEmail, id }),
 
   // ---- window chrome ----
 

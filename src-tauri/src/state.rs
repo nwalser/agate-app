@@ -25,6 +25,16 @@ use crate::error::{AgateError, AgateResult, ErrorKind};
 pub struct AccountRef {
     pub server: ServerConfig,
     pub email: String,
+    /// Persist this connection's master password (sealed under the VMK) so it
+    /// auto-unlocks whenever the app is unlocked. When false the password is never
+    /// stored and the connection must be unlocked manually each session. Defaults
+    /// true so existing configs keep their auto-unlock behaviour.
+    #[serde(default = "default_true")]
+    pub store_credentials: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// Non-secret config persisted across launches. `accounts` is the set of
@@ -57,14 +67,20 @@ pub struct PersistedConfig {
 
 impl PersistedConfig {
     /// Record/update a connection in the list (dedup by email).
-    pub fn upsert_account(&mut self, server: ServerConfig, email: &str) {
+    pub fn upsert_account(&mut self, server: ServerConfig, email: &str, store_credentials: bool) {
         self.accounts.retain(|a| a.email != email);
-        self.accounts.push(AccountRef { server, email: email.to_string() });
+        self.accounts
+            .push(AccountRef { server, email: email.to_string(), store_credentials });
     }
 
     /// The server recorded for `email`, if the connection is known.
     pub fn server_for(&self, email: &str) -> Option<ServerConfig> {
         self.accounts.iter().find(|a| a.email == email).map(|a| a.server.clone())
+    }
+
+    /// The full account record for `email`, if known.
+    pub fn account_for(&self, email: &str) -> Option<&AccountRef> {
+        self.accounts.iter().find(|a| a.email == email)
     }
 }
 

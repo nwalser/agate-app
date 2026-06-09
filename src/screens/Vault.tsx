@@ -23,6 +23,7 @@ import {
   File,
   FolderInput,
   KeyRound,
+  Link as LinkIcon,
   Lock,
   PanelLeftClose,
   PanelLeftOpen,
@@ -47,7 +48,9 @@ import { ipc } from '../lib/ipc.ts';
 import { filterItems, type VaultFilter } from '../lib/search.ts';
 import { itemAuditChips } from '../lib/audit.ts';
 import type {
+  CardInput,
   ConnectionSummary,
+  CustomField,
   Folder,
   HealthBand,
   ItemDetail,
@@ -56,7 +59,16 @@ import type {
   VaultHealthReport,
   VaultItem,
 } from '../lib/types.ts';
-import { cardExpiry, identityFields } from '../lib/itemFields.ts';
+import {
+  cardExpiry,
+  detectCardBrand,
+  formatCardNumber,
+  identityFields,
+  isLinkedSecret,
+  linkedLabel,
+  maskCardNumber,
+  resolveLinkedValue,
+} from '../lib/itemFields.ts';
 import { query, setQuery } from '../state/search.ts';
 import { clearPaletteSource, setPaletteSource } from '../state/palette.ts';
 import { isCommandQuery } from '../lib/command.ts';
@@ -1342,45 +1354,7 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
                 </Show>
 
                 <Show when={d().card}>
-                  {(card) => (
-                    <>
-                      <Show when={card().cardholderName}>
-                        <Field
-                          label="Cardholder name"
-                          value={card().cardholderName}
-                          onCopy={() => void copy('Cardholder name', card().cardholderName)}
-                        />
-                      </Show>
-                      <Show when={card().brand}>
-                        <Field
-                          label="Brand"
-                          value={card().brand}
-                          onCopy={() => void copy('Brand', card().brand)}
-                        />
-                      </Show>
-                      <Show when={card().number}>
-                        <SecretField
-                          label="Number"
-                          value={card().number}
-                          onCopy={() => void copy('Number', card().number)}
-                        />
-                      </Show>
-                      <Show when={card().expMonth || card().expYear}>
-                        <Field
-                          label="Expiration"
-                          value={cardExpiry(card())}
-                          onCopy={() => void copy('Expiration', cardExpiry(card()))}
-                        />
-                      </Show>
-                      <Show when={card().code}>
-                        <SecretField
-                          label="Security code"
-                          value={card().code}
-                          onCopy={() => void copy('Security code', card().code)}
-                        />
-                      </Show>
-                    </>
-                  )}
+                  {(card) => <CardVisual card={card()} onCopy={copy} />}
                 </Show>
 
                 <Show when={d().identity}>
@@ -1429,11 +1403,11 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
 
                 <For each={d().fields}>
                   {(f) => (
-                    <Show when={f.name || f.value}>
-                      <Field
-                        label={f.name ?? 'Field'}
-                        value={f.value}
-                        onCopy={() => void copy(f.name ?? 'Field', f.value)}
+                    <Show when={f.name || f.value || f.fieldType === 'linked'}>
+                      <CustomFieldView
+                        field={f}
+                        detail={d()}
+                        onCopy={(label, value) => void copy(label, value)}
                       />
                     </Show>
                   )}
@@ -1674,6 +1648,141 @@ function SecretField(props: { label: string; value: string | null; onCopy: () =>
         </button>
       </div>
     </div>
+  );
+}
+
+// Read-only card "face" for the detail pane: brand, masked number, holder, expiry.
+function CardVisual(props: { card: CardInput; onCopy: (label: string, value: string | null) => void }) {
+  const [revealed, setRevealed] = createSignal(false);
+  const brand = () => props.card.brand || detectCardBrand(props.card.number ?? '') || 'Card';
+  const number = () => props.card.number ?? '';
+  const numberText = () =>
+    number()
+      ? revealed()
+        ? formatCardNumber(number(), brand())
+        : maskCardNumber(number())
+      : '•••• •••• •••• ••••';
+  return (
+    <div class="card-visual">
+      <div class="card-visual-top">
+        <CreditCard size={22} strokeWidth={1.5} />
+        <span class="card-visual-brand">{brand()}</span>
+      </div>
+      <div class="card-visual-number-row">
+        <span class="card-visual-number mono">{numberText()}</span>
+        <Show when={number()}>
+          <button
+            class="ghost icon-btn"
+            title={revealed() ? 'Hide' : 'Reveal'}
+            onClick={() => setRevealed(!revealed())}
+          >
+            {revealed() ? <EyeOff size={14} /> : <Eye size={14} />}
+          </button>
+          <button
+            class="ghost icon-btn"
+            title="Copy number"
+            onClick={() => props.onCopy('Number', number())}
+          >
+            <Copy size={14} />
+          </button>
+        </Show>
+      </div>
+      <div class="card-visual-bottom">
+        <div class="card-visual-meta">
+          <span class="card-visual-cap">Cardholder</span>
+          <span class="card-visual-val">{props.card.cardholderName || '—'}</span>
+        </div>
+        <Show when={props.card.expMonth || props.card.expYear}>
+          <div class="card-visual-meta">
+            <span class="card-visual-cap">Expires</span>
+            <span class="card-visual-val">{cardExpiry(props.card)}</span>
+          </div>
+        </Show>
+        <Show when={props.card.code}>
+          <div class="card-visual-meta">
+            <span class="card-visual-cap">CVV</span>
+            <span class="card-visual-cvv">
+              <span class="card-visual-val">{revealed() ? props.card.code : '•••'}</span>
+              <button
+                class="ghost icon-btn"
+                title="Copy code"
+                onClick={() => props.onCopy('Security code', props.card.code)}
+              >
+                <Copy size={12} />
+              </button>
+            </span>
+          </div>
+        </Show>
+      </div>
+    </div>
+  );
+}
+
+// One custom field, rendered by its type: boolean as an on/off chip, hidden as a
+// masked secret, linked as its resolved target value (masked if secret), text as
+// a plain copyable row.
+function CustomFieldView(props: {
+  field: CustomField;
+  detail: ItemDetail;
+  onCopy: (label: string, value: string | null) => void;
+}) {
+  const f = () => props.field;
+  const label = () => f().name ?? 'Field';
+  return (
+    <Switch
+      fallback={
+        <Field label={label()} value={f().value} onCopy={() => props.onCopy(label(), f().value)} />
+      }
+    >
+      <Match when={f().fieldType === 'boolean'}>
+        <div class="detail-field">
+          <label>{label()}</label>
+          <div class="detail-bool" classList={{ on: f().value === 'true' }}>
+            <Show when={f().value === 'true'} fallback={<span>Off</span>}>
+              <Check size={14} strokeWidth={2.25} /> On
+            </Show>
+          </div>
+        </div>
+      </Match>
+      <Match when={f().fieldType === 'hidden'}>
+        <SecretField label={label()} value={f().value} onCopy={() => props.onCopy(label(), f().value)} />
+      </Match>
+      <Match when={f().fieldType === 'linked'}>
+        {(() => {
+          const target = linkedLabel(f().linkedId);
+          const value = resolveLinkedValue(props.detail, f().linkedId);
+          const lbl = `${label()} → ${target}`;
+          if (value === null) {
+            return (
+              <div class="detail-field">
+                <label>
+                  <LinkIcon size={11} strokeWidth={2} /> {lbl}
+                </label>
+                <div class="detail-value-row">
+                  <span class="detail-value muted">Linked field (empty)</span>
+                </div>
+              </div>
+            );
+          }
+          if (isLinkedSecret(f().linkedId)) {
+            return <SecretField label={lbl} value={value} onCopy={() => props.onCopy(label(), value)} />;
+          }
+          return (
+            <div class="detail-field">
+              <label>
+                <LinkIcon size={11} strokeWidth={2} /> {lbl}
+              </label>
+              <div class="detail-value-row">
+                <span class="detail-value truncate">{value}</span>
+                <button class="ghost icon-btn" title="Copy" onClick={() => props.onCopy(label(), value)}>
+                  <Copy size={14} />
+                </button>
+              </div>
+            </div>
+          );
+        })()}
+      </Match>
+    </Switch>
   );
 }
 

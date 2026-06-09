@@ -1,5 +1,5 @@
 import { createSignal, onMount, Show, For } from 'solid-js';
-import { Server, ShieldCheck } from 'lucide-solid';
+import { Lock, Server, ShieldCheck } from 'lucide-solid';
 import { ipc } from '../lib/ipc.ts';
 import type { ConnectionSummary, ServerConfig, TwoFactorKind } from '../lib/types.ts';
 import { refreshSession } from '../state/session.ts';
@@ -15,6 +15,9 @@ export default function Onboarding(props: { onDone?: () => void }) {
   const [baseUrl, setBaseUrl] = createSignal('');
   const [email, setEmail] = createSignal('');
   const [password, setPassword] = createSignal('');
+  // Store this account's master password (sealed) so it auto-unlocks, vs. require
+  // unlocking it manually each session. Default: store (auto-unlock).
+  const [storeCredentials, setStoreCredentials] = createSignal(true);
   const [busy, setBusy] = createSignal(false);
 
   const [twoFactorProviders, setTwoFactorProviders] = createSignal<TwoFactorKind[] | null>(null);
@@ -61,7 +64,13 @@ export default function Onboarding(props: { onDone?: () => void }) {
       const tf = withTwoFactor
         ? { provider: tfProvider(), token: tfToken().trim(), remember: false }
         : undefined;
-      const result = await ipc.addConnection(serverConfig(), email().trim(), password(), tf);
+      const result = await ipc.addConnection(
+        serverConfig(),
+        email().trim(),
+        password(),
+        storeCredentials(),
+        tf,
+      );
       if (result.status === 'twoFactorRequired') {
         setTwoFactorProviders(result.providers);
         setTfProvider(result.providers[0] ?? 'authenticator');
@@ -191,6 +200,24 @@ export default function Onboarding(props: { onDone?: () => void }) {
                 onKeyDown={(e) => e.key === 'Enter' && void doAdd(false)}
               />
             </div>
+
+            <button
+              type="button"
+              class="unlock-method"
+              classList={{ active: storeCredentials() }}
+              onClick={() => setStoreCredentials((v) => !v)}
+            >
+              <Lock size={18} strokeWidth={1.6} />
+              <span class="unlock-method-text">
+                <span class="unlock-method-title">Store login on this device</span>
+                <span class="muted unlock-method-sub">
+                  Sealed under your app unlock so this account opens automatically. Turn off to keep
+                  nothing stored — you'll type this account's master password to unlock it each time.
+                </span>
+              </span>
+              <input type="checkbox" checked={storeCredentials()} tabindex={-1} />
+            </button>
+
             <button class="primary full" disabled={busy()} onClick={() => void doAdd(false)}>
               {busy() ? 'Adding…' : 'Add connection'}
             </button>

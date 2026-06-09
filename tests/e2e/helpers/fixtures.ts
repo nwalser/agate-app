@@ -36,6 +36,8 @@ export interface ConnectionSummary {
   serverLabel: string;
   server: ServerConfig;
   unlocked: boolean;
+  /** Optional in fixtures; the app treats an absent value as false (manual). */
+  storeCredentials?: boolean;
 }
 
 export interface VaultItem {
@@ -197,7 +199,15 @@ export function sampleDetails(): Record<string, ItemDetail> {
 }
 
 export function sampleConnections(): ConnectionSummary[] {
-  return [{ email: FIXTURE_EMAIL, serverLabel: FIXTURE_LABEL, server: { region: 'us' }, unlocked: true }];
+  return [
+    {
+      email: FIXTURE_EMAIL,
+      serverLabel: FIXTURE_LABEL,
+      server: { region: 'us' },
+      unlocked: true,
+      storeCredentials: true,
+    },
+  ];
 }
 
 function baseConfig(over: Partial<FakeConfig>): FakeConfig {

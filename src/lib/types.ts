@@ -50,12 +50,15 @@ export interface ConnectionSummary {
   serverLabel: string;
   server: ServerConfig;
   unlocked: boolean;
+  /** Whether the master password is stored (auto-unlock) vs. manual-unlock only. */
+  storeCredentials: boolean;
 }
 
 /** Per-connection result of an `unlockAll`. */
 export type UnlockOutcome = { email: string; serverLabel: string } & (
   | { status: 'unlocked' }
   | { status: 'twoFactorRequired'; providers: TwoFactorKind[] }
+  | { status: 'manualUnlock' }
   | { status: 'failed'; message: string }
 );
 

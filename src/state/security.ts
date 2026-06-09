@@ -17,10 +17,22 @@ import { toastError } from './toast.ts';
 
 const KEY_DARKWEB = 'agate.security.darkwebMonitor';
 const KEY_EXPOSED = 'agate.security.exposedCheck';
+// Persisted last-run timestamps (epoch ms). Survive lock/unlock and restart so a
+// re-unlock inside the scan period reuses the cached result instead of re-hitting
+// the (slow, rate-limited, privacy-sensitive) providers on every unlock.
+const KEY_DARKWEB_AT = 'agate.security.darkwebRunAt';
+const KEY_EXPOSED_AT = 'agate.security.exposedRunAt';
 
 // How often the background scans re-run while the vault stays unlocked. Breach
 // data changes slowly and the providers are rate-limited, so this is infrequent.
 const SCAN_PERIOD_MS = 6 * 60 * 60 * 1000; // 6 hours
+
+// On unlock the app is busy re-logging-in every connection and running the first
+// full sync (self-hosted routes that through a loopback proxy). The breach scans
+// are heavy network work, so we hold them off this critical path: schedule them a
+// little after unlock and only if the cached result is stale. They never race the
+// unlock + first sync for network/runtime.
+const SCAN_DEFER_MS = 20 * 1000; // 20 seconds
 
 function readBool(key: string, fallback: boolean): boolean {
   try {
@@ -41,6 +53,32 @@ function writeBool(key: string, value: boolean): void {
   }
 }
 
+function readTime(key: string): number | null {
+  try {
+    const v = localStorage.getItem(key);
+    if (v === null) return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  } catch {
+    // ignore: localStorage may be unavailable (private mode); treat as never run
+    return null;
+  }
+}
+
+function writeTime(key: string, value: number | null): void {
+  try {
+    if (value === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, String(value));
+  } catch {
+    // ignore: persistence is best-effort; the in-memory signal still applies
+  }
+}
+
+/** A scan result is fresh if it ran within the scan period — don't re-run it. */
+function isFresh(runAt: number | null): boolean {
+  return runAt !== null && Date.now() - runAt < SCAN_PERIOD_MS;
+}
+
 // Both features default ON.
 const [darkwebMonitor, setDarkwebMonitorSig] = createSignal(readBool(KEY_DARKWEB, true));
 const [exposedCheck, setExposedCheckSig] = createSignal(readBool(KEY_EXPOSED, true));
@@ -49,8 +87,8 @@ const [darkwebReport, setDarkwebReport] = createSignal<DarkWebReport | null>(nul
 const [exposedResults, setExposedResults] = createSignal<ExposedResult[] | null>(null);
 const [darkwebBusy, setDarkwebBusy] = createSignal(false);
 const [exposedBusy, setExposedBusy] = createSignal(false);
-const [darkwebRunAt, setDarkwebRunAt] = createSignal<number | null>(null);
-const [exposedRunAt, setExposedRunAt] = createSignal<number | null>(null);
+const [darkwebRunAt, setDarkwebRunAt] = createSignal<number | null>(readTime(KEY_DARKWEB_AT));
+const [exposedRunAt, setExposedRunAt] = createSignal<number | null>(readTime(KEY_EXPOSED_AT));
 
 export {
   darkwebBusy,
@@ -71,7 +109,9 @@ export async function runDarkwebScan(): Promise<void> {
     // The backend scan refuses unless consent is recorded; keep it in sync.
     await ipc.setDarkwebConsent(true);
     setDarkwebReport(await ipc.darkwebScanVault());
-    setDarkwebRunAt(Date.now());
+    const at = Date.now();
+    setDarkwebRunAt(at);
+    writeTime(KEY_DARKWEB_AT, at);
   } catch (err) {
     toastError(err);
   } finally {
@@ -85,7 +125,9 @@ export async function runExposedCheck(): Promise<void> {
   setExposedBusy(true);
   try {
     setExposedResults(await ipc.auditExposed());
-    setExposedRunAt(Date.now());
+    const at = Date.now();
+    setExposedRunAt(at);
+    writeTime(KEY_EXPOSED_AT, at);
   } catch (err) {
     toastError(err);
   } finally {
@@ -107,6 +149,7 @@ export async function setDarkwebMonitor(enabled: boolean): Promise<void> {
     }
     setDarkwebReport(null);
     setDarkwebRunAt(null);
+    writeTime(KEY_DARKWEB_AT, null);
   }
 }
 
@@ -118,6 +161,7 @@ export function setExposedCheck(enabled: boolean): void {
   } else {
     setExposedResults(null);
     setExposedRunAt(null);
+    writeTime(KEY_EXPOSED_AT, null);
   }
 }
 
@@ -150,11 +194,19 @@ export function relevantBreaches(): { breach: BreachRecord; accountCount: number
 
 let started = false;
 
+/** Run the enabled scans, but only those whose cached result has gone stale. */
+function runStaleScans(): void {
+  if (!isFresh(darkwebRunAt())) void runDarkwebScan();
+  if (!isFresh(exposedRunAt())) void runExposedCheck();
+}
+
 /**
- * Start the periodic security loop. Called once at startup. Runs the enabled
- * scans whenever the vault transitions to unlocked, then on a fixed interval
- * while it stays unlocked. Cheap no-ops when nothing is enabled or the vault is
- * locked.
+ * Start the periodic security loop. Called once at startup. After the vault
+ * transitions to unlocked the scans are scheduled `SCAN_DEFER_MS` later — never
+ * on the unlock critical path, where they would race the per-connection re-login
+ * and first sync — and then only if the cached result is stale. They also re-run
+ * on a fixed interval while the vault stays unlocked. Cheap no-ops when nothing
+ * is enabled, the vault is locked, or a fresh result already exists.
  */
 export function initSecurity(): void {
   if (started) return;
@@ -162,11 +214,19 @@ export function initSecurity(): void {
 
   createRoot(() => {
     let wasUnlocked = false;
+    let deferTimer: ReturnType<typeof setTimeout> | undefined;
     createEffect(() => {
       const unlocked = status().unlocked;
       if (unlocked && !wasUnlocked) {
-        void runDarkwebScan();
-        void runExposedCheck();
+        if (deferTimer) clearTimeout(deferTimer);
+        deferTimer = setTimeout(() => {
+          deferTimer = undefined;
+          if (status().unlocked) runStaleScans();
+        }, SCAN_DEFER_MS);
+      } else if (!unlocked && wasUnlocked && deferTimer) {
+        // Locked again before the deferred scan fired — cancel it.
+        clearTimeout(deferTimer);
+        deferTimer = undefined;
       }
       wasUnlocked = unlocked;
     });
@@ -174,7 +234,6 @@ export function initSecurity(): void {
 
   setInterval(() => {
     if (!status().unlocked) return;
-    void runDarkwebScan();
-    void runExposedCheck();
+    runStaleScans();
   }, SCAN_PERIOD_MS);
 }

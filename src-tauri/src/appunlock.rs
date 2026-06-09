@@ -246,10 +246,18 @@ pub(crate) async fn finish_unlock(
     let accounts = state.config.lock().await.accounts.clone();
     let mut outcomes = Vec::with_capacity(accounts.len());
     for acct in &accounts {
-        let status = match unlock_one(state, &acct.email, &vmk).await {
-            Ok(()) => UnlockStatus::Unlocked,
-            Err(UnlockOneError::TwoFactor(providers)) => UnlockStatus::TwoFactorRequired { providers },
-            Err(UnlockOneError::Failed(message)) => UnlockStatus::Failed { message },
+        // Manual-unlock connections have no stored password — leave them locked for
+        // the user to unlock on demand, rather than failing to load a sealed cred.
+        let status = if !acct.store_credentials {
+            UnlockStatus::ManualUnlock
+        } else {
+            match unlock_one(state, &acct.email, &vmk).await {
+                Ok(()) => UnlockStatus::Unlocked,
+                Err(UnlockOneError::TwoFactor(providers)) => {
+                    UnlockStatus::TwoFactorRequired { providers }
+                }
+                Err(UnlockOneError::Failed(message)) => UnlockStatus::Failed { message },
+            }
         };
         outcomes.push(UnlockOutcome {
             email: acct.email.clone(),

@@ -29,23 +29,27 @@ pub async fn list_connections(state: &AppState) -> AgateResult<Vec<ConnectionSum
             server_label: server::server_label(&a.server),
             server: a.server.clone(),
             unlocked: live.contains(&a.email),
+            store_credentials: a.store_credentials,
         })
         .collect())
 }
 
-/// Add (or re-authenticate) a connection. Logs in; on success seals the master
-/// password under the VMK, records the connection, and adds it live. If the
-/// server demands a second factor, returns `TwoFactorRequired` and the frontend
-/// re-calls with the code.
+/// Add (or re-authenticate) a connection. Logs in; on success, when
+/// `store_credentials` is set, seals the master password under the VMK so the
+/// connection auto-unlocks later — otherwise the password is never persisted and
+/// the connection is manual-unlock only. Records the connection and adds it live.
+/// If the server demands a second factor, returns `TwoFactorRequired`.
 pub async fn add_connection(
     state: &AppState,
     server: ServerConfig,
     email: String,
     password: Zeroizing<String>,
+    store_credentials: bool,
     two_factor: Option<TwoFactorInput>,
 ) -> AgateResult<LoginResult> {
-    // App-unlock must exist first so we can seal the credentials we're about to
-    // accept. (The onboarding flow sets the app password before adding accounts.)
+    // App-unlock must exist first: a connection joins the app's unlock set, and (if
+    // storing) we seal its credentials under the VMK. (Onboarding sets the app
+    // password before adding accounts.)
     let vmk = appunlock::current_vmk(state)
         .await
         .map_err(|_| AgateError::bad_request("Set an app password before adding a connection."))?;
@@ -53,17 +57,22 @@ pub async fn add_connection(
     match auth::login_password(state, &server, &email, password.clone(), two_factor).await? {
         LoginOutcome::TwoFactorRequired(providers) => Ok(LoginResult::TwoFactorRequired { providers }),
         LoginOutcome::Success(client) => {
-            // Seal first; only record the connection if the keychain write succeeds.
-            let stored = StoredConnection {
-                server: server.clone(),
-                email: email.clone(),
-                master_password: (*password).clone(),
-            };
-            appunlock::seal_connection(&vmk, &stored)?;
+            // Seal first (when storing); only record the connection once persisted.
+            if store_credentials {
+                let stored = StoredConnection {
+                    server: server.clone(),
+                    email: email.clone(),
+                    master_password: (*password).clone(),
+                };
+                appunlock::seal_connection(&vmk, &stored)?;
+            } else {
+                // Manual-unlock connection: make sure no stale sealed password lingers.
+                secrets::delete_cred(&email)?;
+            }
 
             {
                 let mut cfg = state.config.lock().await;
-                cfg.upsert_account(server.clone(), &email);
+                cfg.upsert_account(server.clone(), &email, store_credentials);
                 cfg.server = server;
             }
             {
@@ -76,6 +85,135 @@ pub async fn add_connection(
             state.save_config().await?;
             Ok(LoginResult::Success)
         }
+    }
+}
+
+/// Edit an existing connection: change its server and/or whether its password is
+/// stored, optionally re-authenticating with a new master password.
+///
+/// * With a `password` (required when the server changes or when turning storage
+///   on): re-logs-in, refreshes the live client, then seals the password (store) or
+///   drops it (manual).
+/// * Without a `password`: only the storage flag may change. Turning storage *off*
+///   deletes the sealed password; turning it *on* without a password is rejected
+///   (we can't seal what we don't have).
+pub async fn update_connection(
+    state: &AppState,
+    email: String,
+    server: ServerConfig,
+    store_credentials: bool,
+    password: Option<Zeroizing<String>>,
+    two_factor: Option<TwoFactorInput>,
+) -> AgateResult<LoginResult> {
+    let existing = state
+        .config
+        .lock()
+        .await
+        .account_for(&email)
+        .cloned()
+        .ok_or_else(|| AgateError::bad_request("No such connection."))?;
+
+    // Re-auth path: a password was supplied (or is required because the server
+    // changed). Validate it, refresh the live client, and (re)seal or drop it.
+    let server_changed = !server_eq(&existing.server, &server);
+    if let Some(pw) = password {
+        let vmk = appunlock::current_vmk(state)
+            .await
+            .map_err(|_| AgateError::bad_request("Unlock the app first."))?;
+        match auth::login_password(state, &server, &email, pw.clone(), two_factor).await? {
+            LoginOutcome::TwoFactorRequired(providers) => {
+                return Ok(LoginResult::TwoFactorRequired { providers })
+            }
+            LoginOutcome::Success(client) => {
+                if store_credentials {
+                    let stored = StoredConnection {
+                        server: server.clone(),
+                        email: email.clone(),
+                        master_password: (*pw).clone(),
+                    };
+                    appunlock::seal_connection(&vmk, &stored)?;
+                } else {
+                    secrets::delete_cred(&email)?;
+                }
+                {
+                    let mut cfg = state.config.lock().await;
+                    cfg.upsert_account(server.clone(), &email, store_credentials);
+                }
+                {
+                    let mut session = state.session.lock().await;
+                    session.connections.insert(email.clone(), LiveConnection::new(client));
+                    if session.active_email.is_none() {
+                        session.active_email = Some(email.clone());
+                    }
+                }
+                state.save_config().await?;
+                return Ok(LoginResult::Success);
+            }
+        }
+    }
+
+    // No-password path: only a storage-flag change is allowed.
+    if server_changed {
+        return Err(AgateError::bad_request(
+            "Enter your master password to change this connection's server.",
+        ));
+    }
+    if store_credentials {
+        // Turning storage on requires the password to seal it.
+        if secrets::load_cred(&email)?.is_none() {
+            return Err(AgateError::bad_request(
+                "Enter your master password to store this connection.",
+            ));
+        }
+    } else {
+        // Turning storage off: forget the sealed password (the live session stays).
+        secrets::delete_cred(&email)?;
+    }
+    {
+        let mut cfg = state.config.lock().await;
+        cfg.upsert_account(existing.server.clone(), &email, store_credentials);
+    }
+    state.save_config().await?;
+    Ok(LoginResult::Success)
+}
+
+/// Unlock a single connection on demand with its master password (for
+/// manual-unlock connections, or to retry one that failed). Logs in and adds it
+/// live for this session — the password is not persisted here. Returns
+/// `TwoFactorRequired` if the server demands a second factor.
+pub async fn unlock_connection(
+    state: &AppState,
+    email: String,
+    password: Zeroizing<String>,
+    two_factor: Option<TwoFactorInput>,
+) -> AgateResult<LoginResult> {
+    let server = state
+        .config
+        .lock()
+        .await
+        .server_for(&email)
+        .ok_or_else(|| AgateError::bad_request("No such connection."))?;
+
+    match auth::login_password(state, &server, &email, password, two_factor).await? {
+        LoginOutcome::TwoFactorRequired(providers) => Ok(LoginResult::TwoFactorRequired { providers }),
+        LoginOutcome::Success(client) => {
+            let mut session = state.session.lock().await;
+            session.connections.insert(email.clone(), LiveConnection::new(client));
+            if session.active_email.is_none() {
+                session.active_email = Some(email);
+            }
+            Ok(LoginResult::Success)
+        }
+    }
+}
+
+/// Structural equality for two server configs (no `PartialEq` derive on the DTO).
+fn server_eq(a: &ServerConfig, b: &ServerConfig) -> bool {
+    match (a, b) {
+        (ServerConfig::Us, ServerConfig::Us) => true,
+        (ServerConfig::Eu, ServerConfig::Eu) => true,
+        (ServerConfig::SelfHosted { base_url: x }, ServerConfig::SelfHosted { base_url: y }) => x == y,
+        _ => false,
     }
 }
 

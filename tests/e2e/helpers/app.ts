@@ -149,10 +149,30 @@ export async function installFakeBackend(cfg: FakeConfig): Promise<void> {
           if (c.addResult.status === 'twoFactorRequired' && !a.twoFactor) return c.addResult;
           const email = (a.email as string) ?? `new-${seq++}@example.com`;
           if (!state.connections.some((x) => x.email === email)) {
-            state.connections.push({ email, serverLabel: 'Bitwarden — US', server: a.server, unlocked: true });
+            state.connections.push({
+              email, serverLabel: 'Bitwarden — US', server: a.server, unlocked: true,
+              storeCredentials: a.storeCredentials !== false,
+            });
             state.status.connectionCount = state.connections.length;
             state.status.liveCount = state.connections.length;
           }
+          return { status: 'success' };
+        }
+        case 'update_connection': {
+          if (c.addResult.status === 'twoFactorRequired' && a.password && !a.twoFactor) return c.addResult;
+          const cn = state.connections.find((x) => x.email === a.email);
+          if (cn) {
+            cn.server = a.server ?? cn.server;
+            cn.storeCredentials = a.storeCredentials !== false;
+            if (a.password) cn.unlocked = true;
+          }
+          return { status: 'success' };
+        }
+        case 'unlock_connection': {
+          if (c.addResult.status === 'twoFactorRequired' && !a.twoFactor) return c.addResult;
+          const cn = state.connections.find((x) => x.email === a.email);
+          if (cn) cn.unlocked = true;
+          state.status.liveCount = state.connections.filter((x) => x.unlocked).length;
           return { status: 'success' };
         }
         case 'send_email_code': return null;

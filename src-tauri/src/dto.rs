@@ -58,6 +58,9 @@ pub struct ConnectionSummary {
     pub server: ServerConfig,
     /// Whether this connection is currently unlocked (live this session).
     pub unlocked: bool,
+    /// Whether this connection's master password is stored (sealed) so it
+    /// auto-unlocks, vs. manual-unlock only (password never persisted).
+    pub store_credentials: bool,
 }
 
 /// Per-connection result of an `unlock_all`, so the UI can show progress and
@@ -70,6 +73,9 @@ pub enum UnlockStatus {
     /// The server needs a second factor before this connection can unlock.
     #[serde(rename_all = "camelCase")]
     TwoFactorRequired { providers: Vec<TwoFactorKind> },
+    /// This connection is manual-unlock only (its password is not stored), so it
+    /// was left locked — the user unlocks it on demand with its master password.
+    ManualUnlock,
     /// Re-login failed (network / credentials / corrupt blob); message is
     /// secret-free.
     #[serde(rename_all = "camelCase")]
@@ -561,6 +567,7 @@ mod mirror_tests {
                 server_label: "EU".into(),
                 server: ServerConfig::Eu,
                 unlocked: true,
+                store_credentials: true,
             },
         );
         camel(

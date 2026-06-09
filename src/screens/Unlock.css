@@ -26,19 +26,61 @@
   border-radius: 50%;
   background: var(--card-hover);
   color: var(--primary);
-  transition: background 0.3s ease, color 0.3s ease, transform 0.3s ease;
+}
+
+/* ── Dedicated unlocking screen ─────────────────────────────────────────────
+   Shown while phase is 'working' / 'unlocked'. The password + 2FA form are fully
+   unmounted; all that remains is the animated badge, progress bar, and status. */
+.unlocking {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  animation: unlock-screen-in 0.35s ease;
+}
+
+.unlocking-icon {
+  width: 64px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--card-hover);
+  color: var(--primary);
+  transition: background 0.35s ease, color 0.35s ease, transform 0.35s ease;
 }
 
 /* Deriving the key + re-logging-in: a soft breathing pulse. */
-.unlock-icon.working {
-  animation: unlock-pulse 1.2s ease-in-out infinite;
+.unlocking-icon.working {
+  animation: unlock-pulse 1.3s ease-in-out infinite;
 }
 
 /* Success beat before the vault opens: pop + turn green. */
-.unlock-icon.unlocked {
+.unlocking-icon.unlocked {
   background: color-mix(in srgb, var(--success) 18%, transparent);
   color: var(--success);
   animation: unlock-pop 0.5s ease;
+}
+
+.unlocking-title {
+  margin: 18px 0 6px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+/* Rotating status line — keyed in the markup so each new message fades in. */
+.unlocking-status {
+  margin: 0 0 18px;
+  font-size: 12.5px;
+  min-height: 1.2em;
+  animation: unlock-text-in 0.4s ease;
+}
+
+.unlocking-sub {
+  margin: 12px 0 0;
+  font-size: 11px;
+  color: var(--subtle-foreground);
 }
 
 @keyframes unlock-pulse {
@@ -49,7 +91,7 @@
   }
   50% {
     transform: scale(1.05);
-    box-shadow: 0 0 0 7px color-mix(in srgb, var(--primary) 0%, transparent);
+    box-shadow: 0 0 0 10px color-mix(in srgb, var(--primary) 0%, transparent);
   }
 }
 
@@ -65,12 +107,35 @@
   }
 }
 
+@keyframes unlock-text-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes unlock-screen-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 /* Unlock progress — an honest indeterminate sweep while working, filling solid
    on success. Not a fake percentage: the backend does one opaque key derivation
    then N logins, so there is no real fraction to report. */
 .unlock-progress {
+  width: 220px;
+  max-width: 100%;
   height: 4px;
-  margin: 14px 2px 2px;
   border-radius: 999px;
   background: var(--card-hover);
   overflow: hidden;
@@ -89,7 +154,7 @@
   background: var(--success);
   transform: none;
   animation: none;
-  transition: width 0.4s ease;
+  transition: width 0.45s ease;
 }
 
 @keyframes unlock-sweep {
@@ -102,8 +167,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .unlock-icon.working,
-  .unlock-icon.unlocked,
+  .unlocking,
+  .unlocking-icon.working,
+  .unlocking-icon.unlocked,
+  .unlocking-status,
   .unlock-progress-bar {
     animation: none;
   }

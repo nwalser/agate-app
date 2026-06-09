@@ -116,9 +116,48 @@ async fn add_connection(
     server: ServerConfig,
     email: String,
     password: String,
+    store_credentials: bool,
     two_factor: Option<TwoFactorInput>,
 ) -> AgateResult<LoginResult> {
-    connections::add_connection(&state, server, email, Zeroizing::new(password), two_factor).await
+    connections::add_connection(
+        &state,
+        server,
+        email,
+        Zeroizing::new(password),
+        store_credentials,
+        two_factor,
+    )
+    .await
+}
+
+#[tauri::command]
+async fn update_connection(
+    state: State<'_>,
+    email: String,
+    server: ServerConfig,
+    store_credentials: bool,
+    password: Option<String>,
+    two_factor: Option<TwoFactorInput>,
+) -> AgateResult<LoginResult> {
+    connections::update_connection(
+        &state,
+        email,
+        server,
+        store_credentials,
+        password.map(Zeroizing::new),
+        two_factor,
+    )
+    .await
+}
+
+#[tauri::command]
+async fn unlock_connection(
+    state: State<'_>,
+    email: String,
+    password: String,
+    two_factor: Option<TwoFactorInput>,
+) -> AgateResult<LoginResult> {
+    connections::unlock_connection(&state, email, Zeroizing::new(password), two_factor).await
 }
 
 #[tauri::command]
@@ -238,6 +277,11 @@ async fn create_folder(state: State<'_>, account_email: String, name: String) ->
 #[tauri::command]
 async fn rename_folder(state: State<'_>, account_email: String, id: String, name: String) -> AgateResult<Folder> {
     mutate::rename_folder(&state, &account_email, &id, name).await
+}
+
+#[tauri::command]
+async fn delete_folder(state: State<'_>, account_email: String, id: String) -> AgateResult<()> {
+    mutate::delete_folder(&state, &account_email, &id).await
 }
 
 // ---- security audit (audit.rs) ----
@@ -398,6 +442,20 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        // Remember the window's size/position/maximized state across restarts.
+        // Restrict the flags: VISIBLE stays out because the window deliberately
+        // starts hidden and is shown by hand once chrome is set (see setup), and
+        // DECORATIONS stays out because we own decorations per-platform — letting
+        // the plugin restore either would fight that flow.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::SIZE
+                        | tauri_plugin_window_state::StateFlags::POSITION
+                        | tauri_plugin_window_state::StateFlags::MAXIMIZED,
+                )
+                .build(),
+        )
         .setup(|app| {
             let config_dir = app
                 .path()
@@ -440,6 +498,8 @@ pub fn run() {
             send_connection_email_code,
             list_connections,
             add_connection,
+            update_connection,
+            unlock_connection,
             send_email_code,
             remove_connection,
             set_active_connection,
@@ -460,6 +520,7 @@ pub fn run() {
             restore_items,
             create_folder,
             rename_folder,
+            delete_folder,
             window_controls_layout,
             audit_offline,
             audit_exposed,

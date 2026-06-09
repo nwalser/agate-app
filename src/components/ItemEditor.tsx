@@ -1,8 +1,10 @@
-import { createMemo, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
+import { createMemo, createSignal, For, Match, onCleanup, onMount, Show, Switch } from 'solid-js';
 import {
+  CreditCard,
   Dices,
   Eye,
   EyeOff,
+  Link as LinkIcon,
   Plus,
   Star,
   Trash2,
@@ -20,19 +22,27 @@ import type {
   SshKeyInput,
   UriInput,
 } from '../lib/types.ts';
+import {
+  CARD_BRANDS,
+  detectCardBrand,
+  formatCardNumber,
+  linkedOptionsFor,
+} from '../lib/itemFields.ts';
 import { toastError } from '../state/toast.ts';
 import './ItemEditor.css';
 
 // Closed sets as string-literal unions (CLAUDE.md), mapped to backend ints.
-type FieldKindLabel = 'Text' | 'Hidden' | 'Boolean';
+type FieldKindLabel = 'Text' | 'Hidden' | 'Boolean' | 'Linked';
 const FIELD_KIND_TO_INT: Record<FieldKindLabel, number> = {
   Text: 0,
   Hidden: 1,
   Boolean: 2,
+  Linked: 3,
 };
 function fieldIntToLabel(n: number): FieldKindLabel {
   if (n === 1) return 'Hidden';
   if (n === 2) return 'Boolean';
+  if (n === 3) return 'Linked';
   return 'Text';
 }
 
@@ -54,12 +64,34 @@ const MATCH_OPTIONS: { label: MatchLabel; value: number | null }[] = [
   { label: 'Never', value: 5 },
 ];
 
+// Month dropdown for card expiry. Values are the bare month number (Bitwarden
+// stores expMonth as "1".."12"); the labels stay human.
+const MONTHS = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+].map((label, idx) => ({
+  value: String(idx + 1),
+  label: `${String(idx + 1).padStart(2, '0')} — ${label}`,
+}));
+
 type GenMode = 'password' | 'passphrase';
 
 interface FieldRow {
   name: string;
   value: string;
   kind: FieldKindLabel;
+  /** For Linked rows: the numeric LinkedIdType target. */
+  linkedId: number | null;
 }
 
 interface UriRow {
@@ -71,6 +103,20 @@ interface UriRow {
 function orNull(s: string): string | null {
   const t = s.trim();
   return t.length > 0 ? t : null;
+}
+
+// Lightweight password-strength heuristic (0–4) for the login editor's meter.
+// Not a security control — just feedback while typing.
+function passwordStrength(pw: string): { score: number; label: string } {
+  if (!pw) return { score: 0, label: '' };
+  let score = 0;
+  if (pw.length >= 8) score++;
+  if (pw.length >= 14) score++;
+  const classes = [/[a-z]/, /[A-Z]/, /\d/, /[^A-Za-z0-9]/].filter((re) => re.test(pw)).length;
+  if (classes >= 2) score++;
+  if (classes >= 3 && pw.length >= 10) score++;
+  score = Math.min(score, 4);
+  return { score, label: ['', 'Weak', 'Fair', 'Good', 'Strong'][score] };
 }
 
 const TYPE_LABELS: Record<ItemType, string> = {
@@ -95,6 +141,8 @@ export default function ItemEditor(props: {
   const itemType = createMemo<ItemType>(
     () => props.item?.itemType ?? props.createType ?? 'login',
   );
+  // Linkable properties for this item type (empty for note / SSH key).
+  const linkOptions = createMemo(() => linkedOptionsFor(itemType()));
 
   // ---- common fields ----
   const [name, setName] = createSignal(props.item?.name ?? '');
@@ -109,6 +157,7 @@ export default function ItemEditor(props: {
       name: f.name ?? '',
       value: f.value ?? '',
       kind: fieldIntToLabel(Number(f.fieldType)),
+      linkedId: f.linkedId ?? null,
     })),
   );
 
@@ -124,6 +173,7 @@ export default function ItemEditor(props: {
       matchType: u.matchType ?? null,
     })),
   );
+  const strength = createMemo(() => passwordStrength(password()));
 
   // ---- card (prefilled from ItemDetail.card so edits don't wipe it) ----
   const c = () => props.item?.card ?? null;
@@ -133,6 +183,19 @@ export default function ItemEditor(props: {
   const [expMonth, setExpMonth] = createSignal(c()?.expMonth ?? '');
   const [expYear, setExpYear] = createSignal(c()?.expYear ?? '');
   const [cardCode, setCardCode] = createSignal(c()?.code ?? '');
+  const [revealCode, setRevealCode] = createSignal(false);
+  // Effective brand for the preview: the chosen brand, else a live guess.
+  const previewBrand = createMemo(() => cardBrand() || detectCardBrand(cardNumber()) || '');
+
+  // Set the card number and auto-fill the brand when it's still blank, so a
+  // pasted number picks its own brand without clobbering a manual choice.
+  function onCardNumberInput(v: string) {
+    setCardNumber(v);
+    if (!cardBrand()) {
+      const guess = detectCardBrand(v);
+      if (guess) setCardBrand(guess);
+    }
+  }
 
   // ---- identity (prefilled from ItemDetail.identity) ----
   const idd = () => props.item?.identity ?? null;
@@ -187,13 +250,25 @@ export default function ItemEditor(props: {
 
   // ---- custom field rows ----
   function addField() {
-    setFields((prev) => [...prev, { name: '', value: '', kind: 'Text' }]);
+    setFields((prev) => [...prev, { name: '', value: '', kind: 'Text', linkedId: null }]);
   }
   function removeField(index: number) {
     setFields((prev) => prev.filter((_, i) => i !== index));
   }
   function updateField(index: number, patch: Partial<FieldRow>) {
     setFields((prev) => prev.map((f, i) => (i === index ? { ...f, ...patch } : f)));
+  }
+  // Switching a row's kind: seed a default linked target / boolean value so the
+  // row is immediately valid.
+  function changeFieldKind(index: number, kind: FieldKindLabel, current: FieldRow) {
+    const patch: Partial<FieldRow> = { kind };
+    if (kind === 'Linked' && current.linkedId == null) {
+      patch.linkedId = linkOptions()[0]?.id ?? null;
+    }
+    if (kind === 'Boolean' && current.value !== 'true' && current.value !== 'false') {
+      patch.value = 'false';
+    }
+    updateField(index, patch);
   }
 
   // ---- uri rows ----
@@ -289,6 +364,23 @@ export default function ItemEditor(props: {
     };
   }
 
+  // A linked row carries no value (the target id is the payload); other rows
+  // carry no linkedId. Drop rows that are entirely empty / incomplete.
+  function buildFields() {
+    return fields()
+      .filter((f) =>
+        f.kind === 'Linked'
+          ? f.name.trim().length > 0 && f.linkedId != null
+          : f.name.trim().length > 0 || f.value.trim().length > 0,
+      )
+      .map((f) => ({
+        name: orNull(f.name),
+        value: f.kind === 'Linked' ? null : orNull(f.value),
+        fieldType: FIELD_KIND_TO_INT[f.kind],
+        linkedId: f.kind === 'Linked' ? f.linkedId : null,
+      }));
+  }
+
   async function save() {
     if (name().trim().length === 0) {
       toastError(new Error('Name is required.'));
@@ -308,15 +400,7 @@ export default function ItemEditor(props: {
       card: t === 'card' ? buildCard() : null,
       identity: t === 'identity' ? buildIdentity() : null,
       sshKey: t === 'sshKey' ? buildSshKey() : null,
-      fields: fields()
-        .filter((f) => f.name.trim().length > 0 || f.value.trim().length > 0)
-        .map((f) => ({
-          name: orNull(f.name),
-          value: orNull(f.value),
-          fieldType: FIELD_KIND_TO_INT[f.kind],
-          // Editor only produces Text/Hidden/Boolean fields, never linked ones.
-          linkedId: null,
-        })),
+      fields: buildFields(),
     };
 
     setSaving(true);
@@ -345,485 +429,580 @@ export default function ItemEditor(props: {
 
         <div class="ie-body">
           {/* ---- common ---- */}
-          <div class="field">
-            <label>Name</label>
-            <input
-              value={name()}
-              onInput={(e) => setName(e.currentTarget.value)}
-              placeholder="Name"
-              autofocus
-            />
-          </div>
+          <div class="ie-section">
+            <div class="field">
+              <label>Name</label>
+              <input
+                value={name()}
+                onInput={(e) => setName(e.currentTarget.value)}
+                placeholder="Name"
+                autofocus
+              />
+            </div>
 
-          <div class="field">
-            <label>Folder</label>
-            <select
-              value={folderId() ?? ''}
-              onChange={(e) =>
-                setFolderId(e.currentTarget.value === '' ? null : e.currentTarget.value)
-              }
-            >
-              <option value="">No folder</option>
-              <For each={props.folders.filter((f) => f.id !== null && f.accountEmail === props.accountEmail)}>
-                {(f) => <option value={f.id ?? ''}>{f.name}</option>}
-              </For>
-            </select>
+            <div class="field">
+              <label>Folder</label>
+              <select
+                value={folderId() ?? ''}
+                onChange={(e) =>
+                  setFolderId(e.currentTarget.value === '' ? null : e.currentTarget.value)
+                }
+              >
+                <option value="">No folder</option>
+                <For each={props.folders.filter((f) => f.id !== null && f.accountEmail === props.accountEmail)}>
+                  {(f) => <option value={f.id ?? ''}>{f.name}</option>}
+                </For>
+              </select>
+            </div>
           </div>
 
           {/* ---- login ---- */}
           <Show when={itemType() === 'login'}>
-            <div class="field">
-              <label>Username</label>
-              <input
-                value={username()}
-                onInput={(e) => setUsername(e.currentTarget.value)}
-                autocomplete="off"
-              />
-            </div>
-
-            <div class="field">
-              <label>Password</label>
-              <div class="row ie-pw-row">
+            <div class="ie-section">
+              <div class="ie-section-title">Login credentials</div>
+              <div class="field">
+                <label>Username</label>
                 <input
-                  class="ie-grow"
-                  type={revealPw() ? 'text' : 'password'}
-                  value={password()}
-                  onInput={(e) => setPassword(e.currentTarget.value)}
+                  value={username()}
+                  onInput={(e) => setUsername(e.currentTarget.value)}
                   autocomplete="off"
                 />
-                <button
-                  class="ghost icon-btn"
-                  title={revealPw() ? 'Hide' : 'Reveal'}
-                  onClick={() => setRevealPw(!revealPw())}
-                >
-                  {revealPw() ? <EyeOff size={14} /> : <Eye size={14} />}
-                </button>
-                <div class="ie-gen-anchor">
+              </div>
+
+              <div class="field">
+                <label>Password</label>
+                <div class="row ie-pw-row">
+                  <input
+                    class="ie-grow ie-mono"
+                    type={revealPw() ? 'text' : 'password'}
+                    value={password()}
+                    onInput={(e) => setPassword(e.currentTarget.value)}
+                    autocomplete="off"
+                  />
                   <button
                     class="ghost icon-btn"
-                    title="Generate"
-                    onClick={() => setGenOpen(!genOpen())}
+                    title={revealPw() ? 'Hide' : 'Reveal'}
+                    onClick={() => setRevealPw(!revealPw())}
                   >
-                    <Dices size={14} />
+                    {revealPw() ? <EyeOff size={14} /> : <Eye size={14} />}
                   </button>
-                  <Show when={genOpen()}>
-                    <div class="ie-gen-popover">
-                      <div class="ie-gen-tabs">
-                        <button
-                          classList={{ active: genMode() === 'password' }}
-                          onClick={() => setGenMode('password')}
-                        >
-                          Password
-                        </button>
-                        <button
-                          classList={{ active: genMode() === 'passphrase' }}
-                          onClick={() => setGenMode('passphrase')}
-                        >
-                          Passphrase
-                        </button>
-                      </div>
-
-                      <Show
-                        when={genMode() === 'password'}
-                        fallback={
-                          <div class="ie-gen-opts">
-                            <div class="field">
-                              <label>Words: {genWords()}</label>
-                              <input
-                                type="range"
-                                min="3"
-                                max="10"
-                                value={genWords()}
-                                onInput={(e) =>
-                                  setGenWords(Number(e.currentTarget.value))
-                                }
-                              />
-                            </div>
-                            <div class="field">
-                              <label>Separator</label>
-                              <input
-                                value={genSeparator()}
-                                maxlength="1"
-                                onInput={(e) => setGenSeparator(e.currentTarget.value)}
-                              />
-                            </div>
-                            <label class="ie-check">
-                              <input
-                                type="checkbox"
-                                checked={genCapitalize()}
-                                onChange={(e) =>
-                                  setGenCapitalize(e.currentTarget.checked)
-                                }
-                              />
-                              Capitalize
-                            </label>
-                            <label class="ie-check">
-                              <input
-                                type="checkbox"
-                                checked={genWordNumber()}
-                                onChange={(e) =>
-                                  setGenWordNumber(e.currentTarget.checked)
-                                }
-                              />
-                              Include number
-                            </label>
-                          </div>
-                        }
-                      >
-                        <div class="ie-gen-opts">
-                          <div class="field">
-                            <label>Length: {genLength()}</label>
-                            <input
-                              type="range"
-                              min="8"
-                              max="64"
-                              value={genLength()}
-                              onInput={(e) => setGenLength(Number(e.currentTarget.value))}
-                            />
-                          </div>
-                          <label class="ie-check">
-                            <input
-                              type="checkbox"
-                              checked={genUpper()}
-                              onChange={(e) => setGenUpper(e.currentTarget.checked)}
-                            />
-                            A–Z
-                          </label>
-                          <label class="ie-check">
-                            <input
-                              type="checkbox"
-                              checked={genLower()}
-                              onChange={(e) => setGenLower(e.currentTarget.checked)}
-                            />
-                            a–z
-                          </label>
-                          <label class="ie-check">
-                            <input
-                              type="checkbox"
-                              checked={genNumbers()}
-                              onChange={(e) => setGenNumbers(e.currentTarget.checked)}
-                            />
-                            0–9
-                          </label>
-                          <label class="ie-check">
-                            <input
-                              type="checkbox"
-                              checked={genSpecial()}
-                              onChange={(e) => setGenSpecial(e.currentTarget.checked)}
-                            />
-                            !@#$
-                          </label>
-                        </div>
-                      </Show>
-
-                      <button class="primary ie-gen-go" onClick={() => void generate()}>
-                        Generate &amp; use
-                      </button>
-                    </div>
-                  </Show>
-                </div>
-              </div>
-            </div>
-
-            <div class="field">
-              <label>Authenticator key (TOTP)</label>
-              <input
-                value={totp()}
-                onInput={(e) => setTotp(e.currentTarget.value)}
-                placeholder="otpauth:// or secret"
-                autocomplete="off"
-              />
-            </div>
-
-            <div class="field">
-              <div class="ie-section-head">
-                <label>URIs</label>
-                <button class="ghost ie-add" onClick={addUri}>
-                  <Plus size={13} strokeWidth={1.75} /> Add URI
-                </button>
-              </div>
-              <For each={uris()}>
-                {(u, i) => (
-                  <div class="row ie-multi-row">
-                    <input
-                      class="ie-grow"
-                      value={u.uri}
-                      placeholder="https://example.com"
-                      onInput={(e) => updateUri(i(), { uri: e.currentTarget.value })}
-                    />
-                    <select
-                      class="ie-match"
-                      value={String(u.matchType)}
-                      onChange={(e) => {
-                        const v = e.currentTarget.value;
-                        updateUri(i(), { matchType: v === 'null' ? null : Number(v) });
-                      }}
-                    >
-                      <For each={MATCH_OPTIONS}>
-                        {(opt) => (
-                          <option value={opt.value === null ? 'null' : String(opt.value)}>
-                            {opt.label}
-                          </option>
-                        )}
-                      </For>
-                    </select>
+                  <div class="ie-gen-anchor">
                     <button
                       class="ghost icon-btn"
-                      title="Remove"
-                      onClick={() => removeUri(i())}
+                      title="Generate"
+                      onClick={() => setGenOpen(!genOpen())}
                     >
-                      <Trash2 size={14} />
+                      <Dices size={14} />
                     </button>
+                    <Show when={genOpen()}>
+                      <div class="ie-gen-popover">
+                        <div class="ie-gen-tabs">
+                          <button
+                            classList={{ active: genMode() === 'password' }}
+                            onClick={() => setGenMode('password')}
+                          >
+                            Password
+                          </button>
+                          <button
+                            classList={{ active: genMode() === 'passphrase' }}
+                            onClick={() => setGenMode('passphrase')}
+                          >
+                            Passphrase
+                          </button>
+                        </div>
+
+                        <Show
+                          when={genMode() === 'password'}
+                          fallback={
+                            <div class="ie-gen-opts">
+                              <div class="field">
+                                <label>Words: {genWords()}</label>
+                                <input
+                                  type="range"
+                                  min="3"
+                                  max="10"
+                                  value={genWords()}
+                                  onInput={(e) =>
+                                    setGenWords(Number(e.currentTarget.value))
+                                  }
+                                />
+                              </div>
+                              <div class="field">
+                                <label>Separator</label>
+                                <input
+                                  value={genSeparator()}
+                                  maxlength="1"
+                                  onInput={(e) => setGenSeparator(e.currentTarget.value)}
+                                />
+                              </div>
+                              <label class="ie-check">
+                                <input
+                                  type="checkbox"
+                                  checked={genCapitalize()}
+                                  onChange={(e) =>
+                                    setGenCapitalize(e.currentTarget.checked)
+                                  }
+                                />
+                                Capitalize
+                              </label>
+                              <label class="ie-check">
+                                <input
+                                  type="checkbox"
+                                  checked={genWordNumber()}
+                                  onChange={(e) =>
+                                    setGenWordNumber(e.currentTarget.checked)
+                                  }
+                                />
+                                Include number
+                              </label>
+                            </div>
+                          }
+                        >
+                          <div class="ie-gen-opts">
+                            <div class="field">
+                              <label>Length: {genLength()}</label>
+                              <input
+                                type="range"
+                                min="8"
+                                max="64"
+                                value={genLength()}
+                                onInput={(e) => setGenLength(Number(e.currentTarget.value))}
+                              />
+                            </div>
+                            <label class="ie-check">
+                              <input
+                                type="checkbox"
+                                checked={genUpper()}
+                                onChange={(e) => setGenUpper(e.currentTarget.checked)}
+                              />
+                              A–Z
+                            </label>
+                            <label class="ie-check">
+                              <input
+                                type="checkbox"
+                                checked={genLower()}
+                                onChange={(e) => setGenLower(e.currentTarget.checked)}
+                              />
+                              a–z
+                            </label>
+                            <label class="ie-check">
+                              <input
+                                type="checkbox"
+                                checked={genNumbers()}
+                                onChange={(e) => setGenNumbers(e.currentTarget.checked)}
+                              />
+                              0–9
+                            </label>
+                            <label class="ie-check">
+                              <input
+                                type="checkbox"
+                                checked={genSpecial()}
+                                onChange={(e) => setGenSpecial(e.currentTarget.checked)}
+                              />
+                              !@#$
+                            </label>
+                          </div>
+                        </Show>
+
+                        <button class="primary ie-gen-go" onClick={() => void generate()}>
+                          Generate &amp; use
+                        </button>
+                      </div>
+                    </Show>
                   </div>
-                )}
-              </For>
+                </div>
+                <Show when={password().length > 0}>
+                  <div class="ie-strength" data-score={strength().score}>
+                    <div class="ie-strength-bar">
+                      <span />
+                      <span />
+                      <span />
+                      <span />
+                    </div>
+                    <span class="ie-strength-label">{strength().label}</span>
+                  </div>
+                </Show>
+              </div>
+
+              <div class="field">
+                <label>Authenticator key (TOTP)</label>
+                <input
+                  value={totp()}
+                  onInput={(e) => setTotp(e.currentTarget.value)}
+                  placeholder="otpauth:// or secret"
+                  autocomplete="off"
+                />
+              </div>
+
+              <div class="field">
+                <div class="ie-section-head">
+                  <label>URIs</label>
+                  <button class="ghost ie-add" onClick={addUri}>
+                    <Plus size={13} strokeWidth={1.75} /> Add URI
+                  </button>
+                </div>
+                <For each={uris()}>
+                  {(u, i) => (
+                    <div class="row ie-multi-row">
+                      <input
+                        class="ie-grow"
+                        value={u.uri}
+                        placeholder="https://example.com"
+                        onInput={(e) => updateUri(i(), { uri: e.currentTarget.value })}
+                      />
+                      <select
+                        class="ie-match"
+                        value={String(u.matchType)}
+                        onChange={(e) => {
+                          const v = e.currentTarget.value;
+                          updateUri(i(), { matchType: v === 'null' ? null : Number(v) });
+                        }}
+                      >
+                        <For each={MATCH_OPTIONS}>
+                          {(opt) => (
+                            <option value={opt.value === null ? 'null' : String(opt.value)}>
+                              {opt.label}
+                            </option>
+                          )}
+                        </For>
+                      </select>
+                      <button
+                        class="ghost icon-btn"
+                        title="Remove"
+                        onClick={() => removeUri(i())}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  )}
+                </For>
+              </div>
             </div>
           </Show>
 
           {/* ---- card ---- */}
           <Show when={itemType() === 'card'}>
-            <div class="field">
-              <label>Cardholder name</label>
-              <input
-                value={cardholderName()}
-                onInput={(e) => setCardholderName(e.currentTarget.value)}
-              />
-            </div>
-            <div class="field">
-              <label>Number</label>
-              <input
-                value={cardNumber()}
-                onInput={(e) => setCardNumber(e.currentTarget.value)}
-                autocomplete="off"
-              />
-            </div>
-            <div class="field">
-              <label>Brand</label>
-              <input
-                value={cardBrand()}
-                onInput={(e) => setCardBrand(e.currentTarget.value)}
-                placeholder="Visa, Mastercard…"
-              />
-            </div>
-            <div class="ie-grid-3">
+            <div class="ie-section">
+              {/* Live preview of the card as it's typed. */}
+              <div class="ie-card-preview">
+                <div class="ie-card-row-top">
+                  <CreditCard size={22} strokeWidth={1.5} />
+                  <span class="ie-card-brand">{previewBrand() || 'Card'}</span>
+                </div>
+                <div class="ie-card-number mono">
+                  {formatCardNumber(cardNumber(), previewBrand()) || '•••• •••• •••• ••••'}
+                </div>
+                <div class="ie-card-row-bottom">
+                  <div class="ie-card-meta">
+                    <span class="ie-card-cap">Cardholder</span>
+                    <span class="ie-card-val">{cardholderName() || '—'}</span>
+                  </div>
+                  <div class="ie-card-meta">
+                    <span class="ie-card-cap">Expires</span>
+                    <span class="ie-card-val">
+                      {expMonth() ? String(expMonth()).padStart(2, '0') : 'MM'}/
+                      {expYear() ? String(expYear()).slice(-2) : 'YY'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
               <div class="field">
-                <label>Exp. month</label>
+                <label>Cardholder name</label>
                 <input
-                  value={expMonth()}
-                  onInput={(e) => setExpMonth(e.currentTarget.value)}
-                  placeholder="MM"
+                  value={cardholderName()}
+                  onInput={(e) => setCardholderName(e.currentTarget.value)}
+                  placeholder="Name on card"
                 />
               </div>
               <div class="field">
-                <label>Exp. year</label>
+                <label>Card number</label>
                 <input
-                  value={expYear()}
-                  onInput={(e) => setExpYear(e.currentTarget.value)}
-                  placeholder="YYYY"
-                />
-              </div>
-              <div class="field">
-                <label>Security code</label>
-                <input
-                  value={cardCode()}
-                  onInput={(e) => setCardCode(e.currentTarget.value)}
+                  class="ie-mono"
+                  value={cardNumber()}
+                  onInput={(e) => onCardNumberInput(e.currentTarget.value)}
+                  placeholder="0000 0000 0000 0000"
+                  inputmode="numeric"
                   autocomplete="off"
                 />
+              </div>
+              <div class="ie-grid-2">
+                <div class="field">
+                  <label>Brand</label>
+                  <select value={cardBrand()} onChange={(e) => setCardBrand(e.currentTarget.value)}>
+                    <option value="">Auto-detect</option>
+                    <For each={CARD_BRANDS}>{(b) => <option value={b}>{b}</option>}</For>
+                  </select>
+                </div>
+                <div class="field">
+                  <label>Security code (CVV)</label>
+                  <div class="row ie-pw-row">
+                    <input
+                      class="ie-grow ie-mono"
+                      type={revealCode() ? 'text' : 'password'}
+                      value={cardCode()}
+                      onInput={(e) => setCardCode(e.currentTarget.value)}
+                      placeholder="•••"
+                      inputmode="numeric"
+                      autocomplete="off"
+                    />
+                    <button
+                      class="ghost icon-btn"
+                      title={revealCode() ? 'Hide' : 'Reveal'}
+                      onClick={() => setRevealCode(!revealCode())}
+                    >
+                      {revealCode() ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div class="ie-grid-2">
+                <div class="field">
+                  <label>Expiration month</label>
+                  <select
+                    value={expMonth() ? String(Number(expMonth())) : ''}
+                    onChange={(e) => setExpMonth(e.currentTarget.value)}
+                  >
+                    <option value="">—</option>
+                    <For each={MONTHS}>{(m) => <option value={m.value}>{m.label}</option>}</For>
+                  </select>
+                </div>
+                <div class="field">
+                  <label>Expiration year</label>
+                  <input
+                    value={expYear()}
+                    onInput={(e) => setExpYear(e.currentTarget.value)}
+                    placeholder="YYYY"
+                    inputmode="numeric"
+                  />
+                </div>
               </div>
             </div>
           </Show>
 
           {/* ---- identity ---- */}
           <Show when={itemType() === 'identity'}>
-            <div class="ie-grid-3">
-              <div class="field">
-                <label>Title</label>
-                <input value={idTitle()} onInput={(e) => setIdTitle(e.currentTarget.value)} />
+            <div class="ie-section">
+              <div class="ie-section-title">Personal details</div>
+              <div class="ie-grid-3">
+                <div class="field">
+                  <label>Title</label>
+                  <input value={idTitle()} onInput={(e) => setIdTitle(e.currentTarget.value)} />
+                </div>
+                <div class="field">
+                  <label>First name</label>
+                  <input value={firstName()} onInput={(e) => setFirstName(e.currentTarget.value)} />
+                </div>
+                <div class="field">
+                  <label>Middle name</label>
+                  <input value={middleName()} onInput={(e) => setMiddleName(e.currentTarget.value)} />
+                </div>
               </div>
               <div class="field">
-                <label>First name</label>
-                <input value={firstName()} onInput={(e) => setFirstName(e.currentTarget.value)} />
+                <label>Last name</label>
+                <input value={lastName()} onInput={(e) => setLastName(e.currentTarget.value)} />
               </div>
-              <div class="field">
-                <label>Middle name</label>
-                <input value={middleName()} onInput={(e) => setMiddleName(e.currentTarget.value)} />
+              <div class="ie-grid-2">
+                <div class="field">
+                  <label>Username</label>
+                  <input value={idUsername()} onInput={(e) => setIdUsername(e.currentTarget.value)} />
+                </div>
+                <div class="field">
+                  <label>Company</label>
+                  <input value={company()} onInput={(e) => setCompany(e.currentTarget.value)} />
+                </div>
               </div>
-            </div>
-            <div class="field">
-              <label>Last name</label>
-              <input value={lastName()} onInput={(e) => setLastName(e.currentTarget.value)} />
-            </div>
-            <div class="ie-grid-2">
-              <div class="field">
-                <label>Username</label>
-                <input value={idUsername()} onInput={(e) => setIdUsername(e.currentTarget.value)} />
+              <div class="ie-grid-2">
+                <div class="field">
+                  <label>Email</label>
+                  <input value={email()} onInput={(e) => setEmail(e.currentTarget.value)} />
+                </div>
+                <div class="field">
+                  <label>Phone</label>
+                  <input value={phone()} onInput={(e) => setPhone(e.currentTarget.value)} />
+                </div>
               </div>
-              <div class="field">
-                <label>Company</label>
-                <input value={company()} onInput={(e) => setCompany(e.currentTarget.value)} />
-              </div>
-            </div>
-            <div class="ie-grid-2">
-              <div class="field">
-                <label>Email</label>
-                <input value={email()} onInput={(e) => setEmail(e.currentTarget.value)} />
-              </div>
-              <div class="field">
-                <label>Phone</label>
-                <input value={phone()} onInput={(e) => setPhone(e.currentTarget.value)} />
-              </div>
-            </div>
-            <div class="ie-grid-3">
-              <div class="field">
-                <label>SSN</label>
-                <input value={ssn()} onInput={(e) => setSsn(e.currentTarget.value)} autocomplete="off" />
-              </div>
-              <div class="field">
-                <label>Passport no.</label>
-                <input
-                  value={passportNumber()}
-                  onInput={(e) => setPassportNumber(e.currentTarget.value)}
-                  autocomplete="off"
-                />
-              </div>
-              <div class="field">
-                <label>License no.</label>
-                <input
-                  value={licenseNumber()}
-                  onInput={(e) => setLicenseNumber(e.currentTarget.value)}
-                  autocomplete="off"
-                />
-              </div>
-            </div>
-            <div class="field">
-              <label>Address line 1</label>
-              <input value={address1()} onInput={(e) => setAddress1(e.currentTarget.value)} />
-            </div>
-            <div class="field">
-              <label>Address line 2</label>
-              <input value={address2()} onInput={(e) => setAddress2(e.currentTarget.value)} />
-            </div>
-            <div class="field">
-              <label>Address line 3</label>
-              <input value={address3()} onInput={(e) => setAddress3(e.currentTarget.value)} />
-            </div>
-            <div class="ie-grid-2">
-              <div class="field">
-                <label>City</label>
-                <input value={city()} onInput={(e) => setCity(e.currentTarget.value)} />
-              </div>
-              <div class="field">
-                <label>State / region</label>
-                <input value={stateRegion()} onInput={(e) => setStateRegion(e.currentTarget.value)} />
+              <div class="ie-grid-3">
+                <div class="field">
+                  <label>SSN</label>
+                  <input value={ssn()} onInput={(e) => setSsn(e.currentTarget.value)} autocomplete="off" />
+                </div>
+                <div class="field">
+                  <label>Passport no.</label>
+                  <input
+                    value={passportNumber()}
+                    onInput={(e) => setPassportNumber(e.currentTarget.value)}
+                    autocomplete="off"
+                  />
+                </div>
+                <div class="field">
+                  <label>License no.</label>
+                  <input
+                    value={licenseNumber()}
+                    onInput={(e) => setLicenseNumber(e.currentTarget.value)}
+                    autocomplete="off"
+                  />
+                </div>
               </div>
             </div>
-            <div class="ie-grid-2">
+            <div class="ie-section">
+              <div class="ie-section-title">Address</div>
               <div class="field">
-                <label>Postal code</label>
-                <input value={postalCode()} onInput={(e) => setPostalCode(e.currentTarget.value)} />
+                <label>Address line 1</label>
+                <input value={address1()} onInput={(e) => setAddress1(e.currentTarget.value)} />
               </div>
               <div class="field">
-                <label>Country</label>
-                <input value={country()} onInput={(e) => setCountry(e.currentTarget.value)} />
+                <label>Address line 2</label>
+                <input value={address2()} onInput={(e) => setAddress2(e.currentTarget.value)} />
+              </div>
+              <div class="field">
+                <label>Address line 3</label>
+                <input value={address3()} onInput={(e) => setAddress3(e.currentTarget.value)} />
+              </div>
+              <div class="ie-grid-2">
+                <div class="field">
+                  <label>City</label>
+                  <input value={city()} onInput={(e) => setCity(e.currentTarget.value)} />
+                </div>
+                <div class="field">
+                  <label>State / region</label>
+                  <input value={stateRegion()} onInput={(e) => setStateRegion(e.currentTarget.value)} />
+                </div>
+              </div>
+              <div class="ie-grid-2">
+                <div class="field">
+                  <label>Postal code</label>
+                  <input value={postalCode()} onInput={(e) => setPostalCode(e.currentTarget.value)} />
+                </div>
+                <div class="field">
+                  <label>Country</label>
+                  <input value={country()} onInput={(e) => setCountry(e.currentTarget.value)} />
+                </div>
               </div>
             </div>
           </Show>
 
           {/* ---- ssh key ---- */}
           <Show when={itemType() === 'sshKey'}>
-            <div class="field">
-              <label>Private key</label>
-              <textarea
-                class="ie-textarea ie-mono"
-                value={privateKey()}
-                onInput={(e) => setPrivateKey(e.currentTarget.value)}
-                rows="5"
-                autocomplete="off"
-              />
-            </div>
-            <div class="field">
-              <label>Public key</label>
-              <textarea
-                class="ie-textarea ie-mono"
-                value={publicKey()}
-                onInput={(e) => setPublicKey(e.currentTarget.value)}
-                rows="3"
-              />
-            </div>
-            <div class="field">
-              <label>Fingerprint</label>
-              <input
-                class="ie-mono"
-                value={fingerprint()}
-                onInput={(e) => setFingerprint(e.currentTarget.value)}
-              />
+            <div class="ie-section">
+              <div class="field">
+                <label>Private key</label>
+                <textarea
+                  class="ie-textarea ie-mono"
+                  value={privateKey()}
+                  onInput={(e) => setPrivateKey(e.currentTarget.value)}
+                  rows="5"
+                  autocomplete="off"
+                />
+              </div>
+              <div class="field">
+                <label>Public key</label>
+                <textarea
+                  class="ie-textarea ie-mono"
+                  value={publicKey()}
+                  onInput={(e) => setPublicKey(e.currentTarget.value)}
+                  rows="3"
+                />
+              </div>
+              <div class="field">
+                <label>Fingerprint</label>
+                <input
+                  class="ie-mono"
+                  value={fingerprint()}
+                  onInput={(e) => setFingerprint(e.currentTarget.value)}
+                />
+              </div>
             </div>
           </Show>
 
           {/* ---- notes (all types) ---- */}
-          <div class="field">
-            <label>Notes</label>
-            <textarea
-              class="ie-textarea"
-              value={notes()}
-              onInput={(e) => setNotes(e.currentTarget.value)}
-              rows="4"
-            />
+          <div class="ie-section">
+            <div class="field">
+              <label>Notes</label>
+              <textarea
+                class="ie-textarea"
+                value={notes()}
+                onInput={(e) => setNotes(e.currentTarget.value)}
+                rows="4"
+              />
+            </div>
           </div>
 
           {/* ---- custom fields (all types) ---- */}
-          <div class="field">
+          <div class="ie-section">
             <div class="ie-section-head">
               <label>Custom fields</label>
               <button class="ghost ie-add" onClick={addField}>
                 <Plus size={13} strokeWidth={1.75} /> Add field
               </button>
             </div>
+            <Show when={fields().length === 0}>
+              <p class="ie-empty-hint">No custom fields. Add text, hidden, boolean, or linked fields.</p>
+            </Show>
             <For each={fields()}>
               {(f, i) => (
-                <div class="row ie-multi-row">
+                <div class="ie-field-row">
                   <input
-                    class="ie-grow"
+                    class="ie-field-name"
                     value={f.name}
-                    placeholder="Name"
+                    placeholder="Field name"
                     onInput={(e) => updateField(i(), { name: e.currentTarget.value })}
                   />
-                  <Show
-                    when={f.kind === 'Boolean'}
-                    fallback={
+                  <Switch>
+                    <Match when={f.kind === 'Boolean'}>
+                      <label class="ie-check ie-field-val">
+                        <input
+                          type="checkbox"
+                          checked={f.value === 'true'}
+                          onChange={(e) =>
+                            updateField(i(), {
+                              value: e.currentTarget.checked ? 'true' : 'false',
+                            })
+                          }
+                        />
+                        {f.value === 'true' ? 'True' : 'False'}
+                      </label>
+                    </Match>
+                    <Match when={f.kind === 'Linked'}>
+                      <div class="ie-field-val ie-linked-val">
+                        <LinkIcon size={13} strokeWidth={1.75} class="ie-linked-icon" />
+                        <select
+                          class="ie-grow"
+                          value={f.linkedId ?? ''}
+                          onChange={(e) =>
+                            updateField(i(), { linkedId: Number(e.currentTarget.value) })
+                          }
+                        >
+                          <For each={linkOptions()}>
+                            {(opt) => <option value={opt.id}>{opt.label}</option>}
+                          </For>
+                        </select>
+                      </div>
+                    </Match>
+                    <Match when={true}>
                       <input
-                        class="ie-grow"
+                        class="ie-field-val"
                         type={f.kind === 'Hidden' ? 'password' : 'text'}
                         value={f.value}
                         placeholder="Value"
                         autocomplete="off"
                         onInput={(e) => updateField(i(), { value: e.currentTarget.value })}
                       />
-                    }
-                  >
-                    <label class="ie-check ie-grow">
-                      <input
-                        type="checkbox"
-                        checked={f.value === 'true'}
-                        onChange={(e) =>
-                          updateField(i(), {
-                            value: e.currentTarget.checked ? 'true' : 'false',
-                          })
-                        }
-                      />
-                      {f.value === 'true' ? 'True' : 'False'}
-                    </label>
-                  </Show>
+                    </Match>
+                  </Switch>
                   <select
                     class="ie-fieldkind"
                     value={f.kind}
                     onChange={(e) =>
-                      updateField(i(), { kind: e.currentTarget.value as FieldKindLabel })
+                      changeFieldKind(i(), e.currentTarget.value as FieldKindLabel, f)
                     }
                   >
                     <option value="Text">Text</option>
                     <option value="Hidden">Hidden</option>
                     <option value="Boolean">Boolean</option>
+                    <Show when={linkOptions().length > 0}>
+                      <option value="Linked">Linked</option>
+                    </Show>
                   </select>
                   <button
                     class="ghost icon-btn"
