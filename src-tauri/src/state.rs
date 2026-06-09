@@ -11,12 +11,12 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use bitwarden_pm::PasswordManagerClient;
-use bitwarden_vault::Cipher;
+use bitwarden_vault::{Cipher, Folder as VaultFolder};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use zeroize::Zeroizing;
 
-use crate::dto::{BreachRecord, Folder, ServerConfig};
+use crate::dto::{BreachRecord, ServerConfig};
 use crate::error::{AgateError, AgateResult, ErrorKind};
 
 /// A known connection for the unlock-all set + add-connection prefill
@@ -108,11 +108,11 @@ impl PersistedConfig {
 }
 
 /// One live, unlocked connection: its SDK client plus the last sync's encrypted
-/// ciphers (decrypted on demand) and decrypted folders.
+/// ciphers and folders, both decrypted on demand (by `list_items` / `list_folders`).
 pub struct LiveConnection {
     pub client: PasswordManagerClient,
     pub ciphers: Vec<Cipher>,
-    pub folders: Vec<Folder>,
+    pub folders: Vec<VaultFolder>,
 }
 
 impl LiveConnection {

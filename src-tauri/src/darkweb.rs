@@ -443,7 +443,9 @@ pub async fn scan_email(state: &AppState, email: String) -> AgateResult<AccountB
 fn rotate_window(emails: &[String], offset: usize, cap: usize) -> (Vec<String>, Vec<String>, usize) {
     let total = emails.len();
     let window_len = cap.min(total);
-    let start = if total == 0 { 0 } else { offset % total };
+    // When the whole list fits under the cap there's nothing to rotate: scan it in
+    // order from the front and reset the offset. Only a capped run honors `offset`.
+    let start = if total <= cap { 0 } else { offset % total };
     let window: Vec<String> = emails.iter().cycle().skip(start).take(window_len).cloned().collect();
     let in_window: std::collections::HashSet<&String> = window.iter().collect();
     let pending: Vec<String> = emails.iter().filter(|e| !in_window.contains(e)).cloned().collect();
