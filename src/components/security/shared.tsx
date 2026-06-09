@@ -5,9 +5,9 @@
 // no IPC, no signals. They reuse the .sec-* classes from SecurityCenter.css,
 // which the parent imports.
 
-import { For } from 'solid-js';
+import { For, Show } from 'solid-js';
 import { Settings as SettingsIcon } from 'lucide-solid';
-import type { HealthBand, ItemAudit } from '../../lib/types.ts';
+import type { BreachRecord, ItemAudit } from '../../lib/types.ts';
 
 // Data classes worth flagging in red — leaking these is materially worse.
 const SEVERE_CLASSES = [
@@ -23,24 +23,6 @@ const SEVERE_CLASSES = [
 
 export function isSevere(dataClass: string): boolean {
   return SEVERE_CLASSES.includes(dataClass.toLowerCase());
-}
-
-export function bandColor(band: HealthBand): string {
-  switch (band) {
-    case 'critical':
-    case 'poor':
-      return 'var(--destructive)';
-    case 'fair':
-      return 'var(--warning)';
-    case 'good':
-      return 'var(--primary)';
-    case 'excellent':
-      return 'var(--success)';
-  }
-}
-
-export function bandLabel(band: HealthBand): string {
-  return band.charAt(0).toUpperCase() + band.slice(1);
 }
 
 export function chipsFor(item: ItemAudit): string[] {
@@ -65,6 +47,72 @@ export function DataClassChips(props: { classes: string[] }) {
         {(c) => <span class="sec-class" classList={{ severe: isSevere(c) }}>{c}</span>}
       </For>
     </span>
+  );
+}
+
+/**
+ * Humanize XposedOrNot's terse `password_risk` codes into a readable phrase.
+ * Unknown/empty values are filtered out upstream, so any value here is meaningful.
+ */
+function passwordRiskLabel(risk: string): string {
+  switch (risk.toLowerCase()) {
+    case 'plaintext':
+      return 'Stored in plaintext';
+    case 'easytocrack':
+      return 'Weakly hashed (easy to crack)';
+    case 'hardtocrack':
+      return 'Strongly hashed (hard to crack)';
+    case 'unknown':
+      return 'Unknown';
+    default:
+      return risk;
+  }
+}
+
+/**
+ * The expandable "more information" panel for a single breach: its description,
+ * the headline facts (accounts affected, how passwords were stored), and the full
+ * list of what data leaked. Render-only; the description is plain text (never
+ * `innerHTML`) so a provider string can't inject markup.
+ */
+export function BreachDetails(props: { breach: BreachRecord }) {
+  const b = () => props.breach;
+  const pwn = () => b().pwnCount;
+  const hasFacts = () => pwn() !== null || Boolean(b().passwordRisk);
+  const isBare = () => !b().description && !hasFacts() && b().dataClasses.length === 0;
+  return (
+    <div class="sec-breach-detail">
+      <Show when={b().description}>{(d) => <p class="sec-breach-desc">{d()}</p>}</Show>
+      <Show when={hasFacts()}>
+        <dl class="sec-breach-facts">
+          <Show when={pwn() !== null}>
+            <div class="sec-fact">
+              <dt class="muted">Accounts affected</dt>
+              <dd>{pwn()?.toLocaleString()}</dd>
+            </div>
+          </Show>
+          <Show when={b().passwordRisk}>
+            {(r) => (
+              <div class="sec-fact">
+                <dt class="muted">Password storage</dt>
+                <dd classList={{ severe: r().toLowerCase() !== 'hardtocrack' }}>
+                  {passwordRiskLabel(r())}
+                </dd>
+              </div>
+            )}
+          </Show>
+        </dl>
+      </Show>
+      <Show when={b().dataClasses.length > 0}>
+        <div class="sec-breach-leaked">
+          <span class="muted">What leaked:</span>
+          <DataClassChips classes={b().dataClasses} />
+        </div>
+      </Show>
+      <Show when={isBare()}>
+        <p class="muted sec-breach-desc">No further details were provided for this breach.</p>
+      </Show>
+    </div>
   );
 }
 

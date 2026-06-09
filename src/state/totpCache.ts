@@ -25,17 +25,27 @@ export interface TotpCache {
 export function createTotpCache(findEmail: (id: string) => string | undefined): TotpCache {
   const [totpCache, setTotpCache] = createSignal<Map<string, TotpCode>>(new Map());
   const totpPending = new Set<string>();
+  // Bumped by reset(); an in-flight fetch discards its result and skips clearing
+  // its pending mark if a reset happened meanwhile, so a code in flight at
+  // invalidation can't write a stale value nor wedge its id in totpPending (which
+  // would stop ensure() from re-fetching it). Mirrors the detail cache.
+  let cacheGen = 0;
 
   function ensure(email: string, id: string, force = false) {
     if (!force && (totpCache().has(id) || totpPending.has(id))) return;
     totpPending.add(id);
+    const gen = cacheGen;
     void ipc
       .itemTotp(email, id)
-      .then((c) => setTotpCache((m) => new Map(m).set(id, c)))
+      .then((c) => {
+        if (gen === cacheGen) setTotpCache((m) => new Map(m).set(id, c));
+      })
       .catch(() => {
         // ignore: TOTP is best-effort for the list cell
       })
-      .finally(() => totpPending.delete(id));
+      .finally(() => {
+        if (gen === cacheGen) totpPending.delete(id);
+      });
   }
 
   // Single ticker: count down cached codes; refetch the ones that roll over.
@@ -58,7 +68,9 @@ export function createTotpCache(findEmail: (id: string) => string | undefined): 
   onCleanup(() => clearInterval(ticker));
 
   function reset() {
+    cacheGen++;
     setTotpCache(new Map());
+    totpPending.clear();
   }
 
   return { cache: totpCache, ensure, reset };

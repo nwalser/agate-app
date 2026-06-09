@@ -178,7 +178,7 @@
 }
 
 /* Security audit summary badge on the Security rail item. The pill colour comes
-   from an inline `color`/`border-color` (the health band), matching .sec-band. */
+   from an inline `color`/`border-color` set from the health band (railBandColor). */
 .vault-rail-badge {
   margin-left: auto;
   display: inline-flex;
@@ -543,16 +543,16 @@ button.vault-head-cell.sorted {
   font-size: 11px;
   font-weight: 600;
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   color: var(--warning);
-  background: rgba(251, 191, 36, 0.12);
-  border: 1px solid rgba(251, 191, 36, 0.32);
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warning) 32%, transparent);
   white-space: nowrap;
 }
 .detail-sec-chip.severe {
   color: var(--destructive);
-  background: rgba(239, 68, 68, 0.1);
-  border-color: rgba(239, 68, 68, 0.32);
+  background: color-mix(in srgb, var(--destructive) 10%, transparent);
+  border-color: color-mix(in srgb, var(--destructive) 32%, transparent);
 }
 
 .detail-field {
@@ -616,7 +616,7 @@ button.vault-head-cell.sorted {
   gap: 16px;
   padding: 18px;
   margin-bottom: 16px;
-  border-radius: 12px;
+  border-radius: var(--radius);
   border: 1px solid var(--border-strong);
   background: linear-gradient(135deg, var(--surface-2), var(--card-hover));
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);

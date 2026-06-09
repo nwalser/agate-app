@@ -1,5 +1,5 @@
-import { createEffect, createSignal, For, onCleanup, Show } from 'solid-js';
-import { Fingerprint, Lock, LockOpen } from 'lucide-solid';
+import { createEffect, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
+import { Fingerprint, KeyRound, Lock, LockOpen } from 'lucide-solid';
 import { ipc } from '../lib/ipc.ts';
 import type { TwoFactorKind, UnlockOutcome } from '../lib/types.ts';
 import { refreshSession, status } from '../state/session.ts';
@@ -23,6 +23,19 @@ const TEXT_ROTATE_MS = 1400;
 export default function Unlock() {
   const [appPassword, setAppPassword] = createSignal('');
   const [busy, setBusy] = createSignal(false);
+  // Whether Windows Hello is usable on this device at all (separate from whether
+  // the user has enrolled it) — picks the "not set up" vs "not available" copy.
+  const [helloAvailable, setHelloAvailable] = createSignal(false);
+
+  onMount(() => {
+    void (async () => {
+      try {
+        setHelloAvailable(await ipc.helloAvailable());
+      } catch (err) {
+        toastError(err);
+      }
+    })();
+  });
 
   // Drives the dedicated unlocking screen, independent of `busy` (which only gates
   // inputs): 'working' while the key is unwrapped / connections re-login, 'unlocked'
@@ -258,17 +271,61 @@ export default function Unlock() {
               {status().connectionCount} connection{status().connectionCount === 1 ? '' : 's'}
             </p>
 
-            <Show when={hasHello()}>
-              <button class="primary full unlock-hello" disabled={busy()} onClick={() => void unlockHello()}>
-                <Fingerprint size={16} strokeWidth={1.75} /> Unlock with Windows Hello
-              </button>
-              <div class="unlock-or muted">or</div>
-            </Show>
+            <div class="unlock-methods">
+              <span class="unlock-methods-head muted">Sign-in options</span>
+
+              {/* Windows Hello — actionable when enrolled, otherwise shown disabled
+                  with why it can't be used (not set up vs not available here). */}
+              <Show
+                when={hasHello()}
+                fallback={
+                  <div class="unlock-method-row is-off" aria-disabled="true">
+                    <Fingerprint size={16} strokeWidth={1.75} class="unlock-method-ico" />
+                    <span class="unlock-method-info">
+                      <span class="unlock-method-name">Windows Hello</span>
+                      <span class="unlock-method-note muted">
+                        {helloAvailable()
+                          ? 'This option is not set up — turn it on in Settings › Unlock.'
+                          : 'This option is not available on this device.'}
+                      </span>
+                    </span>
+                    <span class="unlock-method-badge">
+                      {helloAvailable() ? 'Not set up' : 'Unavailable'}
+                    </span>
+                  </div>
+                }
+              >
+                <button
+                  type="button"
+                  class="unlock-method-row is-action"
+                  disabled={busy()}
+                  onClick={() => void unlockHello()}
+                >
+                  <Fingerprint size={16} strokeWidth={1.75} class="unlock-method-ico" />
+                  <span class="unlock-method-info">
+                    <span class="unlock-method-name">Windows Hello</span>
+                    <span class="unlock-method-note muted">Face, fingerprint, or PIN</span>
+                  </span>
+                  <span class="unlock-method-badge is-ready">Unlock</span>
+                </button>
+              </Show>
+
+              {/* App password — the always-available method; its input is below. */}
+              <div class="unlock-method-row is-on">
+                <KeyRound size={16} strokeWidth={1.75} class="unlock-method-ico" />
+                <span class="unlock-method-info">
+                  <span class="unlock-method-name">App password</span>
+                  <span class="unlock-method-note muted">Always available</span>
+                </span>
+                <span class="unlock-method-badge is-ready">Ready</span>
+              </div>
+            </div>
 
             <div class="field unlock-field">
-              <label>App password</label>
               <input
                 type="password"
+                aria-label="App password"
+                placeholder="Enter your app password"
                 autocomplete="current-password"
                 value={appPassword()}
                 onInput={(e) => setAppPassword(e.currentTarget.value)}

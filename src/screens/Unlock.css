@@ -11,7 +11,7 @@
   text-align: center;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--radius);
   padding: 28px 24px 16px;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
 }
@@ -233,5 +233,96 @@
 
 .unlock-logout {
   margin-top: 14px;
+  color: var(--muted-foreground);
+}
+
+/* ── Sign-in options list ───────────────────────────────────────────────────
+   Every unlock method is listed, set up or not. Enrolled methods are actionable
+   (the Hello button); methods that are not set up / not available on this device
+   are shown disabled with a reason, so the choices are never hidden. */
+.unlock-methods {
+  text-align: left;
+  margin: 2px 0 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.unlock-methods-head {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.unlock-method-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--foreground);
+  font: inherit;
+}
+
+.unlock-method-ico {
+  flex: none;
+  color: var(--primary);
+}
+
+.unlock-method-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.unlock-method-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.unlock-method-note {
+  font-size: 11.5px;
+}
+
+.unlock-method-badge {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--card-hover);
+  color: var(--muted-foreground);
+}
+
+.unlock-method-badge.is-ready {
+  background: color-mix(in srgb, var(--success) 18%, transparent);
+  color: var(--success);
+}
+
+/* Enrolled Hello — behaves like a button. */
+.unlock-method-row.is-action {
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.unlock-method-row.is-action:hover:not(:disabled) {
+  background: var(--card-hover);
+  border-color: var(--primary);
+}
+.unlock-method-row.is-action:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* Not set up / not available — muted, non-interactive. */
+.unlock-method-row.is-off {
+  border-style: dashed;
+}
+.unlock-method-row.is-off .unlock-method-ico {
   color: var(--muted-foreground);
 }

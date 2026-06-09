@@ -29,6 +29,8 @@ import {
 import { useVaultData } from '../hooks/useVaultData.ts';
 import { useVaultFiltering } from '../hooks/useVaultFiltering.ts';
 import { useVaultSelection } from '../hooks/useVaultSelection.ts';
+import { useNavigationHistory } from '../hooks/useNavigationHistory.ts';
+import type { NavLocation } from '../lib/navHistory.ts';
 import { useItemDetail } from '../hooks/useItemDetail.ts';
 import { useBulkActions } from '../hooks/useBulkActions.ts';
 import { useVaultCommands } from '../hooks/useVaultCommands.ts';
@@ -126,6 +128,54 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
     setSelectedId(id);
   }
 
+  // ---- back/forward navigation history ----
+  // The user's current spot, tracked so each distinct (view, filter, vault, item)
+  // is recorded and can be restored by the mouse side buttons or Alt+Arrow.
+  const navLocation = (): NavLocation => ({
+    view: view(),
+    filter: filtering.filter(),
+    activeVault: activeVault(),
+    selectedId: selectedId(),
+  });
+
+  // Restore a recorded spot. Mirrors switchVault's active-connection side effect
+  // so a restored vault scope is again the backend's target for new items.
+  function applyNavLocation(loc: NavLocation) {
+    setView(loc.view);
+    filtering.setFilter(loc.filter);
+    if (loc.activeVault !== activeVault()) {
+      setActiveVault(loc.activeVault);
+      if (loc.activeVault)
+        void ipc.setActiveConnection(loc.activeVault).catch(() => {
+          // ignore: a locked connection can't be the active target; filter still applies
+        });
+    }
+    selection.clearSelection();
+    setSelectedId(loc.selectedId);
+  }
+
+  const nav = useNavigationHistory({ current: navLocation, apply: applyNavLocation });
+
+  // Move the open-item selection through the list by keyboard. Clears any
+  // multi-selection (arrowing is single-item browsing) and scrolls the row in.
+  function moveSelection(key: 'ArrowDown' | 'ArrowUp' | 'Home' | 'End') {
+    const list = filtering.displayed();
+    if (list.length === 0) return;
+    const cur = selectedId();
+    const idx = cur ? list.findIndex((it) => it.id === cur) : -1;
+    let next: number;
+    if (key === 'Home') next = 0;
+    else if (key === 'End') next = list.length - 1;
+    else if (idx === -1) next = key === 'ArrowDown' ? 0 : list.length - 1;
+    else if (key === 'ArrowDown') next = Math.min(list.length - 1, idx + 1);
+    else next = Math.max(0, idx - 1);
+    selection.clearSelection();
+    setSelectedId(list[next].id);
+    requestAnimationFrame(() => {
+      document.querySelector('.vault-list .vault-row.active')?.scrollIntoView({ block: 'nearest' });
+    });
+  }
+
   const commands = useVaultCommands({
     items: data.items,
     openCreate: actions.openCreate,
@@ -177,7 +227,18 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
   }
   const closeCtxMenu = () => setCtxMenu(null);
 
-  // Ctrl/Cmd-K toggles the command palette.
+  // True while the user is typing in a field — then arrows/Alt+Arrow belong to
+  // that field (search, editor), not to list or history navigation.
+  function isTypingTarget(e: Event): boolean {
+    const t = e.target as HTMLElement | null;
+    if (!t) return false;
+    return (
+      t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable
+    );
+  }
+
+  // Ctrl/Cmd-K toggles the command palette; Alt+Arrow walks history; arrows +
+  // Home/End move the open item in the vault list.
   function onGlobalKeyDown(e: KeyboardEvent) {
     if (e.key === 'Escape' && ctxMenu()) {
       setCtxMenu(null);
@@ -189,10 +250,52 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
       if (editor().mode !== 'closed') return;
       e.preventDefault();
       setPaletteOpen((v) => !v);
+      return;
+    }
+    // Back/forward through navigation history (standard Alt+Arrow), unless a
+    // field owns the keys.
+    if (e.altKey && !isTypingTarget(e) && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+      e.preventDefault();
+      if (e.key === 'ArrowLeft') nav.back();
+      else nav.forward();
+      return;
+    }
+    // List navigation: only in the vault list, and not while typing or an
+    // overlay (palette / context or add/move menus / editor) is up.
+    if (
+      view() === 'vault' &&
+      editor().mode === 'closed' &&
+      !paletteOpen() &&
+      !ctxMenu() &&
+      !addMenuOpen() &&
+      !moveMenuOpen() &&
+      !isTypingTarget(e) &&
+      (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Home' || e.key === 'End')
+    ) {
+      e.preventDefault();
+      moveSelection(e.key);
     }
   }
-  onMount(() => document.addEventListener('keydown', onGlobalKeyDown));
-  onCleanup(() => document.removeEventListener('keydown', onGlobalKeyDown));
+
+  // Mouse side buttons: button 3 = back, button 4 = forward (the X1/X2 buttons).
+  function onGlobalMouseDown(e: MouseEvent) {
+    if (e.button === 3) {
+      e.preventDefault();
+      nav.back();
+    } else if (e.button === 4) {
+      e.preventDefault();
+      nav.forward();
+    }
+  }
+
+  onMount(() => {
+    document.addEventListener('keydown', onGlobalKeyDown);
+    document.addEventListener('mousedown', onGlobalMouseDown);
+  });
+  onCleanup(() => {
+    document.removeEventListener('keydown', onGlobalKeyDown);
+    document.removeEventListener('mousedown', onGlobalMouseDown);
+  });
 
   return (
     <div class="vault">

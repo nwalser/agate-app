@@ -1,0 +1,102 @@
+/* Application info: label · value rows. */
+.update-info {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.update-info-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12.5px;
+}
+.update-info-row dt {
+  color: var(--muted-foreground);
+}
+.update-info-row dd {
+  margin: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* "Up to date" confirmation under the check button. */
+.update-uptodate {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--success);
+  font-size: 12px;
+  margin: 12px 0 0;
+}
+
+.update-last-checked {
+  font-size: 11px;
+  margin: 12px 0 0;
+}
+
+/* One automatic-update preference: label/desc · switch. */
+.update-opt {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--border);
+}
+.update-opt:last-of-type {
+  border-bottom: none;
+}
+.update-opt.off {
+  opacity: 0.5;
+}
+.update-opt-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+.update-opt-label {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.update-opt-desc {
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+/* Toggle switch (mirrors the audit/security toggles' look without importing them). */
+.update-switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 34px;
+  height: 20px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.update-switch:disabled {
+  cursor: default;
+}
+.update-switch.on {
+  background: var(--primary);
+  border-color: var(--primary);
+}
+.update-switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--muted-foreground);
+  transition: transform 0.15s, background 0.15s;
+}
+.update-switch.on .update-switch-knob {
+  transform: translateX(14px);
+  background: var(--primary-foreground);
+}

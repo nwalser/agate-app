@@ -16,6 +16,7 @@ import {
   status,
 } from './state/session.ts';
 import { toastError } from './state/toast.ts';
+import { runStartupUpdateCheck } from './state/update.ts';
 import './App.css';
 
 export default function App() {
@@ -23,6 +24,9 @@ export default function App() {
 
   onMount(() => {
     void refreshSession().catch(toastError);
+    // Independent of auth: silently check (and optionally install) a newer
+    // release if the user has auto-updates on. Swallows its own errors.
+    void runStartupUpdateCheck();
   });
 
   const base = createMemo(() => screenForStatus(status()));

@@ -167,8 +167,8 @@ function FilterButton(props: {
   );
 }
 
-// Rail-band → token colour. Mirrors SecurityCenter's bandColor so the badge and
-// the Security center's score read the same severity.
+// Rail-band → token colour, so the rail badge is tinted by the same health band
+// the backend audit reports.
 function railBandColor(band: HealthBand): string {
   switch (band) {
     case 'critical':

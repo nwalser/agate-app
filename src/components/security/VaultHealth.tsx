@@ -1,18 +1,22 @@
-// "Overview" tab of the Security center: the offline vault-health report. The
-// audit runs in the backend (ipc.auditOffline) on mount; this renders the score,
-// the per-flag summary counts, and the at-risk item list. Reuses the .sec-*
-// classes from SecurityCenter.css (imported by the parent).
+// "Vault health" section of the Security center: the offline vault-health report.
+// The audit runs in the backend (ipc.auditOffline) on mount; this renders the
+// per-flag summary counts and the at-risk item list. No single rolled-up score —
+// the per-flag breakdown is the signal. Reuses the .sec-* classes from
+// SecurityCenter.css (imported by the parent).
 
 import { createSignal, For, onMount, Show } from 'solid-js';
-import { AlertTriangle } from 'lucide-solid';
+import { Activity, AlertTriangle } from 'lucide-solid';
 import { ipc } from '../../lib/ipc.ts';
 import type { VaultHealthReport } from '../../lib/types.ts';
 import { toastError } from '../../state/toast.ts';
-import { bandColor, bandLabel, chipsFor } from './shared.tsx';
+import { chipsFor } from './shared.tsx';
 
-function Stat(props: { n: number; label: string }) {
+// A single summary count. `tone` tints the number once the count is non-zero, so
+// problem categories stand out at a glance; the neutral "Logins" total stays plain.
+function Stat(props: { n: number; label: string; tone?: 'bad' | 'warn' }) {
+  const flagged = () => Boolean(props.tone) && props.n > 0;
   return (
-    <div class="sec-stat">
+    <div class="sec-stat" classList={{ bad: flagged() && props.tone === 'bad', warn: flagged() && props.tone === 'warn' }}>
       <span class="sec-stat-num">{props.n}</span>
       <span class="sec-stat-label muted">{props.label}</span>
     </div>
@@ -40,27 +44,15 @@ export default function VaultHealth(props: { onOpenItem: (id: string) => void })
       <Show when={report()} fallback={<p class="sec-loading muted">No report available.</p>}>
         {(r) => (
           <>
-            <section class="sec-card sec-score-card">
-              <div class="sec-score" style={{ color: bandColor(r().band) }}>
-                <span class="sec-score-value">{r().score}</span>
-                <span class="sec-score-max">/ 100</span>
-              </div>
-              <span
-                class="sec-band"
-                style={{ color: bandColor(r().band), 'border-color': bandColor(r().band) }}
-              >
-                {bandLabel(r().band)}
-              </span>
-            </section>
-
             <section class="sec-card">
+              <h3><Activity size={14} strokeWidth={1.75} /> Vault health</h3>
               <div class="sec-summary">
                 <Stat n={r().totalLogins} label="Logins" />
-                <Stat n={r().reused} label="Reused" />
-                <Stat n={r().weak} label="Weak" />
-                <Stat n={r().old} label="Old" />
-                <Stat n={r().insecure} label="Insecure" />
-                <Stat n={r().noTotp} label="No 2FA" />
+                <Stat n={r().reused} label="Reused" tone="bad" />
+                <Stat n={r().weak} label="Weak" tone="bad" />
+                <Stat n={r().old} label="Old" tone="warn" />
+                <Stat n={r().insecure} label="Insecure" tone="warn" />
+                <Stat n={r().noTotp} label="No 2FA" tone="warn" />
               </div>
             </section>
 

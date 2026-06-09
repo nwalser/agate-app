@@ -5,7 +5,7 @@
 import { createSignal, For, Match, Show, Switch } from 'solid-js';
 import { Link as LinkIcon, Plus, Trash2 } from 'lucide-solid';
 import type { FieldInput, ItemDetail } from '../../lib/types.ts';
-import { FIELD_KIND_TO_INT, fieldIntToLabel, type FieldKindLabel } from '../../lib/fieldKinds.ts';
+import { FIELD_KIND_TO_INT, fieldStringToLabel, type FieldKindLabel } from '../../lib/fieldKinds.ts';
 import type { LinkedOption } from '../../lib/itemFields.ts';
 import { orNull } from './index.ts';
 
@@ -27,7 +27,7 @@ export default function CustomFieldsEditor(props: {
     (props.item?.fields ?? []).map((f) => ({
       name: f.name ?? '',
       value: f.value ?? '',
-      kind: fieldIntToLabel(Number(f.fieldType)),
+      kind: fieldStringToLabel(f.fieldType),
       linkedId: f.linkedId ?? null,
     })),
   );

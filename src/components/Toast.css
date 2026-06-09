@@ -26,14 +26,14 @@
 }
 
 .toast-success {
-  border-color: rgba(52, 211, 153, 0.4);
+  border-color: color-mix(in srgb, var(--success) 40%, transparent);
 }
 .toast-success svg {
   color: var(--success);
 }
 
 .toast-error {
-  border-color: rgba(239, 68, 68, 0.4);
+  border-color: color-mix(in srgb, var(--destructive) 40%, transparent);
 }
 .toast-error svg {
   color: var(--destructive);

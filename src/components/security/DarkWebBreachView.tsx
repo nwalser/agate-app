@@ -5,10 +5,11 @@
 // for emails that were locked, pending, or errored this run. Reuses the .sec-*
 // classes from SecurityCenter.css (imported by the parent).
 
-import { For, type JSX, Show } from 'solid-js';
+import { createSignal, For, type JSX, Show } from 'solid-js';
 import {
   AlertTriangle,
   CheckCircle2,
+  ChevronRight,
   Hourglass,
   Lock,
   Mail,
@@ -19,7 +20,7 @@ import {
 import type { AccountBreaches, BreachRecord } from '../../lib/types.ts';
 import { darkwebMonitor } from '../../state/security.ts';
 import { darkwebBusy, darkwebReport, darkwebRunAt, runDarkwebScan } from '../../state/securityScans.ts';
-import { DataClassChips, DisabledNotice, lastRun } from './shared.tsx';
+import { BreachDetails, DataClassChips, DisabledNotice, lastRun } from './shared.tsx';
 
 /** A labelled, collapsible-by-emptiness list of emails not in the checked set. */
 function EmailNotice(props: { icon: JSX.Element; title: string; hint: string; emails: string[] }) {
@@ -44,9 +45,16 @@ function EmailNotice(props: { icon: JSX.Element; title: string; hint: string; em
 
 function BreachRow(props: { breach: BreachRecord }) {
   const b = () => props.breach;
+  const [open, setOpen] = createSignal(false);
   return (
-    <li class="sec-breach">
-      <div class="sec-breach-head">
+    <li class="sec-breach" classList={{ open: open() }}>
+      <button
+        type="button"
+        class="sec-breach-toggle"
+        aria-expanded={open()}
+        onClick={() => setOpen(!open())}
+      >
+        <ChevronRight size={13} strokeWidth={2} class="sec-breach-chevron" />
         <span class="sec-breach-name">{b().name}</span>
         <Show when={b().breachDate}>{(d) => <span class="muted sec-breach-date">{d()}</span>}</Show>
         <Show when={b().verified}>
@@ -54,9 +62,16 @@ function BreachRow(props: { breach: BreachRecord }) {
             <CheckCircle2 size={11} strokeWidth={2} />
           </span>
         </Show>
-      </div>
-      <Show when={b().dataClasses.length > 0}>
-        <DataClassChips classes={b().dataClasses} />
+      </button>
+      <Show
+        when={open()}
+        fallback={
+          <Show when={b().dataClasses.length > 0}>
+            <DataClassChips classes={b().dataClasses} />
+          </Show>
+        }
+      >
+        <BreachDetails breach={b()} />
       </Show>
     </li>
   );
@@ -115,6 +130,16 @@ export default function DarkWebBreachView() {
         <p class="muted sec-help">{lastRun(darkwebRunAt())}</p>
         <Show when={darkwebBusy() && !darkwebReport()}>
           <p class="sec-loading muted">Scanning your accounts for breaches…</p>
+        </Show>
+        <Show when={!darkwebReport() && !darkwebBusy()}>
+          <div class="sec-empty-cta">
+            <p class="muted sec-empty">
+              No scan results yet. Check your accounts against known breaches now.
+            </p>
+            <button class="primary sec-run-btn" disabled={darkwebBusy()} onClick={() => void runDarkwebScan()}>
+              <RefreshCw size={13} strokeWidth={1.75} /> Run scan now
+            </button>
+          </div>
         </Show>
         <Show when={darkwebReport()}>
           {(r) => (

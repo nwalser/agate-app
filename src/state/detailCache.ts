@@ -25,20 +25,33 @@ export function createDetailCache(): DetailCache {
   const detailPending = new Set<string>();
   let detailQueue: { email: string; id: string }[] = [];
   let detailActive = 0;
+  // Bumped by reset(). Each in-flight fetch captures the generation it started in
+  // and, if a reset happened meanwhile, discards its (now-stale) result and skips
+  // its bookkeeping — otherwise a fetch that was mid-flight at invalidation would
+  // write a pre-mutation value into the freshly-cleared cache and leave its id
+  // stuck in detailPending so ensure() never re-queues it.
+  let cacheGen = 0;
 
   function pumpDetail() {
     while (detailActive < DETAIL_CONCURRENCY && detailQueue.length > 0) {
       const next = detailQueue.shift();
       if (next === undefined) break;
       const { email, id } = next;
+      const gen = cacheGen;
       detailActive++;
       void ipc
         .itemDetail(email, id)
-        .then((d) => setDetailCache((m) => new Map(m).set(id, d)))
+        .then((d) => {
+          if (gen === cacheGen) setDetailCache((m) => new Map(m).set(id, d));
+        })
         .catch(() => {
           // ignore: detail is best-effort for list cells; the cell shows blank
         })
         .finally(() => {
+          // A reset() while this was in flight already cleared the pending set and
+          // zeroed detailActive for the new generation; touching them here would
+          // double-decrement and wrongly evict a re-queued id.
+          if (gen !== cacheGen) return;
           detailActive--;
           detailPending.delete(id);
           pumpDetail();
@@ -54,8 +67,11 @@ export function createDetailCache(): DetailCache {
   }
 
   function reset() {
+    cacheGen++;
     setDetailCache(new Map());
+    detailPending.clear();
     detailQueue = [];
+    detailActive = 0;
   }
 
   return { cache: detailCache, ensure, reset };

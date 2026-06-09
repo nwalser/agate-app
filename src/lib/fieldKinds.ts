@@ -11,9 +11,13 @@ export const FIELD_KIND_TO_INT: Record<FieldKindLabel, number> = {
   Linked: 3,
 };
 
-export function fieldIntToLabel(n: number): FieldKindLabel {
-  if (n === 1) return 'Hidden';
-  if (n === 2) return 'Boolean';
-  if (n === 3) return 'Linked';
+// Read side: CustomField.fieldType arrives from the backend as a lowercase
+// string ('text'|'hidden'|'boolean'|'linked'), NOT an int — map it straight to
+// the editor's label. (Number('hidden') is NaN, which would silently collapse
+// every existing field to Text.)
+export function fieldStringToLabel(s: 'text' | 'hidden' | 'boolean' | 'linked'): FieldKindLabel {
+  if (s === 'hidden') return 'Hidden';
+  if (s === 'boolean') return 'Boolean';
+  if (s === 'linked') return 'Linked';
   return 'Text';
 }

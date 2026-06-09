@@ -1,8 +1,8 @@
 // Left-rail folder tree, like Bitwarden's. Bitwarden encodes nesting in folder
 // names with "/" (e.g. "Work/Email"), so we split on "/" and build a tree;
 // intermediate segments that aren't themselves folders render as collapsible
-// group headers (not selectable). A trailing "No folder" entry filters to items
-// with no folder.
+// group headers (not selectable). Items with no folder are reachable via the
+// "All items" rail filter, so the tree shows no separate "No folder" entry.
 //
 // The tree is also where folders are MANAGED: create (header / "New subfolder"),
 // rename (inline), move/re-parent (drag-and-drop or a "Move to…" menu), and delete
@@ -19,7 +19,7 @@
 // This file is a thin orchestrator: pure tree-shaping lives in ../lib/folderTree.ts,
 // all stateful behavior in ../hooks/useFolderTree.ts, and row/sub-tree rendering in
 // ./folders/FolderNode.tsx. It only wires those together and renders the chrome
-// (headers, the "No folder" row, the context menu, the delete confirmation).
+// (headers, the context menu, the delete confirmation).
 
 import { For, Show } from 'solid-js';
 import {
@@ -44,7 +44,6 @@ export default function FolderTree(props: FolderTreeProps) {
     multi,
     createAccountFor,
     folderById,
-    isActive,
     editing,
     beginCreateTop,
     beginCreateChild,
@@ -122,18 +121,6 @@ export default function FolderTree(props: FolderTreeProps) {
             </>
           )}
         </For>
-      </Show>
-
-      <Show when={real().length > 0}>
-        <button
-          class="folder-row"
-          classList={{ active: isActive(null) }}
-          onClick={() => props.onSelect({ kind: 'folder', folderId: null })}
-        >
-          <span class="folder-twist" />
-          <FolderIcon size={14} strokeWidth={1.6} />
-          <span class="folder-name">No folder</span>
-        </button>
       </Show>
 
       {/* Context menu (one at a time, mirrors the item row menu in Vault.tsx). */}
