@@ -335,3 +335,54 @@ pub async fn restore_items(state: &AppState, account_email: &str, ids: Vec<Strin
         .map_err(|e| op_err(ErrorKind::Network, "Restore failed", e))?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dto::FieldInput;
+
+    fn login_input() -> ItemInput {
+        ItemInput {
+            id: None,
+            item_type: ItemType::Login,
+            name: "x".into(),
+            folder_id: None,
+            organization_id: None,
+            favorite: false,
+            reprompt: false,
+            notes: None,
+            login: None,
+            card: None,
+            identity: None,
+            ssh_key: None,
+            fields: Vec::new(),
+        }
+    }
+
+    /// Regression: `build_fields` once hardcoded `linkedId: null`, dropping the
+    /// linked-field target on every create/edit (round-trip data loss). It must
+    /// now carry `f.linked_id` and `f.field_type` through verbatim.
+    #[test]
+    fn build_fields_preserves_linked_id_and_type() {
+        let mut input = login_input();
+        input.fields = vec![
+            FieldInput { name: Some("acct".into()), value: None, field_type: 3, linked_id: Some(7) },
+            FieldInput {
+                name: Some("note".into()),
+                value: Some("v".into()),
+                field_type: 0,
+                linked_id: None,
+            },
+        ];
+        let out = build_fields(&input);
+        assert_eq!(out.len(), 2);
+        // Linked field: the LinkedIdType target survives.
+        assert_eq!(out[0]["linkedId"], json!(7));
+        assert_eq!(out[0]["type"], json!(3));
+        assert_eq!(out[0]["name"], json!("acct"));
+        // Plain text field: no linked id.
+        assert_eq!(out[1]["linkedId"], Value::Null);
+        assert_eq!(out[1]["type"], json!(0));
+        assert_eq!(out[1]["value"], json!("v"));
+    }
+}
