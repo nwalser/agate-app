@@ -348,7 +348,7 @@ export type ItemInput = {
 /**
  * Present → edit; absent → create.
  */
-id: string | null; itemType: ItemType; name: string; folderId: string | null; organizationId: string | null; favorite?: boolean; reprompt?: boolean; notes: string | null; login: LoginInput | null; card: CardInput | null; identity: IdentityInput | null; sshKey: SshKeyInput | null; fields?: FieldInput[] }
+id: string | null; itemType: ItemType; name: string; folderId: string | null; organizationId: string | null; favorite: boolean; reprompt: boolean; notes: string | null; login: LoginInput | null; card: CardInput | null; identity: IdentityInput | null; sshKey: SshKeyInput | null; fields: FieldInput[] }
 
 /**
  * Closed set of Bitwarden item types.
@@ -364,7 +364,7 @@ export type LoginDetail = { username: string | null; password: string | null;
  */
 totp: string | null; uris: LoginUri[]; hasTotp: boolean }
 
-export type LoginInput = { username: string | null; password: string | null; totp: string | null; uris?: UriInput[] }
+export type LoginInput = { username: string | null; password: string | null; totp: string | null; uris: UriInput[] }
 
 /**
  * Result of a login attempt.
@@ -489,7 +489,7 @@ remaining: number }
 /**
  * Second-factor input from the unlock/login screen.
  */
-export type TwoFactorInput = { provider: TwoFactorKind; token: string; remember?: boolean }
+export type TwoFactorInput = { provider: TwoFactorKind; token: string; remember: boolean }
 
 export type TwoFactorKind = "authenticator" | "email"
 

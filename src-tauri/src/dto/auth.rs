@@ -27,7 +27,9 @@ pub enum ServerConfig {
 pub struct TwoFactorInput {
     pub provider: TwoFactorKind,
     pub token: String,
-    #[serde(default)]
+    // No serde(default): every 2FA caller states `remember` explicitly, and the
+    // generated TS contract should require it (an omitted security choice is a
+    // bug, not a default).
     pub remember: bool,
 }
 

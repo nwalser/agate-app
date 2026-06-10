@@ -55,7 +55,14 @@ export async function setDarkwebMonitor(enabled: boolean): Promise<void> {
     }
     await runDarkwebScan();
   } else {
-    await clearDarkwebScan();
+    // The matching revoke: switching off withdraws the backend's permission to
+    // call out (the scan module only drops results — consent lives HERE).
+    try {
+      await ipc.setDarkwebConsent(false);
+    } catch (err) {
+      toastError(err);
+    }
+    clearDarkwebScan();
   }
 }
 

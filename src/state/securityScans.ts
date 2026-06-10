@@ -207,8 +207,9 @@ export function createSecurityScans(deps: SecurityScansDeps) {
 
   /**
    * Switching the dark-web monitor off: drop the accumulated results and rewrite
-   * the cache without them (the caller — ./security.ts — also revokes the backend
-   * consent flag).
+   * the cache without them. Consent is NOT touched here — both the grant AND the
+   * revoke live in ./security.ts's toggle (one place), and consent isn't part of
+   * this module's IPC surface at all.
    */
   function clearDarkwebScan(): void {
     checkedByEmail.clear();

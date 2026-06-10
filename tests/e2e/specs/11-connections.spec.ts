@@ -22,8 +22,10 @@ function twoConnectionFake() {
       darkwebConsent: false, connectionCount: 2, liveCount: 2,
     },
     connections: [
-      { email: FIXTURE_EMAIL, serverLabel: FIXTURE_LABEL, server: { region: 'us' }, unlocked: true, storeCredentials: true },
-      { email: 'second@example.com', serverLabel: 'Bitwarden — EU', server: { region: 'eu' }, unlocked: true, storeCredentials: true },
+      // storeCredentials false: keeps these specs exercising the "Manual" badge
+      // rendering path, as the old (untyped) fixtures implicitly did.
+      { email: FIXTURE_EMAIL, serverLabel: FIXTURE_LABEL, server: { region: 'us' }, unlocked: true, storeCredentials: false },
+      { email: 'second@example.com', serverLabel: 'Bitwarden — EU', server: { region: 'eu' }, unlocked: true, storeCredentials: false },
     ],
   });
 }

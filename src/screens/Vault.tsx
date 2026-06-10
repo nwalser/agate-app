@@ -787,16 +787,18 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
                       />
                     )}
                   </Show>
+                  {/* NOT keyed: a same-item detail refresh (favorite toggle, post-save
+                      reload) must update the pane IN PLACE — keying would remount it,
+                      resetting reveals/scroll and re-firing the collections load. */}
                   <Show
                     when={editor().mode === 'closed' && detailState.detail()}
-                    keyed
                     fallback={
                       editor().mode === 'closed' ? (
                         <div class="vault-detail-empty muted">Select an item to view its details.</div>
                       ) : null
                     }
                   >
-                    {(d) => <VaultDetailPaneConnected detail={d} />}
+                    {(d) => <VaultDetailPaneConnected detail={d()} />}
                   </Show>
                 </section>
               </Show>

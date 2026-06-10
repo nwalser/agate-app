@@ -70,12 +70,20 @@ pub async fn add_connection(
                 secrets::delete_cred(&email)?;
             }
 
-            state
+            if let Err(e) = state
                 .update_config(|cfg| {
                     cfg.upsert_account(server.clone(), &email, store_credentials);
                     cfg.server = server.clone();
                 })
-                .await?;
+                .await
+            {
+                // Compensate: the config rolled back, so a just-sealed master
+                // password must not stay orphaned in the keychain.
+                if store_credentials {
+                    let _ = secrets::delete_cred(&email); // ignore: best-effort compensation
+                }
+                return Err(e);
+            }
             {
                 let mut session = state.session.lock().await;
                 session.connections.insert(email.clone(), LiveConnection::new(client));
@@ -163,13 +171,18 @@ pub async fn update_connection(
                 "Enter your master password to store this connection.",
             ));
         }
-    } else {
-        // Turning storage off: forget the sealed password (the live session stays).
-        secrets::delete_cred(&email)?;
     }
+    // Config transaction first (rollback-able), keychain delete after — see
+    // remove_connection for the ordering rationale.
     state
         .update_config(|cfg| cfg.upsert_account(existing.server.clone(), &email, store_credentials))
         .await?;
+    if !store_credentials {
+        // Turning storage off: forget the sealed password (the live session stays).
+        if let Err(e) = secrets::delete_cred(&email) {
+            log::error!("could not delete the stored credential after turning storage off: {}", e.message);
+        }
+    }
     Ok(LoginResult::Success)
 }
 
@@ -224,10 +237,17 @@ pub async fn send_add_email_code(
     auth::send_email_code(state, &server, email, password).await
 }
 
-/// Forget a connection: delete its sealed credentials, drop the live client, and
-/// remove it from the config list.
+/// Forget a connection: remove it from the config list, drop the live client,
+/// and delete its sealed credentials.
+///
+/// ORDER: the rollback-able config transaction commits FIRST; the irreversible
+/// keychain delete runs after, best-effort but LOUD — a lingering sealed blob is
+/// recoverable (overwritten on re-add, sealed under the VMK), whereas deleting
+/// it before a failed config write would resurrect an account whose stored
+/// credential no longer exists (guaranteed unlock failure).
 pub async fn remove_connection(state: &AppState, email: String) -> AgateResult<()> {
-    secrets::delete_cred(&email)?;
+    // Drops the account record AND its AI allowlist grants — see remove_account.
+    state.update_config(|cfg| cfg.remove_account(&email)).await?;
     {
         let mut session = state.session.lock().await;
         session.connections.remove(&email);
@@ -235,8 +255,10 @@ pub async fn remove_connection(state: &AppState, email: String) -> AgateResult<(
             session.active_email = session.connections.keys().next().cloned();
         }
     }
-    // Drops the account record AND its AI allowlist grants — see remove_account.
-    state.update_config(|cfg| cfg.remove_account(&email)).await
+    if let Err(e) = secrets::delete_cred(&email) {
+        log::error!("could not delete the stored credential for a removed connection: {}", e.message);
+    }
+    Ok(())
 }
 
 /// Set which account is "active" (the default target for creating new items).
@@ -264,8 +286,26 @@ pub async fn lock(state: &AppState) -> AgateResult<()> {
 /// Log out of everything: delete every sealed credential, the app-unlock blob, and
 /// the Hello blob; clear the session and app-unlock flags. The connection list
 /// (server + email, non-secret) is kept so re-adding is prefilled.
+///
+/// ORDER: the config transaction commits FIRST. If the disk write fails, logout
+/// aborts cleanly (keychain untouched, in-memory flags rolled back, error shown,
+/// user retries) — committing the irreversible keychain wipe before the rollback-
+/// able write could leave memory claiming "configured" with an empty keychain.
 pub async fn logout(state: &AppState) -> AgateResult<()> {
     let accounts = state.config.lock().await.accounts.clone();
+    state
+        .update_config(|cfg| {
+            cfg.app_unlock_configured = false;
+            cfg.hello_configured = false;
+            cfg.darkweb_consent = false;
+            // The MCP server's allowlist + opt-in are capability state — drop them
+            // on logout. The bound listener stays up but fails closed (disabled +
+            // locked).
+            cfg.ai_server_enabled = false;
+            cfg.ai_grants.clear();
+        })
+        .await?;
+
     for a in &accounts {
         let _ = secrets::delete_cred(&a.email); // ignore: best-effort teardown
     }
@@ -278,16 +318,5 @@ pub async fn logout(state: &AppState) -> AgateResult<()> {
     state.session.lock().await.clear_secrets();
     *state.breach_directory.lock().await = None;
     *state.ai_audit.lock().await = Vec::new();
-    state
-        .update_config(|cfg| {
-            cfg.app_unlock_configured = false;
-            cfg.hello_configured = false;
-            cfg.darkweb_consent = false;
-            // The MCP server's allowlist + opt-in are capability state — drop them
-            // on logout. The bound listener stays up but fails closed (disabled +
-            // locked).
-            cfg.ai_server_enabled = false;
-            cfg.ai_grants.clear();
-        })
-        .await
+    Ok(())
 }

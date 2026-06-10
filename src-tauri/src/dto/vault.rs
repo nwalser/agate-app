@@ -247,7 +247,8 @@ pub struct LoginInput {
     pub username: Option<String>,
     pub password: Option<String>,
     pub totp: Option<String>,
-    #[serde(default)]
+    // No serde(default): an edit payload missing uris must be REJECTED, not
+    // silently treated as wipe every URI (same for favorite/reprompt/fields).
     pub uris: Vec<UriInput>,
 }
 
@@ -319,15 +320,12 @@ pub struct ItemInput {
     pub name: String,
     pub folder_id: Option<String>,
     pub organization_id: Option<String>,
-    #[serde(default)]
     pub favorite: bool,
-    #[serde(default)]
     pub reprompt: bool,
     pub notes: Option<String>,
     pub login: Option<LoginInput>,
     pub card: Option<CardInput>,
     pub identity: Option<IdentityInput>,
     pub ssh_key: Option<SshKeyInput>,
-    #[serde(default)]
     pub fields: Vec<FieldInput>,
 }

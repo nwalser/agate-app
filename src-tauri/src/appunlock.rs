@@ -362,11 +362,19 @@ mod tests {
     use crate::secrets::StoredConnection;
     use crate::state::AppState;
 
-    fn temp_state() -> AppState {
+    /// Removes the test's config dir on drop so cargo runs don't litter %TEMP%.
+    struct TempDir(std::path::PathBuf);
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0); // ignore: best-effort test cleanup
+        }
+    }
+
+    fn temp_state() -> (AppState, TempDir) {
         let dir = std::env::temp_dir()
             .join(format!("agate-appunlock-test-{}-{}", std::process::id(), rand::random::<u32>()));
         std::fs::create_dir_all(&dir).expect("temp dir");
-        AppState::load(dir)
+        (AppState::load(dir.clone()), TempDir(dir))
     }
 
     /// The full unlock-envelope ORCHESTRATION against the in-memory keychain
@@ -379,7 +387,7 @@ mod tests {
     #[tokio::test]
     async fn unlock_envelope_orchestration_roundtrip() {
         let _keychain = install_in_memory_keychain();
-        let state = temp_state();
+        let (state, _config_dir) = temp_state();
         let pw = Zeroizing::new("correct horse battery".to_string());
 
         configure(&state, pw.clone()).await.expect("configure");
