@@ -72,26 +72,6 @@
   font-size: 12px;
 }
 
-/* Sends manager rows. */
-.send-row {
-  padding: 9px 0;
-  border-bottom: 1px solid var(--border);
-}
-.send-info {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-  flex: 1;
-}
-.send-name {
-  font-size: 12.5px;
-  font-weight: 600;
-}
-.send-meta {
-  font-size: 11px;
-}
-
 /* Section label that splits the nav into Vault (per-connection) vs Global pages. */
 .settings-nav-group {
   font-size: 10px;
@@ -137,6 +117,16 @@
 }
 .settings-page {
   max-width: 580px;
+}
+
+/* Trailing action(s) for a section — primary buttons, reset links — sit at the
+   right edge so every page's actions line up on one consistent vertical seam. */
+.settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
 }
 
 /* Flat section: no boxed card — a small uppercase label over a hairline divider,
@@ -210,12 +200,6 @@
   color: var(--success);
   font-weight: 600;
   padding: 0 6px;
-}
-.add-account {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  margin-top: 12px;
 }
 
 .checkbox {

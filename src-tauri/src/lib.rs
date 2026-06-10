@@ -4,6 +4,7 @@
 //! `.setup` closure body + SDK platform init live in `setup`. This file is just the
 //! module tree and the `run()` wiring.
 
+mod aiserver;
 mod appunlock;
 mod audit;
 mod auth;
@@ -128,6 +129,12 @@ pub fn run() {
             hello_unlock,
             check_update,
             run_update,
+            ai_server_status,
+            ai_set_server_enabled,
+            ai_list_grants,
+            ai_set_grant,
+            ai_clear_grants,
+            ai_audit_log,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Agate");

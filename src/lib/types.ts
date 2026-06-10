@@ -376,6 +376,36 @@ export interface ItemInput {
   fields: FieldInput[];
 }
 
+// ---- AI access (local MCP server) — mirror src-tauri/src/dto/ai.rs ----
+
+/** One allowlist entry: a single item (in one connection) the AI may read. */
+export interface AiGrant {
+  accountEmail: string;
+  itemId: string;
+}
+
+/** Status of the local MCP server. `url`/`token` are populated only when enabled. */
+export interface AiServerStatus {
+  enabled: boolean;
+  running: boolean;
+  /** `http://127.0.0.1:<port>/mcp`, when enabled. */
+  url: string | null;
+  /** Bearer token the MCP client must send, when enabled. */
+  token: string | null;
+}
+
+/** One line in the session-only MCP access audit log. */
+export interface AiAuditEntry {
+  /** RFC 3339 timestamp. */
+  timestamp: string;
+  /** The MCP tool invoked (e.g. `get_vault_item`). */
+  action: string;
+  itemName: string | null;
+  accountEmail: string | null;
+  /** Whether the access was permitted (allowlisted + unlocked) or denied. */
+  allowed: boolean;
+}
+
 // Typed shape of the backend error (mirror `error.rs`).
 export type ErrorKind =
   | 'notAuthenticated'

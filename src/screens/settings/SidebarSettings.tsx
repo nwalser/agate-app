@@ -232,7 +232,9 @@ export default function SidebarSettings() {
         </form>
       </section>
 
-      <ResetButton label="Reset sidebar to default" onClick={() => resetSidebar()} />
+      <div class="settings-actions">
+        <ResetButton label="Reset sidebar to default" onClick={() => resetSidebar()} />
+      </div>
     </div>
   );
 }

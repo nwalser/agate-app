@@ -13,11 +13,14 @@ import {
   ArrowDown,
   ArrowUp,
   Check,
+  CopyPlus,
   EyeOff,
   Minus,
   PanelLeftClose,
   PanelLeftOpen,
   Pencil,
+  Play,
+  Save,
   Settings as SettingsIcon,
   Trash2,
 } from 'lucide-solid';
@@ -36,7 +39,9 @@ import {
 import { viewIcon } from '../lib/viewIcons.ts';
 import {
   addDivider,
+  duplicateQuery,
   moveEntry,
+  queryById,
   removeEntry,
   reorderEntry,
   sidebar,
@@ -56,6 +61,12 @@ export default function VaultRailMenu(props: {
   onRunQuery: (q: CustomQuery) => void;
   /** Id of the saved view currently being shown (drives the active highlight). */
   activeViewId: string | null;
+  /** Whether the live list has diverged from the active view's saved snapshot —
+   *  gates the "Update to current list" context action. */
+  viewDirty: boolean;
+  /** Overwrite the active view with the current list state (filter/search/columns/
+   *  sort). Only meaningful for the view whose id equals `activeViewId`. */
+  onSaveView: () => void;
   scopedFolders: Folder[];
   items: VaultItem[];
   folderCreate: (account: string, fullName: string) => void;
@@ -149,6 +160,17 @@ export default function VaultRailMenu(props: {
           icon={meta.icon}
           active={props.view === 'generator'}
           onClick={() => props.setView('generator')}
+          onContextMenu={onCtx}
+        />
+      );
+    }
+    if (id === 'sends') {
+      return (
+        <FilterButton
+          label={meta.label}
+          icon={meta.icon}
+          active={props.view === 'sends'}
+          onClick={() => props.setView('sends')}
           onContextMenu={onCtx}
         />
       );
@@ -294,6 +316,22 @@ export default function VaultRailMenu(props: {
               </CtxItem>
               <Show when={isQueryId(id())}>
                 <CtxSep />
+                <CtxItem
+                  onClick={act(() => {
+                    const q = queryById(id());
+                    if (q) props.onRunQuery(q);
+                  })}
+                >
+                  <Play size={14} /> Open view
+                </CtxItem>
+                <Show when={props.activeViewId === id()}>
+                  <CtxItem disabled={!props.viewDirty} onClick={act(() => props.onSaveView())}>
+                    <Save size={14} /> Update to current list
+                  </CtxItem>
+                </Show>
+                <CtxItem onClick={act(() => duplicateQuery(id()))}>
+                  <CopyPlus size={14} /> Duplicate view
+                </CtxItem>
                 <CtxItem onClick={act(() => props.onOpenSettings())}>
                   <Pencil size={14} /> Edit view
                 </CtxItem>

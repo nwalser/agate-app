@@ -4,6 +4,9 @@
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import type {
   AccountBreaches,
+  AiAuditEntry,
+  AiGrant,
+  AiServerStatus,
   BreachRecord,
   Collection,
   ConnectionSummary,
@@ -277,4 +280,20 @@ export const ipc = {
   checkUpdate: (): Promise<string | null> => invoke('check_update'),
 
   runUpdate: (): Promise<void> => invoke('run_update'),
+
+  // ---- AI access (local MCP server) ----
+
+  aiServerStatus: (): Promise<AiServerStatus> => invoke('ai_server_status'),
+
+  aiSetServerEnabled: (enabled: boolean): Promise<AiServerStatus> =>
+    invoke('ai_set_server_enabled', { enabled }),
+
+  aiListGrants: (): Promise<AiGrant[]> => invoke('ai_list_grants'),
+
+  aiSetGrant: (accountEmail: string, itemId: string, granted: boolean): Promise<void> =>
+    invoke('ai_set_grant', { accountEmail, itemId, granted }),
+
+  aiClearGrants: (): Promise<void> => invoke('ai_clear_grants'),
+
+  aiAuditLog: (): Promise<AiAuditEntry[]> => invoke('ai_audit_log'),
 };

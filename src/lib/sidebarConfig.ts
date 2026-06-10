@@ -5,7 +5,7 @@
 // parse + reconcile used at the localStorage boundary (no `any`). The live signal
 // and its mutators live in `state/sidebar.ts`.
 
-import { AlertTriangle, Bookmark, Dices, File, FolderClosed, RefreshCw, Shield, Star, Trash2 } from 'lucide-solid';
+import { AlertTriangle, Bookmark, Dices, File, FolderClosed, RefreshCw, Send, Shield, Star, Trash2 } from 'lucide-solid';
 import type { IconComponent } from './icon.ts';
 import type { ItemType } from './types.ts';
 import type { VaultFilter } from './search.ts';
@@ -32,6 +32,7 @@ export type SidebarBuiltinId =
   | 'type:sshKey'
   | 'folders'
   | 'generator'
+  | 'sends'
   | 'security'
   | 'atRisk'
   | 'sync';
@@ -120,6 +121,7 @@ export const DEFAULT_ORDER: SidebarBuiltinId[] = [
   'type:sshKey',
   'folders',
   'generator',
+  'sends',
   'security',
   'atRisk',
   'sync',
@@ -172,6 +174,8 @@ export function entryMeta(id: SidebarBuiltinId): { label: string; icon: IconComp
       return { label: 'Folders', icon: FolderClosed };
     case 'generator':
       return { label: 'Generator', icon: Dices };
+    case 'sends':
+      return { label: 'Sends', icon: Send };
     case 'security':
       return { label: 'Security', icon: Shield };
     case 'atRisk':
@@ -238,6 +242,8 @@ export function builtinView(id: SidebarBuiltinId): VaultView | null {
   switch (id) {
     case 'generator':
       return 'generator';
+    case 'sends':
+      return 'sends';
     case 'security':
       return 'security';
     case 'sync':

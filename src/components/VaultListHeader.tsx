@@ -237,10 +237,16 @@ export default function VaultListHeader(props: {
       const c = cp.col;
       return c !== null && c.kind === 'builtin' && c.id === 'security';
     };
+    // Columns whose cells are right-aligned (totp code + security badge); the
+    // header label/chevron follow so they sit over the right-aligned content.
+    const isTotp = () => {
+      const c = cp.col;
+      return c !== null && c.kind === 'builtin' && c.id === 'totp';
+    };
     return (
       <div
         class="vault-head-cell vault-head-resizable"
-        classList={{ sortable: sk() !== null, sorted: sorted(), 'align-end': isSecurity() }}
+        classList={{ sortable: sk() !== null, sorted: sorted(), 'align-end': isSecurity() || isTotp() }}
         onContextMenu={(e) => onCellContext(e, cp.col, cp.index)}
       >
         <button

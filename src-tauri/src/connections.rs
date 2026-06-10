@@ -281,14 +281,20 @@ pub async fn logout(state: &AppState) -> AgateResult<()> {
     let _ = secrets::delete_hello_blob();
     let _ = secrets::delete_device_pepper(); // ignore: best-effort teardown
     let _ = secrets::delete_scan_cache(); // ignore: best-effort teardown
+    let _ = secrets::delete_ai_token(); // ignore: best-effort teardown of the MCP token
 
     state.session.lock().await.clear_secrets();
     *state.breach_directory.lock().await = None;
+    *state.ai_audit.lock().await = Vec::new();
     {
         let mut cfg = state.config.lock().await;
         cfg.app_unlock_configured = false;
         cfg.hello_configured = false;
         cfg.darkweb_consent = false;
+        // The MCP server's allowlist + opt-in are capability state — drop them on
+        // logout. The bound listener stays up but fails closed (disabled + locked).
+        cfg.ai_server_enabled = false;
+        cfg.ai_grants.clear();
     }
     state.save_config().await
 }

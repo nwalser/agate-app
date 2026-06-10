@@ -40,8 +40,7 @@ export default function AuditSettings() {
   const c = auditConfig;
 
   return (
-    <div class="settings-page">
-      <section class="settings-section">
+    <section class="settings-section">
         <h3>
           <ShieldCheck size={14} strokeWidth={1.75} /> Security audits
         </h3>
@@ -118,9 +117,10 @@ export default function AuditSettings() {
           onToggle={(v) => setAuditOption('noTotp', v)}
         />
 
-        <ResetButton label="Reset to defaults" onClick={() => resetAuditConfig()} />
-      </section>
-    </div>
+        <div class="settings-actions">
+          <ResetButton label="Reset to defaults" onClick={() => resetAuditConfig()} />
+        </div>
+    </section>
   );
 }
 

@@ -4,22 +4,23 @@
 // Reached from the sidebar.
 
 import { createMemo, createSignal, For, Match, Show, Switch } from 'solid-js';
-import { ArrowLeft, DownloadCloud, Gauge, Info, LayoutTemplate, Palette, PanelLeft, Search, Send, ShieldAlert, ShieldCheck, Users } from 'lucide-solid';
+import { ArrowLeft, Bot, DownloadCloud, Info, LayoutTemplate, Palette, PanelLeft, Search, ShieldAlert, ShieldCheck, Users } from 'lucide-solid';
 import AppearanceSettings from './settings/AppearanceSettings.tsx';
+import AiAccessSettings from './settings/AiAccessSettings.tsx';
 import ConnectionsSettings from './settings/ConnectionsSettings.tsx';
 import UnlockSettings from './settings/UnlockSettings.tsx';
 import AuditSettings from './settings/AuditSettings.tsx';
 import UpdatesSettings from './settings/UpdatesSettings.tsx';
 import SidebarSettings from './settings/SidebarSettings.tsx';
 import TemplatesSettings from './settings/TemplatesSettings.tsx';
-import SendsSettings from './settings/SendsSettings.tsx';
 import SecuritySettings from '../components/SecuritySettings.tsx';
+import ExportSettings from '../components/ExportSettings.tsx';
 import Resizer from '../components/Resizer.tsx';
 import { resetSidebarWidth, setSidebarWidth } from '../state/ui.ts';
 import { t, type Key } from '../lib/i18n.ts';
 import './Settings.css';
 
-type Page = 'connections' | 'unlock' | 'security' | 'audits' | 'appearance' | 'sidebar' | 'templates' | 'sends' | 'updates';
+type Page = 'connections' | 'unlock' | 'security' | 'appearance' | 'sidebar' | 'templates' | 'aiAccess' | 'updates';
 
 // Settings split into two groups: `vault` = per-connection (account-scoped) pages,
 // `global` = app-wide preferences that apply across every connection.
@@ -35,13 +36,12 @@ const GROUPS: { id: SettingsGroup; label: string }[] = [
 // drives the localized display label.
 const PAGES: { id: Page; group: SettingsGroup; labelKey: Key; icon: typeof Info; keywords: string }[] = [
   { id: 'connections', group: 'vault', labelKey: 'nav.connections', icon: Users, keywords: 'account email server login add remove' },
-  { id: 'sends', group: 'vault', labelKey: 'nav.sends', icon: Send, keywords: 'send share link ephemeral file text revoke' },
   { id: 'unlock', group: 'global', labelKey: 'nav.unlock', icon: ShieldCheck, keywords: 'password windows hello biometric pin device' },
-  { id: 'security', group: 'global', labelKey: 'nav.security', icon: ShieldAlert, keywords: 'clipboard auto-lock timeout breach dark web exposed monitor' },
-  { id: 'audits', group: 'global', labelKey: 'nav.audits', icon: Gauge, keywords: 'health score weak reused old totp threshold' },
+  { id: 'security', group: 'global', labelKey: 'nav.security', icon: ShieldAlert, keywords: 'clipboard auto-lock timeout breach dark web exposed monitor audit health score weak reused old totp threshold export import' },
   { id: 'appearance', group: 'global', labelKey: 'nav.appearance', icon: Palette, keywords: 'theme dark light density rows color language' },
   { id: 'sidebar', group: 'global', labelKey: 'nav.sidebar', icon: PanelLeft, keywords: 'rail entries order saved queries' },
   { id: 'templates', group: 'global', labelKey: 'nav.templates', icon: LayoutTemplate, keywords: 'template custom field new item preset skeleton reusable' },
+  { id: 'aiAccess', group: 'global', labelKey: 'nav.aiAccess', icon: Bot, keywords: 'ai mcp claude assistant model context protocol allowlist grant token server reveal password' },
   { id: 'updates', group: 'global', labelKey: 'nav.updates', icon: DownloadCloud, keywords: 'version auto update install release about license credits' },
 ];
 
@@ -126,10 +126,9 @@ export default function Settings(props: { onBack: () => void }) {
             <Match when={page() === 'security'}>
               <div class="settings-page">
                 <SecuritySettings />
+                <AuditSettings />
+                <ExportSettings />
               </div>
-            </Match>
-            <Match when={page() === 'audits'}>
-              <AuditSettings />
             </Match>
             <Match when={page() === 'appearance'}>
               <AppearanceSettings />
@@ -140,8 +139,8 @@ export default function Settings(props: { onBack: () => void }) {
             <Match when={page() === 'templates'}>
               <TemplatesSettings />
             </Match>
-            <Match when={page() === 'sends'}>
-              <SendsSettings />
+            <Match when={page() === 'aiAccess'}>
+              <AiAccessSettings />
             </Match>
             <Match when={page() === 'updates'}>
               <UpdatesSettings />

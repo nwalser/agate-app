@@ -49,4 +49,4 @@ export const AUTO_SYNC_MS = 5 * 60 * 1000;
 
 // Which main view occupies the body next to the left rail. The rail stays visible
 // in every view; `vault` is the item list + detail.
-export type VaultView = 'vault' | 'security' | 'sync' | 'generator';
+export type VaultView = 'vault' | 'security' | 'sync' | 'generator' | 'sends';

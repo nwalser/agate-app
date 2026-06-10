@@ -36,6 +36,7 @@ const en = {
   'nav.sidebar': 'Sidebar',
   'nav.templates': 'Templates',
   'nav.sends': 'Sends',
+  'nav.aiAccess': 'AI Access',
   'nav.updates': 'Updates',
   'nav.about': 'About',
 
@@ -81,6 +82,7 @@ const es: Partial<Record<Key, string>> = {
   'nav.sidebar': 'Barra lateral',
   'nav.templates': 'Plantillas',
   'nav.sends': 'Envíos',
+  'nav.aiAccess': 'Acceso IA',
   'nav.updates': 'Actualizaciones',
   'nav.about': 'Acerca de',
 

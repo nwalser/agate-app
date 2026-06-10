@@ -60,9 +60,11 @@ export default function ExportSettings() {
         Keep it somewhere safe and delete it when you're done. Trashed items are not included.
       </p>
       <Select ariaLabel="Export format" value={format()} options={FORMATS} onChange={(v) => setFormat(v)} />
-      <button class="primary export-btn" disabled={busy()} onClick={() => void exportNow()}>
-        {busy() ? 'Exporting…' : 'Export vault'}
-      </button>
+      <div class="settings-actions">
+        <button class="primary" disabled={busy()} onClick={() => void exportNow()}>
+          {busy() ? 'Exporting…' : 'Export vault'}
+        </button>
+      </div>
 
       <h3 class="sec-subhead">
         <Upload size={14} strokeWidth={1.75} /> Import
@@ -72,9 +74,11 @@ export default function ExportSettings() {
         {activeVault() ? ' the selected vault' : ' your first connection'}. Items appear after the
         next sync.
       </p>
-      <button class="export-btn" disabled={importing()} onClick={() => void importNow()}>
-        {importing() ? 'Importing…' : 'Choose CSV file…'}
-      </button>
+      <div class="settings-actions">
+        <button disabled={importing()} onClick={() => void importNow()}>
+          {importing() ? 'Importing…' : 'Choose CSV file…'}
+        </button>
+      </div>
     </section>
   );
 }

@@ -7,8 +7,8 @@ use base64::Engine;
 use zeroize::Zeroizing;
 
 use super::{
-    b64, cred_key, AppUnlockBlob, SealedBlob, APP_UNLOCK_KEY, DEVICE_PEPPER_KEY, HELLO_AUK_KEY,
-    KEYRING_SERVICE, SCAN_CACHE_KEY,
+    b64, cred_key, AppUnlockBlob, SealedBlob, AI_TOKEN_KEY, APP_UNLOCK_KEY, DEVICE_PEPPER_KEY,
+    HELLO_AUK_KEY, KEYRING_SERVICE, SCAN_CACHE_KEY,
 };
 use crate::error::{AgateError, AgateResult, ErrorKind};
 
@@ -153,4 +153,18 @@ pub fn load_device_pepper() -> AgateResult<Option<Zeroizing<Vec<u8>>>> {
 
 pub fn delete_device_pepper() -> AgateResult<()> {
     delete_key(DEVICE_PEPPER_KEY)
+}
+
+/// Store the MCP server's bearer token (an opaque capability secret).
+pub fn store_ai_token(token: &str) -> AgateResult<()> {
+    store_string(AI_TOKEN_KEY, token)
+}
+
+/// Load the MCP server's bearer token. `Ok(None)` == none generated yet.
+pub fn load_ai_token() -> AgateResult<Option<String>> {
+    load_string(AI_TOKEN_KEY)
+}
+
+pub fn delete_ai_token() -> AgateResult<()> {
+    delete_key(AI_TOKEN_KEY)
 }

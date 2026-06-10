@@ -1,7 +1,8 @@
 /**
- * Audit settings — Settings › Audits lets you enable/disable each offline security
- * check and tune its threshold. The config is a local UI preference (no backend
- * call to toggle), so this drives the real reactive UI via the fake-backed app.
+ * Audit settings — the Security audits live in the Settings › Security page (the
+ * audits + monitoring + clipboard were merged into one page). Each offline check
+ * can be toggled + tuned. The config is a local UI preference (no backend call to
+ * toggle), so this drives the real reactive UI via the fake-backed app.
  */
 import { expect } from 'chai';
 import { $, $$ } from '@wdio/globals';
@@ -11,7 +12,7 @@ import { TIMEOUT } from '../helpers/wait.ts';
 describe('audit settings', () => {
   it('lists the audit checks with toggles', async () => {
     await gotoSettings();
-    await domClickByTitle('Audits');
+    await domClickByTitle('Security');
     await $('.audit-check').waitForExist({ timeout: TIMEOUT.normal });
     expect(await $$('.audit-check').length).to.be.greaterThan(3);
     expect(await $$('.audit-check .setting-switch').length).to.be.greaterThan(3);
@@ -19,7 +20,7 @@ describe('audit settings', () => {
 
   it('toggles a check off', async () => {
     await gotoSettings();
-    await domClickByTitle('Audits');
+    await domClickByTitle('Security');
     await $('.audit-check').waitForExist({ timeout: TIMEOUT.normal });
     // The config persists in localStorage across spec relaunches, so normalize to
     // defaults first — otherwise a prior run's toggle leaks into these assertions.

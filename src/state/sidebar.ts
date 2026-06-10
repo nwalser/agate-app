@@ -105,6 +105,28 @@ export function updateQuery(id: string, patch: Partial<Omit<CustomQuery, 'id'>>)
   });
 }
 
+/** Clone a saved view: a fresh `query:<uuid>` carrying a deep copy of the source's
+ *  icon + config, named `"<name> copy"`, inserted directly after the original in the
+ *  rail. Returns the new id, or null if `id` isn't a known saved query. */
+export function duplicateQuery(id: string): string | null {
+  const src = queryById(id);
+  if (!src) return null;
+  const newId = `query:${crypto.randomUUID()}`;
+  const copy: CustomQuery = {
+    id: newId,
+    name: `${src.name} copy`,
+    icon: src.icon,
+    // Deep-clone so edits to the copy never mutate the original's snapshot.
+    config: structuredClone(src.config),
+  };
+  const cur = sidebar();
+  const order = cur.order.slice();
+  const at = order.indexOf(id);
+  order.splice(at < 0 ? order.length : at + 1, 0, newId);
+  persist({ ...cur, order, queries: [...cur.queries, copy] });
+  return newId;
+}
+
 /** Add a horizontal divider to the rail. Inserts at `atIndex` in `order` (clamped),
  *  or appends when omitted. An optional `label` makes it a section header. Returns
  *  the new divider id. */

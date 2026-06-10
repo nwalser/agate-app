@@ -17,8 +17,11 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use zeroize::Zeroizing;
 
-use crate::dto::{BreachRecord, ServerConfig};
+use crate::dto::{AiAuditEntry, AiGrant, BreachRecord, ServerConfig};
 use crate::error::{AgateError, AgateResult, ErrorKind};
+
+/// Cap on the in-memory MCP access audit log (newest kept, oldest dropped).
+const AI_AUDIT_CAP: usize = 200;
 
 /// A known connection for the unlock-all set + add-connection prefill
 /// (non-secret: server + email only).
@@ -68,6 +71,15 @@ pub struct PersistedConfig {
     pub darkweb_scan_offset: usize,
     #[serde(default)]
     pub accounts: Vec<AccountRef>,
+    /// The local MCP (AI access) server is switched on. Off by default — the
+    /// feature is opt-in and exposes vault items to an external AI client.
+    #[serde(default)]
+    pub ai_server_enabled: bool,
+    /// The allowlist: the only items the MCP server will ever reveal. Non-secret
+    /// (owning account + opaque cipher id). Empty by default — nothing is exposed
+    /// until the user explicitly grants an item.
+    #[serde(default)]
+    pub ai_grants: Vec<AiGrant>,
 }
 
 impl PersistedConfig {
@@ -87,6 +99,27 @@ impl PersistedConfig {
     pub fn account_for(&self, email: &str) -> Option<&AccountRef> {
         self.accounts.iter().find(|a| a.email == email)
     }
+
+    /// Is this `(account, item)` on the AI allowlist?
+    pub fn is_ai_granted(&self, account_email: &str, item_id: &str) -> bool {
+        self.ai_grants
+            .iter()
+            .any(|g| g.account_email == account_email && g.item_id == item_id)
+    }
+
+    /// Add (`granted` = true) or remove (`granted` = false) an item from the AI
+    /// allowlist. Idempotent: adding twice is a no-op, removing an absent grant is
+    /// a no-op.
+    pub fn set_ai_grant(&mut self, account_email: &str, item_id: &str, granted: bool) {
+        let present = self.is_ai_granted(account_email, item_id);
+        if granted && !present {
+            self.ai_grants
+                .push(AiGrant { account_email: account_email.to_string(), item_id: item_id.to_string() });
+        } else if !granted && present {
+            self.ai_grants
+                .retain(|g| !(g.account_email == account_email && g.item_id == item_id));
+        }
+    }
 }
 
 fn schema_version() -> u32 {
@@ -104,6 +137,8 @@ impl PersistedConfig {
             darkweb_consent: false,
             darkweb_scan_offset: 0,
             accounts: Vec::new(),
+            ai_server_enabled: false,
+            ai_grants: Vec::new(),
         }
     }
 }
@@ -164,6 +199,9 @@ pub struct AppState {
     /// Cached HIBP public breach directory (large, CDN-cached, non-secret). Fetched
     /// once per process the first time the breach directory is opened. See darkweb.rs.
     pub breach_directory: Mutex<Option<Vec<BreachRecord>>>,
+    /// In-memory MCP access audit log (newest last, capped). Never persisted —
+    /// access timing + item names are sensitive, so it lives only for the session.
+    pub ai_audit: Mutex<Vec<AiAuditEntry>>,
     config_path: PathBuf,
 }
 
@@ -176,6 +214,7 @@ impl AppState {
             config: Mutex::new(config),
             session: Mutex::new(Session::default()),
             breach_directory: Mutex::new(None),
+            ai_audit: Mutex::new(Vec::new()),
             config_path,
         }
     }
@@ -184,6 +223,16 @@ impl AppState {
     pub async fn save_config(&self) -> AgateResult<()> {
         let cfg = self.config.lock().await;
         write_config(&self.config_path, &cfg)
+    }
+
+    /// Append one entry to the in-memory MCP audit log, trimming to the cap.
+    pub async fn push_ai_audit(&self, entry: AiAuditEntry) {
+        let mut log = self.ai_audit.lock().await;
+        log.push(entry);
+        let len = log.len();
+        if len > AI_AUDIT_CAP {
+            log.drain(0..len - AI_AUDIT_CAP);
+        }
     }
 }
 
@@ -234,4 +283,45 @@ fn write_config(path: &PathBuf, cfg: &PersistedConfig) -> AgateResult<()> {
     std::fs::rename(&tmp, path)
         .map_err(|e| AgateError::internal(format!("rename config: {e}")))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cfg() -> PersistedConfig {
+        PersistedConfig::fresh()
+    }
+
+    #[test]
+    fn ai_grant_round_trip() {
+        let mut c = cfg();
+        assert!(!c.is_ai_granted("a@b.com", "item-1"), "nothing is granted by default");
+
+        c.set_ai_grant("a@b.com", "item-1", true);
+        assert!(c.is_ai_granted("a@b.com", "item-1"));
+        assert_eq!(c.ai_grants.len(), 1);
+
+        c.set_ai_grant("a@b.com", "item-1", false);
+        assert!(!c.is_ai_granted("a@b.com", "item-1"));
+        assert!(c.ai_grants.is_empty());
+    }
+
+    #[test]
+    fn ai_grant_is_idempotent_and_scoped_per_account() {
+        let mut c = cfg();
+        c.set_ai_grant("a@b.com", "item-1", true);
+        c.set_ai_grant("a@b.com", "item-1", true); // duplicate add is a no-op
+        assert_eq!(c.ai_grants.len(), 1, "granting twice must not duplicate");
+
+        // Same item id under a different connection is a distinct grant.
+        c.set_ai_grant("other@b.com", "item-1", true);
+        assert_eq!(c.ai_grants.len(), 2);
+        assert!(c.is_ai_granted("other@b.com", "item-1"));
+        assert!(!c.is_ai_granted("a@b.com", "item-2"), "a different item is not granted");
+
+        // Removing an absent grant is a no-op.
+        c.set_ai_grant("a@b.com", "missing", false);
+        assert_eq!(c.ai_grants.len(), 2);
+    }
 }

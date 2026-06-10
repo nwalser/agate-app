@@ -43,6 +43,7 @@ import {
 } from '../lib/itemFields.ts';
 import type { SelectedSecurity } from '../hooks/useItemDetail.ts';
 import NotesView from './NotesView.tsx';
+import TotpRing from './TotpRing.tsx';
 import RepromptGate from './RepromptGate.tsx';
 import { isReprompted, markReprompted } from '../state/reprompt.ts';
 import { collectionNamesFor, loadCollections } from '../state/collections.ts';
@@ -200,7 +201,11 @@ export default function VaultDetailPane(props: {
                   >
                     <label>Password</label>
                     <div class="detail-value-row">
-                      <code class="detail-value mono">
+                      <code
+                        class="detail-value mono copyable"
+                        title="Copy"
+                        onClick={() => guard(() => props.copy('Password', login().password))}
+                      >
                         {pwShown() ? login().password : '••••••••••••'}
                       </code>
                       <button
@@ -209,13 +214,6 @@ export default function VaultDetailPane(props: {
                         onClick={() => guard(() => props.setRevealed(!props.revealed))}
                       >
                         {pwShown() ? <EyeOff size={14} /> : <Eye size={14} />}
-                      </button>
-                      <button
-                        class="ghost icon-btn"
-                        title="Copy"
-                        onClick={() => guard(() => props.copy('Password', login().password))}
-                      >
-                        <Copy size={14} />
                       </button>
                     </div>
                   </div>
@@ -235,11 +233,14 @@ export default function VaultDetailPane(props: {
                     <Timer size={11} strokeWidth={2} /> One-time code
                   </label>
                   <div class="detail-value-row">
-                    <code class="detail-value mono totp-code">{code().code}</code>
-                    <span class="totp-remaining">{code().remaining}s</span>
-                    <button class="ghost icon-btn" title="Copy" onClick={() => props.copy('Code', code().code)}>
-                      <Copy size={14} />
-                    </button>
+                    <code
+                      class="detail-value mono totp-code copyable"
+                      title="Copy"
+                      onClick={() => props.copy('Code', code().code)}
+                    >
+                      {code().code}
+                    </code>
+                    <TotpRing remaining={code().remaining} period={code().period} size={16} />
                   </div>
                 </div>
               )}
@@ -260,12 +261,15 @@ export default function VaultDetailPane(props: {
                   >
                     <label>Website</label>
                     <div class="detail-value-row">
-                      <span class="detail-value truncate">{u.uri}</span>
+                      <span
+                        class="detail-value truncate copyable"
+                        title="Copy"
+                        onClick={() => props.copy('URL', u.uri)}
+                      >
+                        {u.uri}
+                      </span>
                       <button class="ghost icon-btn" title="Open" onClick={() => u.uri && void openUrl(u.uri)}>
                         <ExternalLink size={14} />
-                      </button>
-                      <button class="ghost icon-btn" title="Copy" onClick={() => props.copy('URL', u.uri)}>
-                        <Copy size={14} />
                       </button>
                     </div>
                   </div>
@@ -593,10 +597,9 @@ function Field(props: { label: string; value: string | null; onCopy: () => void;
     >
       <label>{props.label}</label>
       <div class="detail-value-row">
-        <span class="detail-value truncate">{props.value}</span>
-        <button class="ghost icon-btn" title="Copy" onClick={() => props.onCopy()}>
-          <Copy size={14} />
-        </button>
+        <span class="detail-value truncate copyable" title="Copy" onClick={() => props.onCopy()}>
+          {props.value}
+        </span>
       </div>
     </div>
   );
@@ -618,12 +621,11 @@ function SecretField(props: { label: string; value: string | null; onCopy: () =>
     >
       <label>{props.label}</label>
       <div class="detail-value-row">
-        <code class="detail-value mono">{show() ? props.value : '••••••••••••'}</code>
+        <code class="detail-value mono copyable" title="Copy" onClick={() => props.onCopy()}>
+          {show() ? props.value : '••••••••••••'}
+        </code>
         <button class="ghost icon-btn" title={show() ? 'Hide' : 'Reveal'} onClick={() => setShow(!show())}>
           {show() ? <EyeOff size={14} /> : <Eye size={14} />}
-        </button>
-        <button class="ghost icon-btn" title="Copy" onClick={() => props.onCopy()}>
-          <Copy size={14} />
         </button>
       </div>
     </div>
@@ -659,7 +661,14 @@ function CardVisual(props: {
           props.onCtx?.(e, { label: 'Number', copy: () => props.onCopy('Number', number()), reveal: reveal() })
         }
       >
-        <span class="card-visual-number mono">{numberText()}</span>
+        <span
+          class="card-visual-number mono"
+          classList={{ copyable: !!number() }}
+          title={number() ? 'Copy' : undefined}
+          onClick={() => number() && props.onCopy('Number', number())}
+        >
+          {numberText()}
+        </span>
         <Show when={number()}>
           <button
             class="ghost icon-btn"
@@ -667,9 +676,6 @@ function CardVisual(props: {
             onClick={() => setRevealed(!revealed())}
           >
             {revealed() ? <EyeOff size={14} /> : <Eye size={14} />}
-          </button>
-          <button class="ghost icon-btn" title="Copy number" onClick={() => props.onCopy('Number', number())}>
-            <Copy size={14} />
           </button>
         </Show>
       </div>
@@ -697,14 +703,13 @@ function CardVisual(props: {
                 })
               }
             >
-              <span class="card-visual-val">{revealed() ? props.card.code : '•••'}</span>
-              <button
-                class="ghost icon-btn"
-                title="Copy code"
+              <span
+                class="card-visual-val copyable"
+                title="Copy"
                 onClick={() => props.onCopy('Security code', props.card.code)}
               >
-                <Copy size={12} />
-              </button>
+                {revealed() ? props.card.code : '•••'}
+              </span>
             </span>
           </div>
         </Show>
@@ -786,10 +791,13 @@ function CustomFieldView(props: {
                 <LinkIcon size={11} strokeWidth={2} /> {lbl}
               </label>
               <div class="detail-value-row">
-                <span class="detail-value truncate">{value}</span>
-                <button class="ghost icon-btn" title="Copy" onClick={() => props.onCopy(label(), value)}>
-                  <Copy size={14} />
-                </button>
+                <span
+                  class="detail-value truncate copyable"
+                  title="Copy"
+                  onClick={() => props.onCopy(label(), value)}
+                >
+                  {value}
+                </span>
               </div>
             </div>
           );

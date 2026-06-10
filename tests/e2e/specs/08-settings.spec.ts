@@ -27,7 +27,7 @@ describe('settings', () => {
     await domClickByTitle('Unlock');
     await $('.settings-method').waitForExist({ timeout: TIMEOUT.normal });
     await domClickByTitle('Appearance');
-    await $('.setting-segmented').waitForExist({ timeout: TIMEOUT.normal });
+    await $('.setting-select').waitForExist({ timeout: TIMEOUT.normal });
   });
 
   it('updates the app-unlock password', async () => {

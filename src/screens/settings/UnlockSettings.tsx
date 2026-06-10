@@ -115,9 +115,11 @@ export default function UnlockSettings() {
             onInput={(e) => setConfirmPw(e.currentTarget.value)}
           />
         </div>
-        <button class="primary" disabled={busy()} onClick={() => void changeAppPw()}>
-          Update app unlock
-        </button>
+        <div class="settings-actions">
+          <button class="primary" disabled={busy()} onClick={() => void changeAppPw()}>
+            Update app unlock
+          </button>
+        </div>
       </section>
 
       {/* 2 — This device (machine binding, always on) */}

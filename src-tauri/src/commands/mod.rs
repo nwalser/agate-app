@@ -4,6 +4,7 @@
 //! `connections`, `vault`, …), and return a typed `AgateResult`. No business logic
 //! or SDK calls live here, and no command panics.
 
+mod ai;
 mod appunlock;
 mod audit;
 mod connections;
@@ -16,6 +17,7 @@ mod update;
 mod vault;
 mod window;
 
+pub use ai::*;
 pub use appunlock::*;
 pub use audit::*;
 pub use connections::*;

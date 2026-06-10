@@ -724,6 +724,13 @@ button.vault-head-cell.sorted {
   min-width: 0;
   font-size: 13px;
 }
+/* Click a field's value to copy it (no copy button). Reveal/open buttons stay. */
+.copyable {
+  cursor: pointer;
+}
+.copyable:hover {
+  color: var(--primary);
+}
 .truncate {
   white-space: nowrap;
   overflow: hidden;
@@ -737,10 +744,31 @@ button.vault-head-cell.sorted {
   letter-spacing: 2px;
   color: var(--primary);
 }
-.totp-remaining {
-  font-size: 11px;
-  color: var(--muted-foreground);
-  font-variant-numeric: tabular-nums;
+/* Right-align the one-time-code list cell (header is align-end to match). The
+   code + countdown + ring hug the right edge; the value still truncates first. */
+.vault-cell.totp-code {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+}
+/* Circular countdown ring: track stays faint; the arc recolors by validity as
+   the code runs down (green → amber → red in the final seconds). */
+.totp-ring {
+  flex-shrink: 0;
+  display: block;
+}
+.totp-ring-track {
+  stroke: var(--border);
+}
+.totp-ring.ok .totp-ring-arc {
+  stroke: var(--success);
+}
+.totp-ring.low .totp-ring-arc {
+  stroke: var(--warning);
+}
+.totp-ring.crit .totp-ring-arc {
+  stroke: var(--destructive);
 }
 
 .detail-notes {
@@ -918,16 +946,16 @@ button.vault-head-cell.sorted {
 .vault-ctx {
   position: fixed;
   z-index: var(--z-ctx);
-  min-width: 200px;
+  min-width: 168px;
   background: var(--surface-2);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
-  padding: 5px;
+  padding: 3px;
 }
 .vault-ctx-title {
-  padding: 6px 10px 7px;
-  font-size: 12px;
+  padding: 4px 8px 5px;
+  font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
@@ -936,19 +964,20 @@ button.vault-head-cell.sorted {
 .vault-ctx-sep {
   height: 1px;
   background: var(--border);
-  margin: 4px 6px;
+  margin: 3px 6px;
 }
 .vault-ctx-item {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   width: 100%;
   text-align: left;
   border: none;
   background: transparent;
   border-radius: var(--radius-sm);
-  padding: 8px 10px;
-  font-size: 12.5px;
+  padding: 5px 8px;
+  font-size: 12px;
+  line-height: 1.25;
 }
 .vault-ctx-item:hover {
   background: var(--card-hover);

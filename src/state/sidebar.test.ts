@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   addDivider,
   addQuery,
+  duplicateQuery,
   queryById,
   removeEntry,
   resetSidebar,
@@ -51,6 +52,25 @@ describe('sidebar store — saved views', () => {
     removeEntry(id);
     expect(sidebar().order).not.toContain(id);
     expect(queryById(id)).toBeNull();
+  });
+
+  it('duplicateQuery clones config + icon under a new id, right after the original', () => {
+    const id = addQuery({ name: 'AWS prod', icon: 'cloud', config: VIEW_CONFIG })!;
+    const copyId = duplicateQuery(id);
+    expect(copyId).toBeTruthy();
+    expect(copyId).not.toBe(id);
+    const copy = queryById(copyId!);
+    expect(copy?.name).toBe('AWS prod copy');
+    expect(copy?.icon).toBe('cloud');
+    expect(copy?.config).toEqual(VIEW_CONFIG); // deep-equal, fresh object
+    expect(copy?.config).not.toBe(queryById(id)?.config); // not the same reference
+    const order = sidebar().order;
+    expect(order.indexOf(copyId!)).toBe(order.indexOf(id) + 1);
+  });
+
+  it('duplicateQuery returns null for a non-query id', () => {
+    expect(duplicateQuery('all')).toBeNull();
+    expect(duplicateQuery('query:nope')).toBeNull();
   });
 });
 

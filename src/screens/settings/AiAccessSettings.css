@@ -1,0 +1,191 @@
+/* Settings › AI Access. Scoped under .ai-access (the page root). Design tokens
+   only — no hardcoded colors. */
+
+.ai-access h3 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+/* Security callout above the enable toggle. */
+.ai-access .ai-warn {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  margin: 12px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--warning);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted-foreground);
+}
+.ai-access .ai-warn svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--warning);
+}
+
+/* Enable row: label/desc on the left, the shared Switch on the right. */
+.ai-access .ai-server-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+.ai-access .ai-server-toggle-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Connection details (URL / token / command). */
+.ai-access .ai-conn {
+  margin-top: 6px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+}
+.ai-access .ai-conn-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  margin: 10px 0 4px;
+}
+.ai-access .ai-conn-label:first-child {
+  margin-top: 0;
+}
+.ai-access .ai-code-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ai-access .ai-code {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--foreground);
+  white-space: nowrap;
+  overflow-x: auto;
+}
+.ai-access .ai-token,
+.ai-access .ai-cmd {
+  white-space: normal;
+  word-break: break-all;
+}
+
+/* Allowlist picker. */
+.ai-access .ai-search {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 4px 0 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--foreground);
+  font-size: 12.5px;
+}
+.ai-access .ai-search:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+.ai-access .ai-item-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.ai-access .ai-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 11px;
+  border-bottom: 1px solid var(--border);
+}
+.ai-access .ai-item:last-child {
+  border-bottom: none;
+}
+.ai-access .ai-item.granted {
+  background: var(--card);
+}
+.ai-access .ai-item-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.ai-access .ai-item-name {
+  font-size: 12.5px;
+  color: var(--foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ai-access .ai-item-sub {
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Access log. */
+.ai-access .ai-audit-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.ai-access .ai-audit-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  max-height: 240px;
+  overflow-y: auto;
+}
+.ai-access .ai-audit-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 11px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11.5px;
+}
+.ai-access .ai-audit-row:last-child {
+  border-bottom: none;
+}
+.ai-access .ai-audit-action {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--foreground);
+}
+.ai-access .ai-audit-item {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ai-access .ai-audit-verdict {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--success);
+}
+.ai-access .ai-audit-verdict.denied {
+  color: var(--destructive);
+}

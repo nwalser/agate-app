@@ -11,6 +11,7 @@ import { Show, type JSX } from 'solid-js';
 import { Dynamic } from 'solid-js/web';
 import { Copy, KeyRound, ShieldAlert, ShieldCheck, ShieldX } from 'lucide-solid';
 import type { CellContent } from '../lib/cellRendering.ts';
+import TotpRing from './TotpRing.tsx';
 
 const SEC_ICON = { ok: ShieldCheck, warn: ShieldAlert, risk: ShieldX } as const;
 
@@ -56,7 +57,7 @@ function renderCell(c: CellContent, onCopy?: () => void): JSX.Element {
         <span class="vault-cell mono totp-code" classList={{ 'vault-cell-copyable': !!onCopy }}>
           <span class="vault-cell-val">{c.code ? c.code.code : '…'}</span>
           <Show when={c.code}>
-            <small class="totp-remaining">{c.code!.remaining}s</small>
+            {(code) => <TotpRing remaining={code().remaining} period={code().period} />}
           </Show>
           <CopyButton onCopy={onCopy} />
         </span>

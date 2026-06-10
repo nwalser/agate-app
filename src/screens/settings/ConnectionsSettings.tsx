@@ -158,12 +158,14 @@ export default function ConnectionsSettings() {
             </div>
           )}
         </For>
-        <button class="add-account" onClick={() => setAddingConnection(true)}>
-          <UserPlus size={14} strokeWidth={1.75} /> Add connection
-        </button>
-        <button class="danger" onClick={() => void logout()}>
-          Log out of everything
-        </button>
+        <div class="settings-actions">
+          <button class="danger" onClick={() => void logout()}>
+            Log out of everything
+          </button>
+          <button class="primary gen-btn" onClick={() => setAddingConnection(true)}>
+            <UserPlus size={14} strokeWidth={1.75} /> Add connection
+          </button>
+        </div>
       </section>
     </div>
   );

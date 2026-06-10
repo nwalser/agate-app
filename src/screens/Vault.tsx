@@ -54,6 +54,7 @@ import { useBulkActions } from '../hooks/useBulkActions.ts';
 import { useVaultCommands } from '../hooks/useVaultCommands.ts';
 import ItemEditor from '../components/ItemEditor.tsx';
 import SecurityCenter from '../components/SecurityCenter.tsx';
+import SendsView from '../components/SendsView.tsx';
 import SyncStatus from '../components/SyncStatus.tsx';
 import CommandPalette from '../components/CommandPalette.tsx';
 import VaultList from '../components/VaultList.tsx';
@@ -470,6 +471,8 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
           selectFilter={selectFilter}
           onRunQuery={runQuery}
           activeViewId={activeViewId()}
+          viewDirty={viewDirty()}
+          onSaveView={saveActiveView}
           scopedFolders={filtering.scopedFolders()}
           items={data.items()}
           folderCreate={(account, fullName) => void actions.folderCreate(account, fullName)}
@@ -514,6 +517,9 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
           </Match>
           <Match when={view() === 'generator'}>
             <GeneratorPage />
+          </Match>
+          <Match when={view() === 'sends'}>
+            <SendsView />
           </Match>
           <Match when={view() === 'vault'}>
             <div class="vault-main">

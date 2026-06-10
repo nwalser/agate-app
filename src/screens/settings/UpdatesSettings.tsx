@@ -86,26 +86,30 @@ export default function UpdatesSettings() {
           fallback={
             <>
               <p class="muted settings-help">Check whether a newer version of Agate is available.</p>
-              <button class="primary gen-btn" disabled={checking()} onClick={() => void check()}>
-                <RefreshCw size={14} strokeWidth={1.75} class={checking() ? 'spin' : ''} />
-                {checking() ? 'Checking…' : 'Check for updates'}
-              </button>
               {/* '' means a check ran and found nothing newer (null = not checked yet). */}
               <Show when={availableVersion() === ''}>
                 <p class="update-uptodate">
                   <CheckCircle2 size={13} strokeWidth={2} /> You're on the latest version.
                 </p>
               </Show>
+              <div class="settings-actions">
+                <button class="primary gen-btn" disabled={checking()} onClick={() => void check()}>
+                  <RefreshCw size={14} strokeWidth={1.75} class={checking() ? 'spin' : ''} />
+                  {checking() ? 'Checking…' : 'Check for updates'}
+                </button>
+              </div>
             </>
           }
         >
           {(v) => (
             <>
               <p class="settings-update-available">Version {v()} is available.</p>
-              <button class="primary gen-btn" disabled={installing()} onClick={() => void install()}>
-                <DownloadCloud size={14} strokeWidth={1.75} />
-                {installing() ? 'Installing…' : 'Install & restart'}
-              </button>
+              <div class="settings-actions">
+                <button class="primary gen-btn" disabled={installing()} onClick={() => void install()}>
+                  <DownloadCloud size={14} strokeWidth={1.75} />
+                  {installing() ? 'Installing…' : 'Install & restart'}
+                </button>
+              </div>
             </>
           )}
         </Show>

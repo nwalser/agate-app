@@ -19,6 +19,12 @@
   padding: 0;
   border-bottom: none;
 }
+/* A row right before a subheading shouldn't add its bottom padding on top of the
+   heading's margin — the heading owns that gap, so a toggle → heading reads the same
+   as a picker → heading. */
+.setting-row:has(+ h3) {
+  padding-bottom: 0;
+}
 .setting-row.dim {
   opacity: 0.5;
 }
@@ -91,43 +97,8 @@
 
 /* Value pickers sit directly under their help text; give them an even gap from
    whatever follows (a toggle row or the next subheading). */
-.settings-section > .setting-select,
-.settings-section > .setting-segmented {
+.settings-section > .setting-select {
   margin-bottom: 4px;
-}
-
-/* Segmented option picker ---------------------------------------------------- */
-.setting-segmented {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.setting-seg-option {
-  flex: 1 1 0;
-  min-width: 68px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 9px 10px;
-  font-size: 12px;
-  color: var(--muted-foreground);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-}
-.setting-seg-option:hover {
-  color: var(--foreground);
-  border-color: var(--border-strong);
-}
-.setting-seg-option.active {
-  color: var(--primary);
-  border-color: var(--primary);
-  font-weight: 600;
-  background: color-mix(in srgb, var(--primary) 10%, transparent);
-}
-.setting-seg-option svg {
-  flex-shrink: 0;
 }
 
 /* A labelled sub-field revealed under an enabled toggle (e.g. an audit threshold).
@@ -135,6 +106,7 @@
 .setting-subfield {
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: 6px;
   margin: 10px 0 2px 28px;
 }
@@ -147,7 +119,6 @@
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  margin-top: 14px;
   border: none;
   background: transparent;
   border-radius: var(--radius-sm);

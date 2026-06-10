@@ -5,9 +5,7 @@
 import { cleanup, fireEvent, render } from '@solidjs/testing-library';
 import { createSignal } from 'solid-js';
 import { afterEach, describe, expect, it } from 'vitest';
-import { Segmented, Select, Switch, ToggleRow } from './SettingsControls.tsx';
-
-const all = (sel: string) => Array.from(document.querySelectorAll<HTMLElement>(sel));
+import { Select, Switch, ToggleRow } from './SettingsControls.tsx';
 
 describe('Switch', () => {
   afterEach(cleanup);
@@ -44,34 +42,6 @@ describe('ToggleRow', () => {
     expect(document.querySelector('.setting-row-desc')!.textContent).toContain('Look each launch');
     fireEvent.click(document.querySelector('.setting-switch')!);
     expect(on()).toBe(false);
-  });
-});
-
-describe('Segmented', () => {
-  afterEach(cleanup);
-
-  it('marks the selected option active and selects another on click', () => {
-    const [v, setV] = createSignal(1);
-    render(() => (
-      <Segmented
-        value={v()}
-        onChange={setV}
-        ariaLabel="pick"
-        options={[
-          { value: 1, label: 'One' },
-          { value: 2, label: 'Two' },
-          { value: 3, label: 'Three' },
-        ]}
-      />
-    ));
-    const opts = all('.setting-seg-option');
-    expect(opts.length).toBe(3);
-    expect(opts[0].getAttribute('aria-checked')).toBe('true');
-    expect(opts[1].getAttribute('aria-checked')).toBe('false');
-    fireEvent.click(opts[2]);
-    expect(v()).toBe(3);
-    expect(opts[2].getAttribute('aria-checked')).toBe('true');
-    expect(opts[0].getAttribute('aria-checked')).toBe('false');
   });
 });
 

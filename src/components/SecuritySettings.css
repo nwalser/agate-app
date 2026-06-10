@@ -1,9 +1,5 @@
-/* Sub-section heading inside the Security page (e.g. Clipboard, Vault timeout). */
+/* Sub-section heading inside a page (e.g. Clipboard, Vault timeout, Row density).
+   Shared by Security + Appearance; the gap above is the page's main vertical rhythm. */
 .sec-subhead {
-  margin-top: 22px;
-}
-
-/* Export / import actions sit below their pickers. */
-.export-btn {
-  margin-top: 10px;
+  margin-top: 20px;
 }

@@ -48,9 +48,10 @@ pub use aad::{app_unlock_aad, cred_aad, scan_cache_aad};
 pub use envelope::{open_with_key, seal_with_key};
 pub use kdf::{derive_auk, fresh_pepper, fresh_salt};
 pub use keychain::{
-    delete_cred, delete_device_pepper, delete_hello_blob, delete_key, delete_scan_cache,
-    load_app_unlock, load_cred, load_device_pepper, load_hello_blob, load_scan_cache,
-    store_app_unlock, store_cred, store_device_pepper, store_hello_blob, store_scan_cache,
+    delete_ai_token, delete_cred, delete_device_pepper, delete_hello_blob, delete_key,
+    delete_scan_cache, load_ai_token, load_app_unlock, load_cred, load_device_pepper,
+    load_hello_blob, load_scan_cache, store_ai_token, store_app_unlock, store_cred,
+    store_device_pepper, store_hello_blob, store_scan_cache,
 };
 
 const KEYRING_SERVICE: &str = "com.agate.desktop";
@@ -71,6 +72,10 @@ pub const SCAN_CACHE_KEY: &str = "scan-cache";
 /// on this machine, a copied `app-unlock` blob can't be unlocked elsewhere even
 /// with the right app password.
 pub const DEVICE_PEPPER_KEY: &str = "device-pepper";
+/// Fixed keychain entry name for the local MCP server's bearer token. The token
+/// gates the loopback AI-access endpoint, so it is a capability secret: stored in
+/// the OS keychain (never `config.json`), generated on first enable.
+pub const AI_TOKEN_KEY: &str = "ai-mcp-token";
 
 /// Keychain entry name for a connection's sealed master password.
 pub fn cred_key(email: &str) -> String {

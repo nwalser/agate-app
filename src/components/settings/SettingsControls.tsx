@@ -94,41 +94,6 @@ export function ToggleRow(props: {
   );
 }
 
-// The one option picker: a segmented button group for a small closed set (theme,
-// language, timeouts, thresholds, …). Replaces both the old bespoke pill rows and
-// native <select> dropdowns for fixed enumerations.
-export function Segmented<T extends string | number>(props: {
-  value: T;
-  options: { value: T; label: string; icon?: IconComponent }[];
-  onChange: (v: T) => void;
-  ariaLabel?: string;
-}) {
-  return (
-    <div class="setting-segmented" role="radiogroup" aria-label={props.ariaLabel}>
-      <For each={props.options}>
-        {(opt) => (
-          <button
-            type="button"
-            role="radio"
-            aria-checked={props.value === opt.value}
-            class="setting-seg-option"
-            classList={{ active: props.value === opt.value }}
-            onClick={() => props.onChange(opt.value)}
-          >
-            <Show when={opt.icon}>
-              {(icon) => {
-                const Icon = icon();
-                return <Icon size={15} strokeWidth={1.6} />;
-              }}
-            </Show>
-            <span>{opt.label}</span>
-          </button>
-        )}
-      </For>
-    </div>
-  );
-}
-
 // The one dropdown picker: a styled native <select> for choosing a single value
 // from a list (timeouts, clipboard delay, thresholds, export format). Option values
 // may be numbers — the typed value is preserved across the string round-trip.

@@ -3,7 +3,7 @@
    threshold picker all come from the shared Settings controls — this file only
    owns the per-check spacing + divider. */
 .audit-check {
-  padding: 11px 0;
+  padding: 10px 0;
   border-bottom: 1px solid var(--border);
 }
 .audit-check:last-of-type {

@@ -1,16 +1,18 @@
-// Settings › Sends — manage Bitwarden Sends (ephemeral shares) across all
-// unlocked connections: list each with its type/usage, and revoke ones you no
-// longer need. Backed by the SDK's sends client (list + delete). Creating Sends
-// is a follow-up.
+// Sends view — a main vault view (reached from the left rail, like Generator /
+// Security) that lists the Bitwarden Sends (ephemeral shares) across every unlocked
+// connection and lets you revoke ones you no longer need. Backed by the SDK's sends
+// client (list + delete). Creating Sends is a follow-up. Previously this lived under
+// Settings; it now sits in the vault so shares are managed alongside the vault.
 
 import { createSignal, For, onMount, Show } from 'solid-js';
 import { Send as SendIcon, Trash2 } from 'lucide-solid';
-import { ipc } from '../../lib/ipc.ts';
-import type { SendSummary } from '../../lib/types.ts';
-import { relativeFromNow } from '../../lib/dates.ts';
-import { pushToast, toastError } from '../../state/toast.ts';
+import { ipc } from '../lib/ipc.ts';
+import type { SendSummary } from '../lib/types.ts';
+import { relativeFromNow } from '../lib/dates.ts';
+import { pushToast, toastError } from '../state/toast.ts';
+import './SendsView.css';
 
-export default function SendsSettings() {
+export default function SendsView() {
   const [sends, setSends] = createSignal<SendSummary[]>([]);
   const [loading, setLoading] = createSignal(true);
   const [removing, setRemoving] = createSignal<string | null>(null);
@@ -50,19 +52,26 @@ export default function SendsSettings() {
   }
 
   return (
-    <div class="settings-page">
-      <section class="settings-section">
-        <h3>
-          <SendIcon size={14} strokeWidth={1.75} /> Sends
-        </h3>
-        <p class="muted settings-help">
+    <div class="sends">
+      <header class="sends-header">
+        <SendIcon size={16} strokeWidth={1.75} />
+        <h2>Sends</h2>
+        <Show when={!loading()}>
+          <span class="sends-count">
+            {sends().length} {sends().length === 1 ? 'send' : 'sends'}
+          </span>
+        </Show>
+      </header>
+
+      <div class="sends-body">
+        <p class="muted sends-intro">
           Ephemeral shares from your accounts. Revoke any you no longer need.
         </p>
         <Show when={!loading()} fallback={<p class="muted">Loading…</p>}>
           <Show when={sends().length > 0} fallback={<p class="muted">No active Sends.</p>}>
             <For each={sends()}>
               {(s) => (
-                <div class="settings-row send-row">
+                <div class="send-row">
                   <span class="send-info">
                     <span class="send-name truncate">{s.name}</span>
                     <span class="muted send-meta">{meta(s)}</span>
@@ -75,7 +84,7 @@ export default function SendsSettings() {
             </For>
           </Show>
         </Show>
-      </section>
+      </div>
     </div>
   );
 }

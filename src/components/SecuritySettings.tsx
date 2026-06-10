@@ -20,7 +20,6 @@ import {
   type AutoLockMinutes,
 } from '../state/autolock.ts';
 import { Select, ToggleRow } from './settings/SettingsControls.tsx';
-import ExportSettings from './ExportSettings.tsx';
 import './SecuritySettings.css';
 
 function clearLabel(seconds: ClipboardClearSeconds): string {
@@ -36,14 +35,13 @@ function timeoutLabel(minutes: AutoLockMinutes): string {
 }
 
 /**
- * Security section for the Settings screen: toggles for the two periodic,
- * all-account checks. Both default on. Designed to drop into Settings.tsx as a
- * single `<SecuritySettings />`.
+ * Security-monitoring + lock + clipboard section of the combined Security page.
+ * The local audit checks (AuditSettings) and Export/Import follow it on the page —
+ * see Settings.tsx, which composes the three under one `.settings-page`.
  */
 export default function SecuritySettings() {
   return (
-    <>
-      <section class="settings-section">
+    <section class="settings-section">
         <h3>
           <ShieldAlert size={14} strokeWidth={1.75} /> Security monitoring
         </h3>
@@ -104,8 +102,6 @@ export default function SecuritySettings() {
           options={CLIPBOARD_CLEAR_OPTIONS.map((opt) => ({ value: opt, label: clearLabel(opt) }))}
           onChange={(v) => setClipboardClearSeconds(v)}
         />
-      </section>
-      <ExportSettings />
-    </>
+    </section>
   );
 }

@@ -33,6 +33,17 @@ pub fn configure_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Err
         .unwrap_or_else(|_| std::path::PathBuf::from("."));
     app.manage(AppState::load(config_dir));
 
+    // Re-arm the local MCP (AI access) server if the user enabled it previously.
+    // It still fails closed until the vault is unlocked + the token matches.
+    let ai_enabled = tauri::async_runtime::block_on(async {
+        app.state::<AppState>().config.lock().await.ai_server_enabled
+    });
+    if ai_enabled {
+        if let Err(e) = crate::aiserver::ensure_started(app.handle().clone()) {
+            log::warn!("AI server auto-start failed: {}", e.message);
+        }
+    }
+
     if let Some(window) = app.get_webview_window("main") {
         // Exclude the window from screen capture on Windows (decrypted
         // secrets are rendered in the DOM). Release builds only: under
