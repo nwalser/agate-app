@@ -7,8 +7,10 @@
 // - Reprompt ("require master password to view") items NEVER copy secrets here —
 //   the reprompt gate lives in the main window, and its verification state is
 //   per-webview, so the popup always defers to the full app (onRepromptBlocked).
-// - The popup wipes its decrypted item cache + query whenever it hides (clear()),
-//   so a hidden tray webview doesn't sit on vault metadata after a lock.
+// - The popup deliberately KEEPS its state (query, items, scroll, selection)
+//   across hide/show — a user choice; the retained data is list metadata only
+//   (names/usernames/uris, never passwords). It still fails closed: refresh()
+//   runs on every show and drops the items the moment the session is locked.
 
 import { createSignal } from 'solid-js';
 import type { ipc as realIpc } from '../lib/ipc.ts';
@@ -62,6 +64,27 @@ export function filterTrayItems(items: VaultItem[], query: string): VaultItem[] 
     .map((e) => e.it);
 }
 
+/** Whether two list entries are field-for-field identical (VaultItem is a flat
+ *  all-primitive shape, so shallow comparison is exact). */
+function sameItem(a: VaultItem, b: VaultItem): boolean {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]) as Set<keyof VaultItem>;
+  for (const k of keys) {
+    if (a[k] !== b[k]) return false;
+  }
+  return true;
+}
+
+/** Adopt the fresh list but keep the previous object for every unchanged item,
+ *  so <For> reuses its DOM rows and the list's scroll position survives the
+ *  refresh-on-show. */
+function reconcileById(prev: VaultItem[], next: VaultItem[]): VaultItem[] {
+  const byId = new Map(prev.map((i) => [i.id, i]));
+  return next.map((n) => {
+    const old = byId.get(n.id);
+    return old && sameItem(old, n) ? old : n;
+  });
+}
+
 export function createTrayStore(deps: TrayStoreDeps) {
   const [ready, setReady] = createSignal(false);
   const [unlocked, setUnlocked] = createSignal(false);
@@ -69,12 +92,14 @@ export function createTrayStore(deps: TrayStoreDeps) {
   const [query, setQuery] = createSignal('');
 
   /** Re-read session + items. Called on mount and every time the popup shows,
-   *  so a lock/sync in the main window is reflected on the next open. */
+   *  so a lock/sync in the main window is reflected on the next open. The query
+   *  is never touched here — popup state survives open/close on purpose. */
   async function refresh(): Promise<void> {
     try {
       const status = await deps.ipc.getSessionStatus();
       setUnlocked(status.unlocked);
-      setItems(status.unlocked ? await deps.ipc.listItems() : []);
+      const fresh = status.unlocked ? await deps.ipc.listItems() : [];
+      setItems((prev) => reconcileById(prev, fresh));
     } catch (err) {
       // Treat an unreadable session as locked — the popup must fail closed.
       setUnlocked(false);
@@ -83,12 +108,6 @@ export function createTrayStore(deps: TrayStoreDeps) {
     } finally {
       setReady(true);
     }
-  }
-
-  /** Wipe the decrypted cache + query — called whenever the popup hides. */
-  function clear(): void {
-    setItems([]);
-    setQuery('');
   }
 
   const filtered = () => filterTrayItems(items(), query());
@@ -131,7 +150,6 @@ export function createTrayStore(deps: TrayStoreDeps) {
     setQuery,
     filtered,
     refresh,
-    clear,
     copyUsername,
     copyPassword,
     copyTotp,

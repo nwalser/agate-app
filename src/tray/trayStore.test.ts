@@ -25,7 +25,9 @@ function makeDeps(over: {
   const deps = {
     ipc: {
       getSessionStatus: vi.fn(async () => over.status ?? unlockedStatus),
-      listItems: vi.fn(async () => over.items ?? []),
+      // Fresh clones per call, like real IPC deserialization — so identity
+      // tests prove the store reconciles, not that the fake reuses objects.
+      listItems: vi.fn(async () => (over.items ?? []).map((i) => ({ ...i }))),
       itemDetail: vi.fn(async (accountEmail: string, id: string) =>
         makeDetail({
           id,
@@ -173,14 +175,37 @@ describe('createTrayStore copy actions', () => {
   });
 });
 
-describe('createTrayStore.clear', () => {
-  it('wipes items and the query (called when the popup hides)', async () => {
+describe('createTrayStore state retention', () => {
+  it('refresh preserves object identity of unchanged items (keeps DOM rows, so scroll survives)', async () => {
+    const deps = makeDeps({ items: [makeItem({ id: 'a', name: 'A' }), makeItem({ id: 'b', name: 'B' })] });
+    const store = createTrayStore(deps);
+    await store.refresh();
+    const before = store.filtered();
+    await store.refresh();
+    const after = store.filtered();
+    expect(after[0]).toBe(before[0]);
+    expect(after[1]).toBe(before[1]);
+  });
+
+  it('refresh swaps in the new object when an item changed', async () => {
+    const deps = makeDeps({ items: [makeItem({ id: 'a', name: 'A' })] });
+    const store = createTrayStore(deps);
+    await store.refresh();
+    const before = store.filtered()[0];
+    deps.ipc.listItems.mockResolvedValueOnce([makeItem({ id: 'a', name: 'Renamed' })]);
+    await store.refresh();
+    expect(store.filtered()[0]).not.toBe(before);
+    expect(store.filtered()[0]?.name).toBe('Renamed');
+  });
+
+  it('keeps the query across refreshes, and across a lock (only items are dropped)', async () => {
     const deps = makeDeps({ items: [makeItem({ id: 'a', name: 'A' })] });
     const store = createTrayStore(deps);
     await store.refresh();
     store.setQuery('a');
-    store.clear();
+    deps.ipc.getSessionStatus.mockResolvedValueOnce({ ...unlockedStatus, unlocked: false });
+    await store.refresh();
     expect(store.filtered()).toEqual([]);
-    expect(store.query()).toBe('');
+    expect(store.query()).toBe('a');
   });
 });

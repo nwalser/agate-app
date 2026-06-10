@@ -5,8 +5,9 @@
 //
 // Lifecycle: the popup is shown/hidden by the Rust tray module — every show
 // focuses the window, so `focus` doubles as "refresh session + items and grab
-// the search box", and `blur` (which also hides the window) wipes the local
-// item cache via store.clear().
+// the search box". Hiding intentionally keeps everything (query, scroll,
+// selection, items): reopening must feel like the popup never went away. The
+// refresh-on-show reconciles items in place and drops them on lock.
 
 import { createSignal, For, onCleanup, onMount, Show } from 'solid-js';
 import { Dynamic } from 'solid-js/web';
@@ -37,16 +38,11 @@ export default function TrayApp() {
 
   function onFocus() {
     syncThemeFromStorage();
-    setSelected(0);
     void store.refresh();
+    // Select (not clear) the previous query: it stays visible, and typing
+    // starts a fresh search without an explicit clear.
     searchEl?.focus();
-  }
-
-  // Blur means the popup is being hidden (Rust hides it on focus loss) — drop
-  // the decrypted item cache so a hidden webview holds no vault data.
-  function onBlur() {
-    store.clear();
-    setSelected(0);
+    searchEl?.select();
   }
 
   function onKeyDown(e: KeyboardEvent) {
@@ -76,12 +72,10 @@ export default function TrayApp() {
     void store.refresh();
     searchEl?.focus();
     window.addEventListener('focus', onFocus);
-    window.addEventListener('blur', onBlur);
     document.addEventListener('keydown', onKeyDown);
   });
   onCleanup(() => {
     window.removeEventListener('focus', onFocus);
-    window.removeEventListener('blur', onBlur);
     document.removeEventListener('keydown', onKeyDown);
   });
 
