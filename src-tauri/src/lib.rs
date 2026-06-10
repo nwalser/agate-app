@@ -71,13 +71,11 @@ pub fn run() {
                 .with_denylist(&["tray"])
                 .build(),
         )
-        // The tray popup never closes for real: focus loss and the close button
-        // both just hide it, so the next tray click can re-show it instantly.
-        .on_window_event(|window, event| {
-            if window.label() != "tray" {
-                return;
-            }
-            match event {
+        .on_window_event(|window, event| match window.label() {
+            // The tray popup never closes for real: focus loss and the close
+            // button both just hide it, so the next tray click re-shows it
+            // instantly.
+            "tray" => match event {
                 tauri::WindowEvent::Focused(false) => {
                     let _ = window.hide();
                 }
@@ -86,7 +84,27 @@ pub fn run() {
                     let _ = window.hide();
                 }
                 _ => {}
+            },
+            // Close-to-tray (Settings → Startup): closing the main window hides
+            // it and Agate keeps running in the tray. When OFF, exit explicitly —
+            // the hidden tray-popup window would otherwise keep the process
+            // alive forever after the main window is destroyed.
+            "main" => {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    use tauri::Manager;
+                    let state = window.state::<state::AppState>();
+                    let close_to_tray = tauri::async_runtime::block_on(async {
+                        state.config.lock().await.close_to_tray
+                    });
+                    if close_to_tray {
+                        api.prevent_close();
+                        let _ = window.hide();
+                    } else {
+                        window.app_handle().exit(0);
+                    }
+                }
             }
+            _ => {}
         })
         .setup(|app| setup::configure_app(app))
         .invoke_handler(tauri::generate_handler![
@@ -138,6 +156,8 @@ pub fn run() {
             window_controls_layout,
             show_main_window,
             hide_tray_window,
+            get_close_to_tray,
+            set_close_to_tray,
             get_autostart,
             set_autostart,
             audit_offline,

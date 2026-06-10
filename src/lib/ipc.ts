@@ -245,6 +245,11 @@ export const ipc = {
 
   // ---- startup (launch at login) ----
 
+  /** Whether closing the main window keeps Agate running in the tray. */
+  getCloseToTray: (): Promise<boolean> => invoke('get_close_to_tray'),
+
+  setCloseToTray: (enabled: boolean): Promise<void> => invoke('set_close_to_tray', { enabled }),
+
   getAutostart: (): Promise<boolean> => invoke('get_autostart'),
 
   setAutostart: (enabled: boolean): Promise<void> => invoke('set_autostart', { enabled }),

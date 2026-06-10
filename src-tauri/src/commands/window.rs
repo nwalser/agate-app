@@ -1,7 +1,9 @@
-//! Window-chrome query command + launch-at-login (autostart) toggle.
+//! Window-chrome query command + launch-at-login (autostart) and
+//! close-to-tray toggles.
 
 use tauri_plugin_autostart::ManagerExt;
 
+use super::State;
 use crate::dto;
 use crate::error::{AgateError, AgateResult};
 use crate::window;
@@ -28,6 +30,19 @@ pub fn hide_tray_window(window: tauri::WebviewWindow) {
     if window.label() == "tray" {
         let _ = window.hide();
     }
+}
+
+/// Whether closing the main window keeps Agate running in the tray.
+#[tauri::command]
+pub async fn get_close_to_tray(state: State<'_>) -> AgateResult<bool> {
+    Ok(state.config.lock().await.close_to_tray)
+}
+
+/// Enable or disable close-to-tray (persisted; read by the main window's
+/// close handler in `lib.rs`).
+#[tauri::command]
+pub async fn set_close_to_tray(state: State<'_>, enabled: bool) -> AgateResult<()> {
+    state.update_config(|c| c.close_to_tray = enabled).await
 }
 
 /// Whether Agate is registered to launch at login.

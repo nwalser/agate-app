@@ -1,6 +1,7 @@
-// Settings › Appearance — "Startup" section: launch Agate at login. Reads the
-// current state from the OS on mount (get_autostart) and toggles it via
-// set_autostart. Both are thin Rust commands over tauri-plugin-autostart.
+// Settings › Appearance — "Startup" section: launch Agate at login, and
+// close-to-tray (closing the main window hides to the tray instead of
+// quitting). Autostart lives in the OS (tauri-plugin-autostart); close-to-tray
+// is persisted app config read by the close handler in lib.rs.
 
 import { createSignal, onMount } from 'solid-js';
 import { Power } from 'lucide-solid';
@@ -10,25 +11,30 @@ import { toastError } from '../../state/toast.ts';
 import { ToggleRow } from '../../components/settings/SettingsControls.tsx';
 
 export default function StartupSettings() {
-  const [enabled, setEnabled] = createSignal(false);
+  const [autostart, setAutostart] = createSignal(false);
+  const [closeToTray, setCloseToTray] = createSignal(false);
   const [busy, setBusy] = createSignal(false);
 
   onMount(() => {
     void (async () => {
       try {
-        setEnabled(await ipc.getAutostart());
+        const [auto, tray] = await Promise.all([ipc.getAutostart(), ipc.getCloseToTray()]);
+        setAutostart(auto);
+        setCloseToTray(tray);
       } catch (err) {
         toastError(err);
       }
     })();
   });
 
-  async function toggle() {
+  // Shared toggle shape: persist first, reflect only on success — a failed
+  // write must not leave the switch lying about the stored state.
+  async function toggle(current: () => boolean, persist: (v: boolean) => Promise<void>, reflect: (v: boolean) => void) {
     setBusy(true);
-    const next = !enabled();
+    const next = !current();
     try {
-      await ipc.setAutostart(next);
-      setEnabled(next);
+      await persist(next);
+      reflect(next);
     } catch (err) {
       toastError(err);
     } finally {
@@ -44,9 +50,16 @@ export default function StartupSettings() {
       <p class="muted settings-help">{t('startup.help')}</p>
       <ToggleRow
         label={t('startup.launch')}
-        checked={enabled()}
+        checked={autostart()}
         disabled={busy()}
-        onChange={() => void toggle()}
+        onChange={() => void toggle(autostart, ipc.setAutostart, setAutostart)}
+      />
+      <ToggleRow
+        label={t('startup.closeToTray')}
+        desc={t('startup.closeToTrayDesc')}
+        checked={closeToTray()}
+        disabled={busy()}
+        onChange={() => void toggle(closeToTray, ipc.setCloseToTray, setCloseToTray)}
       />
     </section>
   );

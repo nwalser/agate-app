@@ -52,6 +52,8 @@ const en = {
   'startup.title': 'Startup',
   'startup.help': 'Open Agate automatically when you sign in to your computer. It still starts locked.',
   'startup.launch': 'Launch at login',
+  'startup.closeToTray': 'Keep running in the tray when the window is closed',
+  'startup.closeToTrayDesc': 'Closing the window hides Agate instead of quitting; use the tray icon to reopen or quit.',
 
   'offline.message': 'Offline — showing your last synced vault. Changes you make may not reach the server yet.',
 
@@ -99,6 +101,8 @@ const es: Partial<Record<Key, string>> = {
   'startup.title': 'Inicio',
   'startup.help': 'Abre Agate automáticamente al iniciar sesión en tu equipo. Sigue arrancando bloqueado.',
   'startup.launch': 'Abrir al iniciar sesión',
+  'startup.closeToTray': 'Seguir en la bandeja al cerrar la ventana',
+  'startup.closeToTrayDesc': 'Cerrar la ventana oculta Agate en vez de salir; usa el icono de la bandeja para reabrir o salir.',
 
   'offline.message': 'Sin conexión — mostrando tu última bóveda sincronizada. Tus cambios podrían no llegar al servidor todavía.',
 

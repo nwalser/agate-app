@@ -71,6 +71,11 @@ pub struct PersistedConfig {
     pub darkweb_scan_offset: usize,
     #[serde(default)]
     pub accounts: Vec<AccountRef>,
+    /// Closing the main window keeps Agate running in the system tray instead
+    /// of quitting. Off by default — close means quit unless the user opts in
+    /// (Settings → Appearance → Startup).
+    #[serde(default)]
+    pub close_to_tray: bool,
     /// The local MCP (AI access) server is switched on. Off by default — the
     /// feature is opt-in and exposes vault items to an external AI client.
     #[serde(default)]
@@ -145,6 +150,7 @@ impl PersistedConfig {
             darkweb_consent: false,
             darkweb_scan_offset: 0,
             accounts: Vec::new(),
+            close_to_tray: false,
             ai_server_enabled: false,
             ai_grants: Vec::new(),
         }
@@ -311,6 +317,16 @@ mod tests {
 
     fn cfg() -> PersistedConfig {
         PersistedConfig::fresh()
+    }
+
+    #[test]
+    fn close_to_tray_defaults_off_for_old_and_fresh_configs() {
+        // A pre-feature config.json has no `close_to_tray` key — it must
+        // deserialize to off (close keeps meaning quit until the user opts in).
+        let old: PersistedConfig =
+            serde_json::from_str(r#"{"device_id":"d"}"#).expect("minimal config parses");
+        assert!(!old.close_to_tray);
+        assert!(!cfg().close_to_tray);
     }
 
     #[test]
