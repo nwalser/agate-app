@@ -52,6 +52,14 @@ export function setTheme(pref: ThemePref) {
   apply();
 }
 
+// Re-read the persisted pref and repaint. The tray popup runs in its own
+// webview, so a theme change made in the main window only reaches it through
+// localStorage — the popup calls this every time it gains focus.
+export function syncThemeFromStorage() {
+  setThemeSignal(readStored());
+  apply();
+}
+
 // Call once at startup: paint the stored theme and track OS changes while on
 // `system`.
 export function initTheme() {

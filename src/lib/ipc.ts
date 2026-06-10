@@ -74,6 +74,12 @@ export const ipc = {
 
   getServerConfig: (): Promise<ServerConfig> => invoke('get_server_config'),
 
+  /** Reveal + focus the main window (tray popup's "Open Agate" button). */
+  showMainWindow: (): Promise<void> => invoke('show_main_window'),
+
+  /** Hide the tray quick-access popup (Escape key; no-op elsewhere). */
+  hideTrayWindow: (): Promise<void> => invoke('hide_tray_window'),
+
   setServerConfig: (server: ServerConfig): Promise<void> =>
     invoke('set_server_config', { server }),
 

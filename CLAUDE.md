@@ -56,6 +56,8 @@ src/
     Unlock.tsx          # Unlock with local password (or master password)
     Vault.tsx           # Item list + search + detail pane
     Settings.tsx        # Server, local-unlock config, lock/logout
+  tray/                 # Tray quick-access popup (window label "tray"):
+                        # TrayApp.tsx UI + trayStore.ts (injectable factory)
   components/            # ItemDetail, Totp, CopyField, Toast, ...
 
 src-tauri/
@@ -73,6 +75,7 @@ src-tauri/
     vault.rs            # sync, unified item list, item detail, TOTP, generator (per-account)
     mutate.rs           # vault writes (create/edit/delete/move/folders), routed by account
     secrets.rs          # KEK/DEK crypto envelope + OS keychain (keyring) storage
+    tray.rs             # Tray icon + quick-access popup (toggle + positioning)
 ```
 
 ## Unified app-unlock — security model (the headline feature)

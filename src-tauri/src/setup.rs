@@ -1,8 +1,6 @@
 //! Process-wide SDK init + the Tauri `.setup` closure body.
 
 use bitwarden_core::{init_host_platform_info, DeviceType, HostPlatformInfo};
-use tauri::menu::{Menu, MenuItem};
-use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::Manager;
 
 use crate::state::AppState;
@@ -72,54 +70,18 @@ pub fn configure_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Err
         let _ = window.show();
     }
 
+    // The tray quick-access popup renders decrypted secrets too — give it the
+    // same screen-capture exclusion as the main window (Windows release only;
+    // see the comment above for why dev builds skip it).
+    #[cfg(all(target_os = "windows", not(debug_assertions)))]
+    if let Some(popup) = app.get_webview_window("tray") {
+        crate::hello::protect_window(&popup);
+    }
+
     // System-tray icon. Best-effort: a tray failure must never stop the app from
     // launching (the window is the primary surface).
-    if let Err(e) = setup_tray(app) {
+    if let Err(e) = crate::tray::setup_tray(app) {
         log::warn!("tray setup failed: {e}");
     }
-    Ok(())
-}
-
-/// Bring the main window to the front (tray left-click / the "Show" menu item).
-fn reveal_main(app: &tauri::AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
-    }
-}
-
-/// Build the system-tray icon: a Show / Quit menu; left-click reveals the window.
-fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
-    let Some(icon) = app.default_window_icon().cloned() else {
-        log::warn!("no default window icon; skipping tray");
-        return Ok(());
-    };
-
-    let show = MenuItem::with_id(app, "show", "Show Agate", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &quit])?;
-
-    TrayIconBuilder::with_id("main-tray")
-        .icon(icon)
-        .tooltip("Agate")
-        .menu(&menu)
-        .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| match event.id.as_ref() {
-            "show" => reveal_main(app),
-            "quit" => app.exit(0),
-            _ => {}
-        })
-        .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
-                reveal_main(tray.app_handle());
-            }
-        })
-        .build(app)?;
     Ok(())
 }

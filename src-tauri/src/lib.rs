@@ -28,6 +28,7 @@ mod secrets;
 mod server;
 mod setup;
 mod state;
+mod tray;
 mod vault;
 mod window;
 
@@ -40,9 +41,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             // Re-focus the existing window if a second instance is launched.
-            if let Some(window) = tauri::Manager::get_webview_window(app, "main") {
-                let _ = window.set_focus();
-            }
+            tray::reveal_main(app);
         }))
         .plugin(tauri_plugin_log::Builder::new().build())
         // Launch-at-login (toggled via the set_autostart/get_autostart commands).
@@ -67,8 +66,28 @@ pub fn run() {
                         | tauri_plugin_window_state::StateFlags::POSITION
                         | tauri_plugin_window_state::StateFlags::MAXIMIZED,
                 )
+                // The tray popup is positioned per-click next to the tray icon;
+                // restoring a remembered position would fight that.
+                .with_denylist(&["tray"])
                 .build(),
         )
+        // The tray popup never closes for real: focus loss and the close button
+        // both just hide it, so the next tray click can re-show it instantly.
+        .on_window_event(|window, event| {
+            if window.label() != "tray" {
+                return;
+            }
+            match event {
+                tauri::WindowEvent::Focused(false) => {
+                    let _ = window.hide();
+                }
+                tauri::WindowEvent::CloseRequested { api, .. } => {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+                _ => {}
+            }
+        })
         .setup(|app| setup::configure_app(app))
         .invoke_handler(tauri::generate_handler![
             get_session_status,
@@ -117,6 +136,8 @@ pub fn run() {
             rename_folder,
             delete_folder,
             window_controls_layout,
+            show_main_window,
+            hide_tray_window,
             get_autostart,
             set_autostart,
             audit_offline,

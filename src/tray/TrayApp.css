@@ -1,0 +1,186 @@
+/* Tray quick-access popup — fills the undecorated 380x520 window. The border
+   stands in for window chrome (an always-on-top borderless surface otherwise
+   floats edge-to-edge against whatever is behind it). */
+
+.tray-app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--background);
+  border: 1px solid var(--border-strong);
+  overflow: hidden;
+}
+
+/* ── Search ─────────────────────────────────────────────────────────────── */
+
+.tray-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+
+.tray-search input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--foreground);
+  font-size: 13px;
+}
+
+.tray-search input::placeholder {
+  color: var(--subtle-foreground);
+}
+
+/* ── Item list ──────────────────────────────────────────────────────────── */
+
+.tray-list {
+  flex: 1;
+  overflow-y: auto;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+}
+
+.tray-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: var(--radius);
+}
+
+.tray-row.selected {
+  background: var(--card-hover);
+}
+
+.tray-type-icon {
+  display: flex;
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+}
+
+.tray-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.tray-name {
+  font-size: 13px;
+  color: var(--foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tray-username {
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tray-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+  opacity: 0;
+}
+
+.tray-row.selected .tray-actions {
+  opacity: 1;
+}
+
+.tray-actions button {
+  display: flex;
+  background: transparent;
+  border: none;
+  color: var(--muted-foreground);
+  padding: 5px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.tray-actions button:hover {
+  background: var(--card-hover);
+  color: var(--foreground);
+}
+
+/* ── Footer ─────────────────────────────────────────────────────────────── */
+
+.tray-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px 6px 12px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.tray-hint {
+  font-size: 11px;
+  color: var(--subtle-foreground);
+}
+
+.tray-open {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  color: var(--muted-foreground);
+  font-size: 12.5px;
+  padding: 6px 8px;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.tray-open:hover {
+  background: var(--card-hover);
+  color: var(--foreground);
+}
+
+/* ── Loading / empty / locked states ───────────────────────────────────── */
+
+.tray-status {
+  padding: 24px 12px;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--muted-foreground);
+}
+
+.tray-locked {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+
+.tray-unlock-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border: none;
+  border-radius: var(--radius);
+  padding: 8px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.tray-unlock-btn:hover {
+  background: var(--primary-hover);
+}
