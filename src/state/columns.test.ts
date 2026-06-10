@@ -183,11 +183,14 @@ describe('columns store — grouping', () => {
     expect(m.columns().groupBy).toBe(null);
   });
 
-  it('setGroupBy persists the choice and clears back to null', async () => {
+  it('setGroupBy persists the choice (string shorthand → builtin spec) and clears back to null', async () => {
     const m = await freshColumns();
     m.setGroupBy('security');
-    expect(m.columns().groupBy).toBe('security');
-    expect(JSON.parse(localStorage.getItem('agate.columns') ?? '{}').groupBy).toBe('security');
+    expect(m.columns().groupBy).toEqual({ kind: 'builtin', key: 'security' });
+    expect(JSON.parse(localStorage.getItem('agate.columns') ?? '{}').groupBy).toEqual({
+      kind: 'builtin',
+      key: 'security',
+    });
     m.setGroupBy(null);
     expect(m.columns().groupBy).toBe(null);
   });
@@ -203,12 +206,41 @@ describe('columns store — grouping', () => {
     expect(m.columns().groupBy).toBe(null);
   });
 
-  it('accepts the newly-groupable columns (username, passkey)', async () => {
+  it('migrates a LEGACY plain-string groupBy to the builtin spec', async () => {
+    const m = await freshColumns({
+      columns: [{ kind: 'builtin', id: 'username' }],
+      revealed: [],
+      favicons: true,
+      widths: {},
+      groupBy: 'folder', // pre-GroupSpec persisted form
+    });
+    expect(m.columns().groupBy).toEqual({ kind: 'builtin', key: 'folder' });
+  });
+
+  it('round-trips a custom-field group spec, rejecting malformed shapes', async () => {
     const m = await freshColumns();
-    m.setGroupBy('username');
-    expect(m.columns().groupBy).toBe('username');
-    m.setGroupBy('passkey');
-    expect(m.columns().groupBy).toBe('passkey');
+    m.setGroupBy({ kind: 'custom', field: 'Environment' });
+    expect(m.columns().groupBy).toEqual({ kind: 'custom', field: 'Environment' });
+    const raw = JSON.parse(localStorage.getItem('agate.columns') ?? '{}');
+    const m2 = await freshColumns(raw);
+    expect(m2.columns().groupBy).toEqual({ kind: 'custom', field: 'Environment' });
+
+    // Malformed custom shapes are dropped, not trusted.
+    const bad = await freshColumns({ ...raw, groupBy: { kind: 'custom', field: '   ' } });
+    expect(bad.columns().groupBy).toBe(null);
+  });
+
+  it('round-trips the presence/host group keys (website, totp, password) through storage', async () => {
+    for (const key of ['website', 'totp', 'password'] as const) {
+      localStorage.clear();
+      const m = await freshColumns();
+      m.setGroupBy(key);
+      expect(m.columns().groupBy).toEqual({ kind: 'builtin', key });
+      const raw = JSON.parse(localStorage.getItem('agate.columns') ?? '{}');
+      // Survives a re-parse from storage (the trust-boundary path).
+      const m2 = await freshColumns(raw);
+      expect(m2.columns().groupBy).toEqual({ kind: 'builtin', key });
+    }
   });
 });
 

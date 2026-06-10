@@ -27,10 +27,12 @@ pub fn init_platform() {
 /// The Tauri `.setup` closure body: locate the config dir, manage `AppState`,
 /// then set native window chrome and reveal the window.
 pub fn configure_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
-    let config_dir = app
-        .path()
-        .app_config_dir()
-        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let config_dir = app.path().app_config_dir().unwrap_or_else(|e| {
+        // Survivable (cwd fallback) but must be LOUD: config.json landing next to
+        // the executable would read as lost settings/connections on next launch.
+        log::error!("could not resolve the app config dir ({e}); falling back to the working directory");
+        std::path::PathBuf::from(".")
+    });
     app.manage(AppState::load(config_dir));
 
     // Re-arm the local MCP (AI access) server if the user enabled it previously.
@@ -40,7 +42,10 @@ pub fn configure_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Err
     });
     if ai_enabled {
         if let Err(e) = crate::aiserver::ensure_started(app.handle().clone()) {
-            log::warn!("AI server auto-start failed: {}", e.message);
+            // Error, not warn: the user's MCP client will keep sending the bearer
+            // token at a port some other process may now own. The Settings page
+            // shows running:false; this is the only other trace.
+            log::error!("AI server auto-start failed: {}", e.message);
         }
     }
 

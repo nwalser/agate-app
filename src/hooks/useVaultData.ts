@@ -10,6 +10,7 @@ import { ipc } from '../lib/ipc.ts';
 import type { ConnectionSummary, Folder, VaultHealthReport, VaultItem } from '../lib/types.ts';
 import { pushToast, toastError } from '../state/toast.ts';
 import { setQuery } from '../state/search.ts';
+import { runStaleScans } from '../state/securityScans.ts';
 import { setLastSync, setSyncState, syncRequest, syncState } from '../state/sync.ts';
 import { activeVault, setActiveVault } from '../state/ui.ts';
 import { AUTO_SYNC_MS } from '../lib/vaultConfig.ts';
@@ -98,6 +99,10 @@ export function useVaultData() {
       setSyncState('idle');
       // Recompute the security badge off the freshly synced vault (offline, cheap).
       void loadHealth();
+      // Re-check breach-scan staleness: the 6h interval can't fire through OS
+      // sleep, so the 5-minute sync is the wake-up that catches a missed tick.
+      // A free no-op while the cached results are fresh.
+      runStaleScans();
       if (manual) pushToast('success', 'Vault synced.');
     } catch (err) {
       setSyncState('error');

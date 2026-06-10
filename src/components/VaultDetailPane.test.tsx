@@ -74,6 +74,26 @@ describe('VaultDetailPane — copy affordance', () => {
     expect(copyButtons).toEqual([]);
   });
 
+  it('renders no copy buttons for non-login items either (card + custom fields)', () => {
+    renderPane({
+      itemType: 'card',
+      login: null,
+      card: {
+        cardholderName: 'Alice Example',
+        number: '4111111111111111',
+        brand: 'Visa',
+        expMonth: '12',
+        expYear: '2030',
+        code: '123',
+      },
+      fields: [{ name: 'PIN', value: '9876', fieldType: 'hidden', linkedId: null }],
+    });
+    const copyButtons = Array.from(document.querySelectorAll('button')).filter((b) =>
+      (b.getAttribute('title') ?? '').toLowerCase().startsWith('copy'),
+    );
+    expect(copyButtons).toEqual([]);
+  });
+
   it('keeps the reveal and open buttons', () => {
     renderPane();
     expect(document.querySelector('button[title="Reveal"]')).toBeTruthy();
@@ -110,5 +130,17 @@ describe('VaultDetailPane — copy affordance', () => {
     const value = document.querySelector('.totp-code')!;
     fireEvent.click(value);
     expect(copy).toHaveBeenCalledWith('Code', '123456');
+  });
+
+  it('gates the one-time code behind reprompt like the password', () => {
+    const { copy } = renderPane(
+      { reprompt: true },
+      { totp: { code: '123456', remaining: 20, period: 30 } },
+    );
+    const code = document.querySelector('.totp-code')!;
+    // Masked on screen — reprompt protects reading the code, not just copying it.
+    expect(code.textContent).not.toContain('123456');
+    fireEvent.click(code);
+    expect(copy).not.toHaveBeenCalled();
   });
 });

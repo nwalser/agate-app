@@ -44,8 +44,7 @@ import {
 import type { SelectedSecurity } from '../hooks/useItemDetail.ts';
 import NotesView from './NotesView.tsx';
 import TotpRing from './TotpRing.tsx';
-import RepromptGate from './RepromptGate.tsx';
-import { isReprompted, markReprompted } from '../state/reprompt.ts';
+import { guardReprompt, isReprompted } from '../state/reprompt.ts';
 import { collectionNamesFor, loadCollections } from '../state/collections.ts';
 import { absoluteDate, relativeFromNow } from '../lib/dates.ts';
 import { ContextMenu, CtxItem, CtxSep, CtxTitle } from './ContextMenu.tsx';
@@ -96,12 +95,14 @@ export default function VaultDetailPane(props: {
 
   // Reprompt gate: a reprompt-protected item's secrets stay masked until the user
   // re-enters the app password. `guard` runs the action immediately for normal
-  // items (or already-verified ones), else defers it behind the gate modal.
-  const [gate, setGate] = createSignal<{ run: () => void } | null>(null);
+  // items (or already-verified ones), else defers it behind THE app-wide gate
+  // (state/reprompt.ts — the Vault screen renders the single modal).
   const repromptLocked = () => props.detail.reprompt && !isReprompted(props.detail.id);
   function guard(action: () => void) {
-    if (repromptLocked()) setGate({ run: action });
-    else action();
+    guardReprompt(
+      { id: props.detail.id, name: props.detail.name, reprompt: props.detail.reprompt },
+      action,
+    );
   }
 
   // Resolve this item's collection IDs to names (loaded lazily once).
@@ -226,7 +227,10 @@ export default function VaultDetailPane(props: {
                 <div
                   class="detail-field"
                   onContextMenu={(e) =>
-                    openFieldCtx(e, { label: 'One-time code', copy: () => props.copy('Code', code().code) })
+                    openFieldCtx(e, {
+                      label: 'One-time code',
+                      copy: () => guard(() => props.copy('Code', code().code)),
+                    })
                   }
                 >
                   <label>
@@ -236,9 +240,11 @@ export default function VaultDetailPane(props: {
                     <code
                       class="detail-value mono totp-code copyable"
                       title="Copy"
-                      onClick={() => props.copy('Code', code().code)}
+                      onClick={() => guard(() => props.copy('Code', code().code))}
                     >
-                      {code().code}
+                      {/* Reprompt protects the code from being READ, not just
+                          copied — masked until the gate has been passed. */}
+                      {repromptLocked() ? '••• •••' : code().code}
                     </code>
                     <TotpRing remaining={code().remaining} period={code().period} size={16} />
                   </div>
@@ -280,7 +286,9 @@ export default function VaultDetailPane(props: {
         )}
       </Show>
 
-      <Show when={d().card}>{(card) => <CardVisual card={card()} onCopy={props.copy} onCtx={openFieldCtx} />}</Show>
+      <Show when={d().card}>
+        {(card) => <CardVisual card={card()} onCopy={props.copy} onCtx={openFieldCtx} gate={guard} />}
+      </Show>
 
       <Show when={d().identity}>
         {(id) => (
@@ -324,6 +332,7 @@ export default function VaultDetailPane(props: {
                 value={key().privateKey}
                 onCopy={() => props.copy('Private key', key().privateKey)}
                 onCtx={openFieldCtx}
+                gate={guard}
               />
             </Show>
           </>
@@ -338,6 +347,7 @@ export default function VaultDetailPane(props: {
               detail={d()}
               onCopy={(label, value) => props.copy(label, value)}
               onCtx={openFieldCtx}
+              gate={guard}
             />
           </Show>
         )}
@@ -480,21 +490,6 @@ export default function VaultDetailPane(props: {
         <span title={absoluteDate(d().revisionDate)}>Updated {relativeFromNow(d().revisionDate)}</span>
       </div>
 
-      {/* Reprompt gate: re-verify the app password, then run the deferred action. */}
-      <Show when={gate()}>
-        {(g) => (
-          <RepromptGate
-            itemName={d().name}
-            onVerified={() => {
-              markReprompted(d().id);
-              const action = g().run;
-              setGate(null);
-              action();
-            }}
-            onClose={() => setGate(null)}
-          />
-        )}
-      </Show>
 
       {/* Right-click the header → the same actions as the buttons above. */}
       <Show when={headerMenu()}>
@@ -606,25 +601,38 @@ function Field(props: { label: string; value: string | null; onCopy: () => void;
 }
 
 // Masked value with a per-field reveal toggle (card number/CVV, SSH private key).
-function SecretField(props: { label: string; value: string | null; onCopy: () => void; onCtx?: OnFieldCtx }) {
+// `gate` is the owner's reprompt guard — copy AND reveal run through it so a
+// reprompt-protected item's hidden values stay behind the re-auth modal.
+function SecretField(props: {
+  label: string;
+  value: string | null;
+  onCopy: () => void;
+  onCtx?: OnFieldCtx;
+  gate?: (action: () => void) => void;
+}) {
   const [show, setShow] = createSignal(false);
+  const gate = (action: () => void) => (props.gate ?? ((a: () => void) => a()))(action);
   return (
     <div
       class="detail-field"
       onContextMenu={(e) =>
         props.onCtx?.(e, {
           label: props.label,
-          copy: props.onCopy,
-          reveal: { shown: show(), toggle: () => setShow((s) => !s) },
+          copy: () => gate(props.onCopy),
+          reveal: { shown: show(), toggle: () => gate(() => setShow((s) => !s)) },
         })
       }
     >
       <label>{props.label}</label>
       <div class="detail-value-row">
-        <code class="detail-value mono copyable" title="Copy" onClick={() => props.onCopy()}>
+        <code class="detail-value mono copyable" title="Copy" onClick={() => gate(props.onCopy)}>
           {show() ? props.value : '••••••••••••'}
         </code>
-        <button class="ghost icon-btn" title={show() ? 'Hide' : 'Reveal'} onClick={() => setShow(!show())}>
+        <button
+          class="ghost icon-btn"
+          title={show() ? 'Hide' : 'Reveal'}
+          onClick={() => gate(() => setShow(!show()))}
+        >
           {show() ? <EyeOff size={14} /> : <Eye size={14} />}
         </button>
       </div>
@@ -633,13 +641,16 @@ function SecretField(props: { label: string; value: string | null; onCopy: () =>
 }
 
 // Read-only card "face" for the detail pane: brand, masked number, holder, expiry.
+// `gate` = the owner's reprompt guard (number/CVV copies + reveals run through it).
 function CardVisual(props: {
   card: CardInput;
   onCopy: (label: string, value: string | null) => void;
   onCtx?: OnFieldCtx;
+  gate?: (action: () => void) => void;
 }) {
   const [revealed, setRevealed] = createSignal(false);
-  const reveal = () => ({ shown: revealed(), toggle: () => setRevealed((r) => !r) });
+  const gate = (action: () => void) => (props.gate ?? ((a: () => void) => a()))(action);
+  const reveal = () => ({ shown: revealed(), toggle: () => gate(() => setRevealed((r) => !r)) });
   const brand = () => props.card.brand || detectCardBrand(props.card.number ?? '') || 'Card';
   const number = () => props.card.number ?? '';
   const numberText = () =>
@@ -658,14 +669,18 @@ function CardVisual(props: {
         class="card-visual-number-row"
         onContextMenu={(e) =>
           number() &&
-          props.onCtx?.(e, { label: 'Number', copy: () => props.onCopy('Number', number()), reveal: reveal() })
+          props.onCtx?.(e, {
+            label: 'Number',
+            copy: () => gate(() => props.onCopy('Number', number())),
+            reveal: reveal(),
+          })
         }
       >
         <span
           class="card-visual-number mono"
           classList={{ copyable: !!number() }}
           title={number() ? 'Copy' : undefined}
-          onClick={() => number() && props.onCopy('Number', number())}
+          onClick={() => number() && gate(() => props.onCopy('Number', number()))}
         >
           {numberText()}
         </span>
@@ -673,7 +688,7 @@ function CardVisual(props: {
           <button
             class="ghost icon-btn"
             title={revealed() ? 'Hide' : 'Reveal'}
-            onClick={() => setRevealed(!revealed())}
+            onClick={() => gate(() => setRevealed(!revealed()))}
           >
             {revealed() ? <EyeOff size={14} /> : <Eye size={14} />}
           </button>
@@ -698,7 +713,7 @@ function CardVisual(props: {
               onContextMenu={(e) =>
                 props.onCtx?.(e, {
                   label: 'Security code',
-                  copy: () => props.onCopy('Security code', props.card.code),
+                  copy: () => gate(() => props.onCopy('Security code', props.card.code)),
                   reveal: reveal(),
                 })
               }
@@ -706,7 +721,7 @@ function CardVisual(props: {
               <span
                 class="card-visual-val copyable"
                 title="Copy"
-                onClick={() => props.onCopy('Security code', props.card.code)}
+                onClick={() => gate(() => props.onCopy('Security code', props.card.code))}
               >
                 {revealed() ? props.card.code : '•••'}
               </span>
@@ -726,6 +741,8 @@ function CustomFieldView(props: {
   detail: ItemDetail;
   onCopy: (label: string, value: string | null) => void;
   onCtx?: OnFieldCtx;
+  /** Reprompt guard, applied to the secret-typed renderings only. */
+  gate?: (action: () => void) => void;
 }) {
   const f = () => props.field;
   const label = () => f().name ?? 'Field';
@@ -756,6 +773,7 @@ function CustomFieldView(props: {
           value={f().value}
           onCopy={() => props.onCopy(label(), f().value)}
           onCtx={props.onCtx}
+          gate={props.gate}
         />
       </Match>
       <Match when={f().fieldType === 'linked'}>
@@ -782,6 +800,7 @@ function CustomFieldView(props: {
                 value={value}
                 onCopy={() => props.onCopy(label(), value)}
                 onCtx={props.onCtx}
+                gate={props.gate}
               />
             );
           }

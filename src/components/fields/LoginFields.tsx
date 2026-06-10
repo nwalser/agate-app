@@ -1,12 +1,14 @@
 // Login-type fields: username, password (with reveal + a generator popover and a
 // live strength meter), TOTP key (with on-screen QR scan), and the repeatable
 // URI rows with their match-detection dropdown. Owns its own signals and exposes
-// its LoginInput builder to the orchestrator via `onReady`.
-import { createMemo, createSignal, For, Show } from 'solid-js';
-import { Eye, EyeOff, Plus, QrCode, Trash2 } from 'lucide-solid';
+// its LoginInput builder to the orchestrator via `onReady`. "From image" OCRs a
+// picked image and prefills the unambiguous bits (email → username, URL → uri).
+import { createMemo, createSignal, For, onMount, Show } from 'solid-js';
+import { Eye, EyeOff, ImageUp, Plus, QrCode, Trash2 } from 'lucide-solid';
 import { ipc } from '../../lib/ipc.ts';
 import type { ItemDetail, LoginInput, UriInput } from '../../lib/types.ts';
 import { MATCH_OPTIONS } from '../../lib/uriMatching.ts';
+import { mapOcrToLogin } from '../../lib/ocrFill.ts';
 import { pushToast, toastError } from '../../state/toast.ts';
 import PasswordGenerator from '../PasswordGenerator.tsx';
 import { orNull } from './index.ts';
@@ -77,6 +79,45 @@ export default function LoginFields(props: {
     }
   }
 
+  // ── Fill from image (OCR): email → username, URL → a uri row. Conservative —
+  // only fills what's blank; the recognized text is never logged. Hidden where
+  // the platform has no OCR engine.
+  const [ocrAvailable, setOcrAvailable] = createSignal(false);
+  const [ocrBusy, setOcrBusy] = createSignal(false);
+  onMount(() => {
+    void (async () => {
+      try {
+        setOcrAvailable(await ipc.ocrAvailable());
+      } catch {
+        // ignore: probe failure just keeps the button hidden
+      }
+    })();
+  });
+  async function fillFromImage() {
+    if (ocrBusy()) return;
+    setOcrBusy(true);
+    try {
+      const lines = await ipc.ocrCaptureFile();
+      if (lines === null) return; // cancelled
+      const m = mapOcrToLogin(lines);
+      let filled = 0;
+      if (m.username && !username().trim()) {
+        setUsername(m.username);
+        filled++;
+      }
+      if (m.uri && !uris().some((u) => u.uri.trim())) {
+        setUris((prev) => [...prev.filter((u) => u.uri.trim()), { uri: m.uri!, matchType: null }]);
+        filled++;
+      }
+      if (filled === 0) pushToast('error', 'Nothing usable recognized in that image.');
+      else pushToast('success', `Filled ${filled} field${filled === 1 ? '' : 's'} from the image.`);
+    } catch (err) {
+      toastError(err);
+    } finally {
+      setOcrBusy(false);
+    }
+  }
+
   function buildLogin(): LoginInput {
     const uriInputs: UriInput[] = uris()
       .filter((u) => u.uri.trim().length > 0)
@@ -92,7 +133,19 @@ export default function LoginFields(props: {
 
   return (
     <div class="ie-section">
-      <div class="ie-section-title">Login credentials</div>
+      <div class="ie-section-title ie-title-row">
+        Login credentials
+        <Show when={ocrAvailable()}>
+          <button
+            class="ghost ie-add ie-scan-qr"
+            disabled={ocrBusy()}
+            onClick={() => void fillFromImage()}
+            title="Read username/website from an image file"
+          >
+            <ImageUp size={13} strokeWidth={1.75} /> From image
+          </button>
+        </Show>
+      </div>
       <div class="field">
         <label>Username</label>
         <input

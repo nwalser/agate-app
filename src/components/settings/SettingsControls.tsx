@@ -1,7 +1,7 @@
 // Shared Settings controls — the SINGLE switch, option picker, labelled row, and
 // reset button used on every Settings page, so the configuration surface reads the
 // same everywhere. Boolean preference → <Switch> / <ToggleRow>; pick-one-of-a-small
-// -closed-set → <Segmented>. Section chrome (.settings-section / h3 / .settings-help)
+// -closed-set → <Select>. Section chrome (.settings-section / h3 / .settings-help)
 // stays in Settings.css. Forms (Connections, app-password) keep labelled inputs —
 // those are auth forms, not preferences.
 

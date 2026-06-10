@@ -10,9 +10,11 @@ import {
   duplicateQuery,
   queryById,
   removeEntry,
+  reorderEntryByIds,
   resetSidebar,
   setDividerLabel,
   sidebar,
+  toggleHidden,
 } from './sidebar.ts';
 
 beforeEach(() => {
@@ -71,6 +73,40 @@ describe('sidebar store — saved views', () => {
   it('duplicateQuery returns null for a non-query id', () => {
     expect(duplicateQuery('all')).toBeNull();
     expect(duplicateQuery('query:nope')).toBeNull();
+  });
+});
+
+describe('sidebar store — drag reorder by ids', () => {
+  it('moves the entry directly before the target id', () => {
+    const [a, b, c] = sidebar().order;
+    reorderEntryByIds(a, c);
+    const next = sidebar().order;
+    expect(next.indexOf(a)).toBe(next.indexOf(c) - 1);
+    expect(next[0]).toBe(b);
+  });
+
+  it('appends to the end when beforeId is null', () => {
+    const a = sidebar().order[0];
+    reorderEntryByIds(a, null);
+    const next = sidebar().order;
+    expect(next[next.length - 1]).toBe(a);
+  });
+
+  it('resolves positions by id, so hidden entries in between cannot skew the drop', () => {
+    const [a, b, c] = sidebar().order;
+    toggleHidden(b); // b stays in `order` but is invisible in the rail
+    reorderEntryByIds(c, a); // visually: drag the 2nd visible row above the 1st
+    const next = sidebar().order;
+    expect(next.indexOf(c)).toBe(next.indexOf(a) - 1);
+    expect(next).toContain(b);
+  });
+
+  it('is a no-op for unknown ids or a self-target', () => {
+    const before = sidebar().order;
+    reorderEntryByIds('nope', before[0]);
+    reorderEntryByIds(before[0], 'nope');
+    reorderEntryByIds(before[0], before[0]);
+    expect(sidebar().order).toEqual(before);
   });
 });
 

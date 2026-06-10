@@ -27,7 +27,8 @@ import {
   columnKey,
   columnLabel,
   columns,
-  groupKeyOf,
+  groupSpecKey,
+  groupSpecOf,
   isFilterable,
   isRevealed,
   MIN_COL_WIDTH,
@@ -40,6 +41,7 @@ import {
   sortKeyOf,
   toggleReveal,
   type ColumnSpec,
+  type GroupSpec,
   type SortDir,
   type SortKey,
 } from '../state/columns.ts';
@@ -86,9 +88,13 @@ export default function VaultListHeader(props: {
     return col.kind === 'custom' || builtinMeta(col.id).secret;
   };
 
+  // Every column maps to a group spec (the Name column groups by initial).
+  const groupSpecFor = (col: ColumnSpec | null): GroupSpec =>
+    isNameCol(col) ? { kind: 'builtin', key: 'name' } : groupSpecOf(col as ColumnSpec);
+
   function buildTarget(col: ColumnSpec | null, index: number): HeaderTarget {
     const sk = sortKeyFor(col);
-    const gk = isNameCol(col) ? null : groupKeyOf(col as ColumnSpec);
+    const gs = groupSpecFor(col);
     const secret = isSecret(col);
     const wKey = widthKeyFor(col);
     return {
@@ -101,8 +107,8 @@ export default function VaultListHeader(props: {
       secret,
       revealed: secret && isRevealed(wKey),
       filterable: isNameCol(col) ? true : isFilterable(col as ColumnSpec),
-      groupable: gk !== null,
-      grouped: gk !== null && columns().groupBy === gk,
+      groupable: true,
+      grouped: groupSpecKey(columns().groupBy) === groupSpecKey(gs),
       hasWidth: wKey in columns().widths,
     };
   }
@@ -117,7 +123,7 @@ export default function VaultListHeader(props: {
 
   function runItem(id: HeaderMenuItemId, col: ColumnSpec | null, index: number) {
     const sk = sortKeyFor(col);
-    const gk = isNameCol(col) ? null : groupKeyOf(col as ColumnSpec);
+    const gk = groupSpecFor(col);
     switch (id) {
       case 'sort-asc':
         if (sk) props.onSetSort(sk, 'asc');

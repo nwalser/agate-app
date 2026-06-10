@@ -21,7 +21,7 @@ import { typeIcon } from '../lib/vaultIcons.ts';
 import { CREATE_TYPES } from '../lib/vaultConfig.ts';
 import { ContextMenu, CtxItem, CtxSep } from './ContextMenu.tsx';
 import { cellContent, type CellContext } from '../lib/cellRendering.ts';
-import { groupOf, type GroupContext } from '../lib/grouping.ts';
+import { customFieldGroupValue, groupOf, type GroupContext } from '../lib/grouping.ts';
 import { rectFromPoints, rectsIntersect } from '../lib/listSelection.ts';
 import { clearDraggedItems, ITEM_DRAG_MIME, setDraggedItems } from '../state/itemDrag.ts';
 import {
@@ -34,7 +34,7 @@ import {
   type SortDir,
   type SortKey,
 } from '../state/columns.ts';
-import { createDetailCache } from '../state/detailCache.ts';
+import type { DetailCache } from '../state/detailCache.ts';
 import { createTotpCache } from '../state/totpCache.ts';
 import Favicon from './Favicon.tsx';
 import VaultListHeader from './VaultListHeader.tsx';
@@ -77,21 +77,23 @@ export interface VaultListProps {
   /** Offline vault-health report, used by the optional "Security" column. Null
    *  until the first audit completes; at-risk items come from its `atRisk`. */
   security: VaultHealthReport | null;
+  /** The screen-owned per-row detail cache (ONE cache: the ordering layer needs
+   *  it for custom-field grouping, the cells for secret/custom columns). The
+   *  screen resets it on `cacheToken` bumps. */
+  detailCache: DetailCache;
 }
 
 export default function VaultList(props: VaultListProps) {
-  // Lazy caches (website / password / custom detail, and live TOTP codes).
-  const detail = createDetailCache();
+  // The shared lazy detail cache (screen-owned) + the list-scoped TOTP cache.
+  const detail = props.detailCache;
   const totp = createTotpCache((id) => props.items.find((it) => it.id === id)?.accountEmail);
 
-  // Drop caches when the parent signals the vault changed.
+  // Drop the TOTP cache when the parent signals the vault changed (the screen
+  // resets the shared detail cache itself — one owner, one resetter).
   createEffect(
     on(
       () => props.cacheToken,
-      () => {
-        detail.reset();
-        totp.reset();
-      },
+      () => totp.reset(),
       { defer: true },
     ),
   );
@@ -270,6 +272,9 @@ export default function VaultList(props: VaultListProps) {
     folderName,
     audit: (id) => securityById().get(id),
     hasSecurityReport: props.security !== null,
+    // Same shared helper + cache as the ordering layer, so headers and order
+    // can never disagree on a custom-field bucket.
+    fieldValue: (id, field) => customFieldGroupValue(detail.cache(), id, field),
   });
   const startsGroup = (item: VaultItem, i: Accessor<number>): boolean => {
     const gb = columns().groupBy;

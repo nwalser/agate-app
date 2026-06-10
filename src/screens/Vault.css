@@ -316,17 +316,21 @@
   text-overflow: ellipsis;
 }
 
-/* Drag-to-reorder wrapper around each rail entry. Transparent by default; while a
-   rail entry is being dragged it dims, and the hovered drop target shows a top
-   insertion bar. (The folder-tree block opts out — it has its own DnD.) */
+/* Drag-to-reorder wrapper around each rail entry. Transparent by default; while
+   a rail entry is being dragged it dims, and an insert line paints in exactly
+   the gap the drop will land in (gap model — the line IS the landing spot).
+   (The folder-tree block opts out — it has its own DnD.) */
 .vault-rail-entry {
   border-radius: var(--radius-sm);
 }
 .vault-rail-entry.rail-dragging {
   opacity: 0.45;
 }
-.vault-rail-entry.rail-dropover {
-  box-shadow: inset 0 2px 0 var(--primary);
+.vault-rail-entry.rail-drop-above {
+  box-shadow: 0 -2px 0 0 var(--primary);
+}
+.vault-rail-entry.rail-drop-below {
+  box-shadow: 0 2px 0 0 var(--primary);
 }
 
 /* Pushes the trailing rail group (Settings) to the bottom of the rail. */

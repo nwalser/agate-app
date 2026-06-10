@@ -156,6 +156,9 @@ export interface VaultItem {
   hasTotp: boolean;
   /** Whether the login has at least one stored passkey (FIDO2 credential). */
   hasPasskey: boolean;
+  /** "Require master password to view" — gates list-side copies without a
+   *  detail fetch (same flag as ItemDetail.reprompt). */
+  reprompt: boolean;
   favorite: boolean;
   deleted: boolean;
   folderId: string | null;
@@ -401,6 +404,9 @@ export interface AiAuditEntry {
   /** The MCP tool invoked (e.g. `get_vault_item`). */
   action: string;
   itemName: string | null;
+  /** The requested item id — recorded even for a denied read, so the log can
+   *  say which item an AI probed. */
+  itemId: string | null;
   accountEmail: string | null;
   /** Whether the access was permitted (allowlisted + unlocked) or denied. */
   allowed: boolean;

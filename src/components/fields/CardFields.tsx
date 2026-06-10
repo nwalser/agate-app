@@ -1,10 +1,15 @@
 // Card-type fields: a live card preview plus cardholder / number (with auto
 // brand detection) / brand / CVV / expiry inputs. Owns its own signals and
-// exposes its CardInput builder to the orchestrator via `onReady`.
-import { createMemo, createSignal, For } from 'solid-js';
-import { CreditCard, Eye, EyeOff } from 'lucide-solid';
+// exposes its CardInput builder to the orchestrator via `onReady`. "Scan card"
+// OCRs the screen (or a picked image) and prefills the recognized fields —
+// number only when Luhn-valid, CVV never (see lib/cardOcr.ts).
+import { createMemo, createSignal, For, onMount, Show } from 'solid-js';
+import { CreditCard, Eye, EyeOff, ImageUp, ScanLine } from 'lucide-solid';
 import type { CardInput, ItemDetail } from '../../lib/types.ts';
 import { CARD_BRANDS, detectCardBrand, formatCardNumber } from '../../lib/cardBrands.ts';
+import { parseCardFromOcr } from '../../lib/cardOcr.ts';
+import { ipc } from '../../lib/ipc.ts';
+import { pushToast, toastError } from '../../state/toast.ts';
 import { orNull } from './index.ts';
 
 // Month dropdown for card expiry. Values are the bare month number (Bitwarden
@@ -65,8 +70,84 @@ export default function CardFields(props: {
   }
   props.onReady(buildCard);
 
+  // ── Scan card (OCR): screen capture or a picked image → prefill fields. ──
+  // Hidden where the platform has no OCR engine (non-Windows for now).
+  const [ocrAvailable, setOcrAvailable] = createSignal(false);
+  const [scanning, setScanning] = createSignal(false);
+  onMount(() => {
+    void (async () => {
+      try {
+        setOcrAvailable(await ipc.ocrAvailable());
+      } catch {
+        // ignore: probe failure just keeps the scan buttons hidden
+      }
+    })();
+  });
+
+  function applyParsed(lines: string[]) {
+    const parsed = parseCardFromOcr(lines);
+    if (parsed.confidence === 'none') {
+      pushToast('error', 'No card details recognized. Make the card large and sharp, then retry.');
+      return;
+    }
+    let filled = 0;
+    if (parsed.number) {
+      onCardNumberInput(parsed.number); // keeps the existing brand auto-fill
+      filled++;
+    }
+    if (parsed.expMonth) {
+      setExpMonth(parsed.expMonth);
+      filled++;
+    }
+    if (parsed.expYear) {
+      setExpYear(parsed.expYear);
+      filled++;
+    }
+    if (parsed.cardholderName) {
+      setCardholderName(parsed.cardholderName);
+      filled++;
+    }
+    // Never echo the parsed number itself — count only.
+    pushToast('success', `Filled ${filled} field${filled === 1 ? '' : 's'} from the scan.`);
+  }
+
+  async function scanCard(source: 'screen' | 'file') {
+    if (scanning()) return;
+    setScanning(true);
+    try {
+      const lines = source === 'screen' ? await ipc.ocrCaptureScreen() : await ipc.ocrCaptureFile();
+      if (lines === null) return; // file picker cancelled
+      applyParsed(lines);
+    } catch (err) {
+      toastError(err);
+    } finally {
+      setScanning(false);
+    }
+  }
+
   return (
     <div class="ie-section">
+      <Show when={ocrAvailable()}>
+        <div class="ie-section-title ie-card-scan-row">
+          <button
+            class="ghost ie-add ie-scan-qr"
+            disabled={scanning()}
+            onClick={() => void scanCard('screen')}
+            title="Capture the screen and read the card details off it"
+          >
+            <ScanLine size={13} strokeWidth={1.75} /> Scan card
+          </button>
+          <button
+            class="ghost ie-add ie-scan-qr"
+            disabled={scanning()}
+            onClick={() => void scanCard('file')}
+            title="Read the card details from an image file"
+          >
+            <ImageUp size={13} strokeWidth={1.75} /> From image
+          </button>
+        </div>
+      </Show>
+
       {/* Live preview of the card as it's typed. */}
       <div class="ie-card-preview">
         <div class="ie-card-row-top">

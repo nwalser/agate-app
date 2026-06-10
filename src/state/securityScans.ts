@@ -162,8 +162,9 @@ export async function runDarkwebScan(): Promise<void> {
   if (!darkwebMonitor() || !status().unlocked || darkwebBusy()) return;
   setDarkwebBusy(true);
   try {
-    // The backend scan refuses unless consent is recorded; keep it in sync.
-    await ipc.setDarkwebConsent(true);
+    // Consent is granted in exactly ONE place: the explicit Settings toggle
+    // (state/security.ts). The scan itself must never re-grant it — that would
+    // rubber-stamp the backend's trust-boundary gate on every auto-run.
     const run = await ipc.darkwebScanVault();
     setDarkwebReport(mergeScanRun(checkedByEmail, run));
     setDarkwebRunAt(Date.now());
@@ -228,8 +229,11 @@ export function relevantBreaches(): RelevantBreach[] {
 
 let started = false;
 
-/** Run the enabled scans, but only those whose cached result has gone stale. */
-function runStaleScans(): void {
+/** Run the enabled scans, but only those whose cached result has gone stale.
+ *  Exported so the post-sync hook can piggyback on it: a JS interval doesn't
+ *  fire during OS sleep, so the 5-minute sync is the wake-up that catches a
+ *  missed 6h tick. Free no-op while everything is fresh. */
+export function runStaleScans(): void {
   if (!isFresh(darkwebRunAt())) void runDarkwebScan();
   if (!isFresh(exposedRunAt())) void runExposedCheck();
 }

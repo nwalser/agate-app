@@ -89,13 +89,18 @@ async fn dispatch(app: &AppHandle, name: &str, args: &Value) -> ToolResult {
 async fn list_vault_items(state: &AppState) -> ToolResult {
     // Fail closed when locked: no unlocked connection means nothing to read.
     if state.session.lock().await.connection_count() == 0 {
-        audit(state, "list_vault_items", None, None, false).await;
+        audit(state, "list_vault_items", None, None, None, false).await;
         return ToolResult::error("Vault is locked. Unlock Agate, then retry.");
     }
 
     let all = match vault::list_items(state).await {
         Ok(items) => items,
-        Err(e) => return ToolResult::error(format!("Could not read the vault: {}", e.message)),
+        Err(e) => {
+            // Even a failed attempt belongs in the audit log — it's still an
+            // access the AI made.
+            audit(state, "list_vault_items", None, None, None, false).await;
+            return ToolResult::error(format!("Could not read the vault: {}", e.message));
+        }
     };
 
     let granted: Vec<Value> = {
@@ -107,7 +112,7 @@ async fn list_vault_items(state: &AppState) -> ToolResult {
             .collect()
     };
 
-    audit(state, "list_vault_items", None, None, true).await;
+    audit(state, "list_vault_items", None, None, None, true).await;
     ToolResult::ok(json!({ "items": granted, "count": granted.len() }).to_string())
 }
 
@@ -120,16 +125,33 @@ async fn get_vault_item(state: &AppState, args: &Value) -> ToolResult {
     };
 
     // The headline invariant: reveal a secret only for an explicitly allowlisted
-    // item. Everything else is denied (and the attempt is audited).
+    // item. Everything else is denied (and the attempt is audited with the probed
+    // item id — the most forensically interesting datum on a denial).
     if !state.config.lock().await.is_ai_granted(account_email, item_id) {
-        audit(state, "get_vault_item", None, Some(account_email.to_string()), false).await;
+        audit(
+            state,
+            "get_vault_item",
+            None,
+            Some(item_id.to_string()),
+            Some(account_email.to_string()),
+            false,
+        )
+        .await;
         return ToolResult::error("Not authorized: this item is not on the AI allowlist.");
     }
 
     let view = match vault::decrypt_one(state, account_email, item_id).await {
         Ok(v) => v,
         Err(e) => {
-            audit(state, "get_vault_item", None, Some(account_email.to_string()), false).await;
+            audit(
+                state,
+                "get_vault_item",
+                None,
+                Some(item_id.to_string()),
+                Some(account_email.to_string()),
+                false,
+            )
+            .await;
             return ToolResult::error(format!("Could not read the item: {}", e.message));
         }
     };
@@ -144,9 +166,18 @@ async fn get_vault_item(state: &AppState, args: &Value) -> ToolResult {
         .filter_map(|u| u.uri)
         .collect();
     // The stored TOTP secret never leaves the app; we return the current code only.
-    let totp = match login.and_then(|l| l.totp.clone()) {
-        Some(secret) => generate_totp(secret, Some(Utc::now())).ok().map(|r| r.code),
-        None => None,
+    // A generation FAILURE is surfaced distinctly from "no TOTP configured" — a
+    // corrupt secret must not silently read as absent. (The error itself is not
+    // echoed: it could quote the stored secret.)
+    let (totp, totp_error) = match login.and_then(|l| l.totp.clone()) {
+        Some(secret) => match generate_totp(secret, Some(Utc::now())) {
+            Ok(r) => (Some(r.code), None),
+            Err(_) => {
+                log::warn!("MCP get_vault_item: TOTP generation failed for an allowlisted item");
+                (None, Some("This item has a TOTP secret, but generating a code failed — the stored secret may be malformed."))
+            }
+        },
+        None => (None, None),
     };
     let fields: Vec<Value> = view
         .fields
@@ -162,11 +193,20 @@ async fn get_vault_item(state: &AppState, args: &Value) -> ToolResult {
         "password": password,
         "uris": uris,
         "totp": totp,
+        "totpError": totp_error,
         "notes": view.notes,
         "fields": fields,
     });
 
-    audit(state, "get_vault_item", Some(view.name.clone()), Some(account_email.to_string()), true).await;
+    audit(
+        state,
+        "get_vault_item",
+        Some(view.name.clone()),
+        Some(item_id.to_string()),
+        Some(account_email.to_string()),
+        true,
+    )
+    .await;
     ToolResult::ok(body.to_string())
 }
 
@@ -174,6 +214,7 @@ async fn audit(
     state: &AppState,
     action: &str,
     item_name: Option<String>,
+    item_id: Option<String>,
     account_email: Option<String>,
     allowed: bool,
 ) {
@@ -185,6 +226,7 @@ async fn audit(
             timestamp: Utc::now().to_rfc3339(),
             action: action.to_string(),
             item_name,
+            item_id,
             account_email,
             allowed,
         })

@@ -33,6 +33,20 @@ describe('sameViewConfig', () => {
     expect(sameViewConfig(base(), base({ columns: DEFAULT }))).toBe(false);
     expect(sameViewConfig(base({ columns: DEFAULT }), base({ columns: { ...DEFAULT } }))).toBe(true);
   });
+  it('detects a display-mode (table vs list) change', () => {
+    expect(
+      sameViewConfig(
+        base({ columns: { ...DEFAULT, displayMode: 'table' } }),
+        base({ columns: { ...DEFAULT, displayMode: 'list' } }),
+      ),
+    ).toBe(false);
+    expect(
+      sameViewConfig(
+        base({ columns: { ...DEFAULT, displayMode: 'list' } }),
+        base({ columns: { ...DEFAULT, displayMode: 'list' } }),
+      ),
+    ).toBe(true);
+  });
 });
 
 describe('parseCustomQuery', () => {

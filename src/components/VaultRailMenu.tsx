@@ -35,6 +35,7 @@ import {
   isQueryId,
   type CustomQuery,
   type SidebarBuiltinId,
+  type SidebarEntry,
 } from '../lib/sidebarConfig.ts';
 import { viewIcon } from '../lib/viewIcons.ts';
 import {
@@ -43,11 +44,12 @@ import {
   moveEntry,
   queryById,
   removeEntry,
-  reorderEntry,
+  reorderEntryByIds,
   sidebar,
   toggleHidden,
   visibleEntries,
 } from '../state/sidebar.ts';
+import { useDragReorder } from '../hooks/useDragReorder.ts';
 import FolderTree from './FolderTree.tsx';
 import { ContextMenu, CtxItem, CtxSep } from './ContextMenu.tsx';
 import { SyncIcon, type SyncState } from './SyncStatus.tsx';
@@ -108,21 +110,24 @@ export default function VaultRailMenu(props: {
     setEntryMenu({ id, x: e.clientX, y: e.clientY });
   }
 
-  // Drag-to-reorder rail entries. Handlers guard on `dragId` so they only act
-  // during a rail-entry drag — a vault-item drag (folder drops) is left alone.
-  const [dragId, setDragId] = createSignal<string | null>(null);
-  const [overId, setOverId] = createSignal<string | null>(null);
-  function dropOn(targetId: string) {
-    const from = dragId();
-    if (from && from !== targetId) {
-      const order = sidebar().order;
-      const fi = order.indexOf(from);
-      const ti = order.indexOf(targetId);
-      if (fi >= 0 && ti >= 0) reorderEntry(fi, ti);
-    }
-    setDragId(null);
-    setOverId(null);
-  }
+  // Drag-to-reorder rail entries via the shared gap-model hook: the painted
+  // insert line IS the landing spot (the old drop-on-row model disagreed with
+  // its indicator half the time). The hook ignores foreign drags (item→folder).
+  // Indices run over the DRAGGABLE subset of visible entries — the folder-tree
+  // block opts out (it owns its own DnD) — and the drop resolves to ids, so
+  // hidden entries between visible neighbours can't skew where the entry lands.
+  const entryId = (e: SidebarEntry) => (e.kind === 'query' ? e.query.id : e.id);
+  const draggableEntries = () =>
+    visibleEntries().filter((e) => !(e.kind === 'builtin' && e.id === 'folders'));
+  const reorder = useDragReorder({
+    onReorder: (from, to) => {
+      const ids = draggableEntries().map(entryId);
+      const fromId = ids[from];
+      if (fromId === undefined) return;
+      ids.splice(from, 1);
+      reorderEntryByIds(fromId, ids[to] ?? null);
+    },
+  });
 
   const builtin = (id: SidebarBuiltinId, onCtx: (e: MouseEvent) => void): JSX.Element => {
     if (id === 'folders') return folders();
@@ -244,36 +249,22 @@ export default function VaultRailMenu(props: {
           // arrows / context menu instead.
           if (entry.kind === 'builtin' && entry.id === 'folders') return inner;
           const id = entry.kind === 'query' ? entry.query.id : entry.id;
+          // Index within the draggable subset, read at event time (stays correct
+          // after the list reorders, like reading <For>'s own index accessor).
+          const dIdx = () => draggableEntries().findIndex((x) => entryId(x) === id);
           return (
             <div
               class="vault-rail-entry"
               classList={{
-                'rail-dragging': dragId() === id,
-                'rail-dropover': overId() === id && dragId() !== null && dragId() !== id,
+                'rail-dragging': reorder.dragIndex() === dIdx(),
+                'rail-drop-above': reorder.dragIndex() !== null && reorder.gap() === dIdx(),
+                'rail-drop-below':
+                  reorder.dragIndex() !== null &&
+                  dIdx() === draggableEntries().length - 1 &&
+                  reorder.gap() === draggableEntries().length,
               }}
-              draggable={true}
-              onDragStart={(e) => {
-                setDragId(id);
-                if (e.dataTransfer) {
-                  e.dataTransfer.effectAllowed = 'move';
-                  e.dataTransfer.setData('text/plain', id);
-                }
-              }}
-              onDragOver={(e) => {
-                if (dragId() === null) return; // not a rail-entry drag — ignore
-                e.preventDefault();
-                setOverId(id);
-                if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-              }}
-              onDrop={(e) => {
-                if (dragId() === null) return;
-                e.preventDefault();
-                dropOn(id);
-              }}
-              onDragEnd={() => {
-                setDragId(null);
-                setOverId(null);
-              }}
+              {...reorder.handleProps(dIdx)}
+              {...reorder.rowProps(dIdx)}
             >
               {inner}
             </div>

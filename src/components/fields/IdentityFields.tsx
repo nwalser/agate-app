@@ -1,7 +1,13 @@
 // Identity-type fields: personal details + address blocks. Owns its own signals
 // and exposes its IdentityInput builder to the orchestrator via `onReady`.
-import { createSignal } from 'solid-js';
+// "From image" OCRs a picked image (e.g. a business card) into the blank
+// name/email/phone fields.
+import { createSignal, onMount, Show } from 'solid-js';
+import { ImageUp } from 'lucide-solid';
+import { ipc } from '../../lib/ipc.ts';
 import type { IdentityInput, ItemDetail } from '../../lib/types.ts';
+import { mapOcrToIdentity } from '../../lib/ocrFill.ts';
+import { pushToast, toastError } from '../../state/toast.ts';
 import { orNull } from './index.ts';
 
 export default function IdentityFields(props: {
@@ -53,10 +59,62 @@ export default function IdentityFields(props: {
   }
   props.onReady(buildIdentity);
 
+  // ── Fill from image (OCR): name/email/phone into blank fields only. The
+  // recognized text is never logged. Hidden where OCR is unavailable.
+  const [ocrAvailable, setOcrAvailable] = createSignal(false);
+  const [ocrBusy, setOcrBusy] = createSignal(false);
+  onMount(() => {
+    void (async () => {
+      try {
+        setOcrAvailable(await ipc.ocrAvailable());
+      } catch {
+        // ignore: probe failure just keeps the button hidden
+      }
+    })();
+  });
+  async function fillFromImage() {
+    if (ocrBusy()) return;
+    setOcrBusy(true);
+    try {
+      const lines = await ipc.ocrCaptureFile();
+      if (lines === null) return; // cancelled
+      const m = mapOcrToIdentity(lines);
+      let filled = 0;
+      const fill = (cur: string, v: string | undefined, set: (s: string) => void) => {
+        if (v && !cur.trim()) {
+          set(v);
+          filled++;
+        }
+      };
+      fill(firstName(), m.firstName, setFirstName);
+      fill(lastName(), m.lastName, setLastName);
+      fill(email(), m.email, setEmail);
+      fill(phone(), m.phone, setPhone);
+      if (filled === 0) pushToast('error', 'Nothing usable recognized in that image.');
+      else pushToast('success', `Filled ${filled} field${filled === 1 ? '' : 's'} from the image.`);
+    } catch (err) {
+      toastError(err);
+    } finally {
+      setOcrBusy(false);
+    }
+  }
+
   return (
     <>
       <div class="ie-section">
-        <div class="ie-section-title">Personal details</div>
+        <div class="ie-section-title ie-title-row">
+          Personal details
+          <Show when={ocrAvailable()}>
+            <button
+              class="ghost ie-add ie-scan-qr"
+              disabled={ocrBusy()}
+              onClick={() => void fillFromImage()}
+              title="Read name/email/phone from an image file"
+            >
+              <ImageUp size={13} strokeWidth={1.75} /> From image
+            </button>
+          </Show>
+        </div>
         <div class="ie-grid-3">
           <div class="field">
             <label>Title</label>

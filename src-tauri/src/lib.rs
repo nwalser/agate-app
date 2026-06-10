@@ -20,6 +20,7 @@ mod hello;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod hello_unix;
 mod mutate;
+mod ocr;
 mod proxy;
 mod qrscan;
 mod scancache;
@@ -98,6 +99,9 @@ pub fn run() {
             item_detail,
             item_totp,
             scan_totp_qr,
+            ocr_available,
+            ocr_capture_screen,
+            ocr_capture_file,
             generate_password,
             generate_passphrase,
             generate_username,

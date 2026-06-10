@@ -21,7 +21,7 @@ pub struct AiGrant {
 /// Status of the local MCP server, shown on the AI Access settings page. `url` and
 /// `token` are only populated when the server is enabled, so the page can render
 /// the connect string + bearer token for the user to paste into their MCP client.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AiServerStatus {
     /// The user has switched the MCP server on (persisted).
@@ -32,6 +32,19 @@ pub struct AiServerStatus {
     pub url: Option<String>,
     /// Bearer token the MCP client must send (Authorization: Bearer …), when enabled.
     pub token: Option<String>,
+}
+
+/// Manual `Debug` that REDACTS the bearer token — a derived `Debug` would put the
+/// vault-read capability one `{:?}` log line away from disk.
+impl std::fmt::Debug for AiServerStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AiServerStatus")
+            .field("enabled", &self.enabled)
+            .field("running", &self.running)
+            .field("url", &self.url)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
 }
 
 /// One line in the in-memory access audit log: every tool call the MCP server
@@ -47,6 +60,9 @@ pub struct AiAuditEntry {
     pub action: String,
     /// The decrypted item name, when the access targeted a specific item.
     pub item_name: Option<String>,
+    /// The requested item id — recorded even for a DENIED read, so the log can
+    /// say which item an AI probed (the name isn't decrypted on a denial).
+    pub item_id: Option<String>,
     /// The owning connection, when the access targeted a specific item.
     pub account_email: Option<String>,
     /// Whether the access was permitted (on the allowlist + unlocked) or denied.

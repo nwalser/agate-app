@@ -45,6 +45,9 @@ pub struct VaultItem {
     /// Whether the login has at least one stored passkey (FIDO2 credential).
     /// Presence only — the credential material is never sent to the frontend.
     pub has_passkey: bool,
+    /// Whether "require master password to view" (reprompt) is set — the list
+    /// needs it so cell/context-menu copies can gate without a detail fetch.
+    pub reprompt: bool,
     pub favorite: bool,
     pub deleted: bool,
     pub folder_id: Option<String>,

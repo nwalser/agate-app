@@ -77,6 +77,22 @@ export function reorderEntry(from: number, to: number) {
   persist({ ...sidebar(), order });
 }
 
+/** Move `fromId` directly before `beforeId` in the full order (append when
+ *  `beforeId` is null). Id-based so the rail (which renders only visible
+ *  entries) can't land an entry on the far side of hidden neighbours — the
+ *  index-based drop's failure mode. Unknown ids are a no-op. */
+export function reorderEntryByIds(fromId: string, beforeId: string | null) {
+  if (fromId === beforeId) return;
+  const order = sidebar().order.slice();
+  const from = order.indexOf(fromId);
+  if (from < 0) return;
+  if (beforeId !== null && !order.includes(beforeId)) return;
+  order.splice(from, 1);
+  const at = beforeId === null ? order.length : order.indexOf(beforeId);
+  order.splice(at, 0, fromId);
+  persist({ ...sidebar(), order });
+}
+
 /** Create a saved view (appended to the rail). With just a name + icon it starts
  *  from a default empty config (configured later while viewing); pass `config` to
  *  seed it from the current list state in one step ("Save as new view"). Returns

@@ -1,6 +1,7 @@
 // "Vault health" section of the Security center: the per-flag summary of the
 // offline vault-health audit. No single rolled-up score, and no item list — the
-// at-risk items live in their own view (AtRiskView), referenced here by count.
+// at-risk items live in the standard 'At risk' rail filter view (VaultFilter
+// kind 'atRisk'), referenced here by count.
 // Render-only: the audit report + loading state are owned by SecurityCenter and
 // passed down. Reuses the .sec-* classes from SecurityCenter.css (imported by the
 // parent).

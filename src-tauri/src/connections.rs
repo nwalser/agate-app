@@ -241,7 +241,8 @@ pub async fn remove_connection(state: &AppState, email: String) -> AgateResult<(
     }
     {
         let mut cfg = state.config.lock().await;
-        cfg.accounts.retain(|a| a.email != email);
+        // Drops the account record AND its AI allowlist grants — see remove_account.
+        cfg.remove_account(&email);
     }
     state.save_config().await
 }

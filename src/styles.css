@@ -117,6 +117,9 @@ body {
 #app {
   display: flex;
   flex-direction: column;
+  /* The document itself must never scroll — the titlebar stays pinned and each
+     screen owns its scrolling inside its own container. */
+  overflow: hidden;
 }
 
 button {

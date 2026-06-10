@@ -8,14 +8,35 @@ import { createSignal, For, onMount, Show } from 'solid-js';
 import { Send as SendIcon, Trash2 } from 'lucide-solid';
 import { ipc } from '../lib/ipc.ts';
 import type { SendSummary } from '../lib/types.ts';
-import { relativeFromNow } from '../lib/dates.ts';
+import { relativeUntil } from '../lib/dates.ts';
 import { pushToast, toastError } from '../state/toast.ts';
 import './SendsView.css';
+
+/** The "type · views · flags · expiry" metadata line under a Send's name. */
+export function sendMeta(s: SendSummary, now: number = Date.now()): string {
+  const views =
+    s.maxAccessCount != null
+      ? `${s.accessCount}/${s.maxAccessCount} views`
+      : `${s.accessCount} view${s.accessCount === 1 ? '' : 's'}`;
+  const parts = [s.sendType, views];
+  if (s.hasPassword) parts.push('password');
+  if (s.disabled) parts.push('disabled');
+  if (s.expirationDate) {
+    const t = Date.parse(s.expirationDate);
+    // Unparseable expiry: drop the segment entirely (no dangling "expires ").
+    if (!Number.isNaN(t)) {
+      parts.push(t <= now ? 'expired' : `expires ${relativeUntil(s.expirationDate, now)}`);
+    }
+  }
+  return parts.join(' · ');
+}
 
 export default function SendsView() {
   const [sends, setSends] = createSignal<SendSummary[]>([]);
   const [loading, setLoading] = createSignal(true);
-  const [removing, setRemoving] = createSignal<string | null>(null);
+  // Ids with a revoke in flight — a Set so concurrent revokes on different rows
+  // don't re-enable each other's buttons (or allow a double-delete).
+  const [removing, setRemoving] = createSignal<ReadonlySet<string>>(new Set());
 
   async function load() {
     setLoading(true);
@@ -30,7 +51,8 @@ export default function SendsView() {
   onMount(() => void load());
 
   async function revoke(s: SendSummary) {
-    setRemoving(s.id);
+    if (removing().has(s.id)) return;
+    setRemoving((prev) => new Set(prev).add(s.id));
     try {
       await ipc.deleteSend(s.accountEmail, s.id);
       pushToast('success', 'Send revoked.');
@@ -38,17 +60,12 @@ export default function SendsView() {
     } catch (err) {
       toastError(err);
     } finally {
-      setRemoving(null);
+      setRemoving((prev) => {
+        const next = new Set(prev);
+        next.delete(s.id);
+        return next;
+      });
     }
-  }
-
-  function meta(s: SendSummary): string {
-    const views = s.maxAccessCount != null ? `${s.accessCount}/${s.maxAccessCount}` : `${s.accessCount}`;
-    const parts = [s.sendType, `${views} views`];
-    if (s.hasPassword) parts.push('password');
-    if (s.disabled) parts.push('disabled');
-    if (s.expirationDate) parts.push(`expires ${relativeFromNow(s.expirationDate)}`);
-    return parts.join(' · ');
   }
 
   return (
@@ -74,9 +91,9 @@ export default function SendsView() {
                 <div class="send-row">
                   <span class="send-info">
                     <span class="send-name truncate">{s.name}</span>
-                    <span class="muted send-meta">{meta(s)}</span>
+                    <span class="muted send-meta">{sendMeta(s)}</span>
                   </span>
-                  <button class="danger" disabled={removing() === s.id} onClick={() => void revoke(s)}>
+                  <button class="danger" disabled={removing().has(s.id)} onClick={() => void revoke(s)}>
                     <Trash2 size={13} strokeWidth={1.75} /> Revoke
                   </button>
                 </div>

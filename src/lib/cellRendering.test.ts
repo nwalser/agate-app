@@ -15,6 +15,7 @@ const login = (over: Partial<VaultItem> = {}): VaultItem => ({
   uri: 'https://example.com',
   hasTotp: false,
   hasPasskey: false,
+  reprompt: false,
   favorite: false,
   deleted: false,
   folderId: null,

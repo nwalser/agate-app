@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { groupOf, type GroupContext } from './grouping.ts';
+import { compareGroups, customFieldGroupValue, groupOf, type GroupContext } from './grouping.ts';
 import type { ItemAudit, VaultItem } from './types.ts';
 
 const item = (over: Partial<VaultItem> = {}): VaultItem => ({
@@ -12,6 +12,7 @@ const item = (over: Partial<VaultItem> = {}): VaultItem => ({
   uri: 'https://example.com',
   hasTotp: false,
   hasPasskey: false,
+  reprompt: false,
   favorite: false,
   deleted: false,
   folderId: null,
@@ -91,5 +92,81 @@ describe('groupOf', () => {
   it('groups by passkey presence', () => {
     expect(groupOf(item({ hasPasskey: true }), 'passkey', ctx())).toMatchObject({ id: 'k:yes', label: 'Has passkey' });
     expect(groupOf(item({ hasPasskey: false }), 'passkey', ctx())).toMatchObject({ id: 'k:no', label: 'No passkey' });
+  });
+
+  it('groups by website host (lowercased), trailing rows with no/unparseable website', () => {
+    const named = groupOf(item({ uri: 'https://Login.Example.com/path' }), 'website', ctx());
+    const bare = groupOf(item({ uri: 'example.com' }), 'website', ctx());
+    const none = groupOf(item({ uri: null }), 'website', ctx());
+    expect(named).toMatchObject({ id: 'w:login.example.com', label: 'login.example.com', rank: 0 });
+    expect(bare).toMatchObject({ id: 'w:example.com', label: 'example.com', rank: 0 });
+    expect(none).toMatchObject({ id: 'w:none', label: 'No website', rank: 1 });
+  });
+
+  it('groups by one-time-code presence — never by value', () => {
+    expect(groupOf(item({ hasTotp: true }), 'totp', ctx())).toMatchObject({
+      id: 'o:yes',
+      label: 'Has one-time code',
+      rank: 0,
+    });
+    expect(groupOf(item({ hasTotp: false }), 'totp', ctx())).toMatchObject({ id: 'o:no', label: 'None', rank: 1 });
+  });
+
+  it('compareGroups follows the label direction but keeps rank-pinned buckets last', () => {
+    const a = { id: 'u:alice', label: 'alice', rank: 0 };
+    const b = { id: 'u:bob', label: 'bob', rank: 0 };
+    const none = { id: 'u:none', label: 'No username', rank: 1 };
+    expect(compareGroups(a, b, 1)).toBeLessThan(0);
+    expect(compareGroups(a, b, -1)).toBeGreaterThan(0); // desc flips label order
+    expect(compareGroups(a, none, -1)).toBeLessThan(0); // 'No username' stays last
+    expect(compareGroups(none, b, -1)).toBeGreaterThan(0);
+  });
+
+  it('groups by password presence (login rows), trailing non-logins', () => {
+    expect(groupOf(item({ itemType: 'login' }), 'password', ctx())).toMatchObject({
+      id: 'p:yes',
+      label: 'Has password',
+      rank: 0,
+    });
+    expect(groupOf(item({ itemType: 'secureNote' }), 'password', ctx())).toMatchObject({
+      id: 'p:no',
+      label: 'No password',
+      rank: 1,
+    });
+  });
+
+  it('groups by a custom field value; hidden fields bucket as Hidden, never the value', () => {
+    const spec = { kind: 'custom', field: 'Environment' } as const;
+    const fv = (v: ReturnType<NonNullable<GroupContext['fieldValue']>>) =>
+      ctx({ fieldValue: () => v });
+
+    expect(groupOf(item(), spec, fv({ state: 'value', value: 'Prod' }))).toMatchObject({
+      id: 'cf:prod',
+      label: 'Prod',
+      rank: 0,
+    });
+    const hidden = groupOf(item(), spec, fv({ state: 'hidden' }));
+    expect(hidden).toMatchObject({ id: 'cf:hidden', label: 'Hidden' });
+    expect(JSON.stringify(hidden)).not.toContain('Prod'); // value never leaks
+    expect(groupOf(item(), spec, fv({ state: 'missing' }))).toMatchObject({
+      id: 'cf:none',
+      label: 'No Environment',
+    });
+    // No fieldValue provided at all ⇒ provisional Loading bucket, ranked last.
+    expect(groupOf(item(), spec, ctx())).toMatchObject({ id: 'cf:loading', label: 'Loading…' });
+  });
+
+  it('customFieldGroupValue resolves loading/missing/hidden/value from a detail map', () => {
+    const detail = (fields: { name: string; value: string | null; fieldType: string }[]) =>
+      ({ id: 'i1', fields }) as never;
+    const m = new Map<string, never>([
+      ['i1', detail([{ name: 'Env', value: 'Prod', fieldType: 'text' }])],
+      ['i2', detail([{ name: 'Env', value: 'secret', fieldType: 'hidden' }])],
+      ['i3', detail([])],
+    ]);
+    expect(customFieldGroupValue(m, 'i1', 'Env')).toEqual({ state: 'value', value: 'Prod' });
+    expect(customFieldGroupValue(m, 'i2', 'Env')).toEqual({ state: 'hidden' });
+    expect(customFieldGroupValue(m, 'i3', 'Env')).toEqual({ state: 'missing' });
+    expect(customFieldGroupValue(m, 'not-fetched', 'Env')).toEqual({ state: 'loading' });
   });
 });

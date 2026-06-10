@@ -9,7 +9,12 @@ import { type Accessor, createMemo, createSignal } from 'solid-js';
 import type { Folder, ItemAudit, ItemType, VaultHealthReport, VaultItem } from '../lib/types.ts';
 import { filterItems, type VaultFilter } from '../lib/search.ts';
 import { isCommandQuery } from '../lib/command.ts';
-import { groupOf, type GroupContext } from '../lib/grouping.ts';
+import {
+  compareGroups,
+  groupOf,
+  type CustomFieldGroupValue,
+  type GroupContext,
+} from '../lib/grouping.ts';
 import { query } from '../state/search.ts';
 import { filters, NAME_FILTER_KEY } from '../state/columnFilters.ts';
 import {
@@ -27,6 +32,9 @@ export function useVaultFiltering(deps: {
   folders: Accessor<Folder[]>;
   /** Offline vault-health report — drives the Security sort + grouping ranks. */
   health: Accessor<VaultHealthReport | null>;
+  /** Row's custom-field value for custom-field grouping (from the screen's
+   *  detail cache); absent rows order into the 'Loading…' bucket until decrypted. */
+  fieldValue?: (id: string, field: string) => CustomFieldGroupValue;
 }) {
   // `query` is the shared titlebar search signal (state/search.ts) — the search
   // field now lives in the custom window titlebar, not this header.
@@ -98,6 +106,7 @@ export function useVaultFiltering(deps: {
     folderName: folderNameOf,
     audit: (id) => atRiskById().get(id),
     hasSecurityReport: deps.health() !== null,
+    fieldValue: deps.fieldValue,
   });
 
   // Security sort rank: higher = worse. 0 = unrated (non-login / no report) and
@@ -150,16 +159,17 @@ export function useVaultFiltering(deps: {
     const cmpSort = sortComparator(sortKey(), dir);
     const gb = columns().groupBy;
     if (!gb) return [...filtered()].sort(cmpSort);
-    // Grouped: order by group (fixed natural order, independent of sort dir),
-    // then by the active sort within each group. The rows stay a flat array so
+    // Grouped: order by group, then by the active sort within each group. When
+    // the user sorts BY the grouped column, the group order follows the sort
+    // direction (rank-pinned buckets like "No folder" still trail); otherwise
+    // groups keep their natural ascending order. The rows stay a flat array so
     // selection ranges and the row `For` keep working on the displayed order.
+    const labelDir: 1 | -1 = gb.kind === 'builtin' && gb.key === sortKey() ? (dir as 1 | -1) : 1;
     const ctx = groupCtx();
     return [...filtered()].sort((a, b) => {
       const ga = groupOf(a, gb, ctx);
       const gbv = groupOf(b, gb, ctx);
-      if (ga.rank !== gbv.rank) return ga.rank - gbv.rank;
-      if (ga.id !== gbv.id) return ga.label.localeCompare(gbv.label, undefined, { sensitivity: 'base' });
-      return cmpSort(a, b);
+      return compareGroups(ga, gbv, labelDir) || cmpSort(a, b);
     });
   });
 

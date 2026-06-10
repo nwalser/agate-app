@@ -179,6 +179,14 @@ export const ipc = {
   /** Capture the screen and decode a TOTP setup QR into its otpauth:// URI. */
   scanTotpQr: (): Promise<string> => invoke('scan_totp_qr'),
 
+  /** Whether OCR (scan card / fill from image) is available on this platform. */
+  ocrAvailable: (): Promise<boolean> => invoke('ocr_available'),
+  /** Capture every monitor and return the recognized text lines (may contain
+   *  secrets — never log them). */
+  ocrCaptureScreen: (): Promise<string[]> => invoke('ocr_capture_screen'),
+  /** Pick an image file and return its recognized text lines (null = cancelled). */
+  ocrCaptureFile: (): Promise<string[] | null> => invoke('ocr_capture_file'),
+
   generatePassword: (options: PasswordGenOptions): Promise<string> =>
     invoke('generate_password', { options }),
 

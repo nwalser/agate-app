@@ -11,12 +11,14 @@
 // revokes the backend's permission to call out.
 
 import { createSignal } from 'solid-js';
+import { ipc } from '../lib/ipc.ts';
 import {
   clearDarkwebScan,
   clearExposedCheck,
   runDarkwebScan,
   runExposedCheck,
 } from './securityScans.ts';
+import { toastError } from './toast.ts';
 
 // Re-exported so existing callers (e.g. main.tsx) keep their import path stable.
 export { initSecurity } from './securityScans.ts';
@@ -43,8 +45,11 @@ function writeBool(key: string, value: boolean): void {
   }
 }
 
-// Both features default ON.
-const [darkwebMonitor, setDarkwebMonitorSig] = createSignal(readBool(KEY_DARKWEB, true));
+// The dark-web monitor sends the vault's account emails to an external provider
+// (XposedOrNot), so it is OPT-IN — default OFF, matching the backend consent
+// flag's default. The exposed-password check stays default ON: k-anonymity, only
+// 5 hex chars of a SHA-1 ever leave the device.
+const [darkwebMonitor, setDarkwebMonitorSig] = createSignal(readBool(KEY_DARKWEB, false));
 const [exposedCheck, setExposedCheckSig] = createSignal(readBool(KEY_EXPOSED, true));
 
 export { darkwebMonitor, exposedCheck };
@@ -53,6 +58,13 @@ export async function setDarkwebMonitor(enabled: boolean): Promise<void> {
   setDarkwebMonitorSig(enabled);
   writeBool(KEY_DARKWEB, enabled);
   if (enabled) {
+    // The ONE place backend consent is granted: the user's explicit toggle.
+    try {
+      await ipc.setDarkwebConsent(true);
+    } catch (err) {
+      toastError(err);
+      return;
+    }
     await runDarkwebScan();
   } else {
     await clearDarkwebScan();

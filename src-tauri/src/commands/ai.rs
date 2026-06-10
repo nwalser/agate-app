@@ -1,28 +1,39 @@
 //! AI-access (MCP server) commands: server status / toggle, the item allowlist, and
 //! the access audit log. Thin wrappers — the server itself lives in `crate::aiserver`.
 
+use std::sync::Mutex;
+
 use base64::Engine;
 use rand::RngCore;
 
 use super::State;
 use crate::aiserver;
 use crate::dto::{AiAuditEntry, AiGrant, AiServerStatus};
-use crate::error::AgateResult;
+use crate::error::{AgateError, AgateResult, ErrorKind};
 use crate::secrets;
 
-/// A fresh 256-bit URL-safe bearer token for the MCP endpoint.
-fn fresh_token() -> String {
+/// A fresh 256-bit URL-safe bearer token for the MCP endpoint. Uses the fallible
+/// RNG path — a `#[tauri::command]` must never panic, even on entropy failure.
+fn fresh_token() -> AgateResult<String> {
     let mut bytes = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+    rand::rngs::OsRng.try_fill_bytes(&mut bytes).map_err(|e| {
+        AgateError::new(ErrorKind::Internal, format!("Could not gather randomness for the token: {e}"))
+    })?;
+    Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes))
 }
+
+/// Serializes `ensure_token`'s load-then-store, so two concurrent enables can't
+/// each mint a token and leave one caller displaying a token the keychain no
+/// longer holds.
+static TOKEN_INIT: Mutex<()> = Mutex::new(());
 
 /// Ensure a bearer token exists in the keychain; returns it (generating once).
 fn ensure_token() -> AgateResult<String> {
+    let _guard = TOKEN_INIT.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(token) = secrets::load_ai_token()? {
         return Ok(token);
     }
-    let token = fresh_token();
+    let token = fresh_token()?;
     secrets::store_ai_token(&token)?;
     Ok(token)
 }
@@ -50,13 +61,27 @@ pub async fn ai_set_server_enabled(
     state: State<'_>,
     enabled: bool,
 ) -> AgateResult<AiServerStatus> {
-    // Provision the token before flipping the flag so an enabled server is never
-    // tokenless (which would deny every request).
+    // Order matters: provision the token AND bind the listener before the flag is
+    // flipped + persisted. The reverse order could persist "enabled" and then fail
+    // to bind (port squatted) — a config that claims the server is on with nothing
+    // listening, and no error on later launches. Binding first is safe: the
+    // handler 503s until the flag flips.
     let token = if enabled { Some(ensure_token()?) } else { None };
-    state.config.lock().await.ai_server_enabled = enabled;
-    state.save_config().await?;
     if enabled {
         aiserver::ensure_started(app)?;
+    }
+    let prev = {
+        let mut cfg = state.config.lock().await;
+        let prev = cfg.ai_server_enabled;
+        cfg.ai_server_enabled = enabled;
+        prev
+    };
+    if let Err(e) = state.save_config().await {
+        // Roll back so the in-memory flag never disagrees with what persisted —
+        // otherwise an already-bound listener would serve while the UI shows the
+        // toggle failed.
+        state.config.lock().await.ai_server_enabled = prev;
+        return Err(e);
     }
     Ok(status(enabled, token))
 }

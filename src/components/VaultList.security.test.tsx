@@ -9,6 +9,7 @@ import { createSignal } from 'solid-js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import VaultList from './VaultList.tsx';
 import { resetColumns, toggleColumn } from '../state/columns.ts';
+import { createDetailCache } from '../state/detailCache.ts';
 import type { ItemAudit, VaultHealthReport, VaultItem } from '../lib/types.ts';
 
 const login = (over: Partial<VaultItem> = {}): VaultItem => ({
@@ -21,6 +22,7 @@ const login = (over: Partial<VaultItem> = {}): VaultItem => ({
   uri: 'https://example.com',
   hasTotp: false,
   hasPasskey: false,
+  reprompt: false,
   favorite: false,
   deleted: false,
   folderId: null,
@@ -77,6 +79,7 @@ function renderList(items: VaultItem[], security: VaultHealthReport | null) {
       emptyMessage="empty"
       cacheToken={0}
       security={security}
+      detailCache={createDetailCache()}
     />
   ));
 }
@@ -154,6 +157,7 @@ describe('VaultList — Security column badge', () => {
         emptyMessage="empty"
         cacheToken={0}
         security={sec()}
+        detailCache={createDetailCache()}
       />
     ));
     // No report yet → the column is blank (no badge).

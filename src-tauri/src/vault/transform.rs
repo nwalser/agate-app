@@ -57,6 +57,7 @@ pub(super) fn view_to_list_item(
         uri,
         has_totp,
         has_passkey,
+        reprompt: matches!(view.reprompt, CipherRepromptType::Password),
         favorite: view.favorite,
         deleted: view.deleted_date.is_some(),
         folder_id: view.folder_id.map(|i| i.to_string()),

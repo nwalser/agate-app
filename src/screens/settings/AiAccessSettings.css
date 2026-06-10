@@ -28,21 +28,6 @@
   color: var(--warning);
 }
 
-/* Enable row: label/desc on the left, the shared Switch on the right. */
-.ai-access .ai-server-toggle {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 0;
-  border-top: 1px solid var(--border);
-}
-.ai-access .ai-server-toggle-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
 /* Connection details (URL / token / command). */
 .ai-access .ai-conn {
   margin-top: 6px;

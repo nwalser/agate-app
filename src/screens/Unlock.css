@@ -1,15 +1,20 @@
 .unlock {
   position: relative;
-  /* clip the aurora's blur so it never bleeds up over the titlebar */
-  overflow: hidden;
+  /* x stays clipped so the aurora's blur never bleeds sideways; y scrolls on
+     short windows so the card is reachable instead of clipped. Any overflow
+     value other than visible still clips ink overflow (the blur), so the
+     titlebar stays protected. Children center via margin: auto — flex
+     centering would clip the card's TOP inside a scroll container. */
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
   flex: 1;
   display: flex;
-  align-items: center;
-  justify-content: center;
   padding: 24px;
 }
 
 .unlock-card {
+  margin: auto;
   width: 320px;
   text-align: center;
   background: var(--surface);
@@ -37,6 +42,8 @@
 .unlocking {
   position: relative;
   z-index: 1;
+  /* Centers in .unlock via margin (see .unlock — no flex centering there). */
+  margin: auto;
   display: flex;
   flex-direction: column;
   align-items: center;

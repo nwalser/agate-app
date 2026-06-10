@@ -19,7 +19,8 @@ export {
   gridMetrics,
   GROUP_KEYS,
   GROUP_LABELS,
-  groupKeyOf,
+  groupSpecKey,
+  groupSpecOf,
   isFilterable,
   MIN_COL_WIDTH,
   NAME_COL_KEY,
@@ -32,6 +33,7 @@ export {
   type DisplayMode,
   type GridMetrics,
   type GroupKey,
+  type GroupSpec,
   type SortDir,
   type SortKey,
 } from './columnConfig.ts';

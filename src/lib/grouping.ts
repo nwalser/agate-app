@@ -3,12 +3,37 @@
 // no DOM) so the list ordering (useVaultFiltering) and the header rendering
 // (VaultList) agree on the same group identity/label/order from one definition.
 
-import type { GroupKey } from '../state/columnConfig.ts';
+import type { GroupKey, GroupSpec } from '../state/columnConfig.ts';
 import { TYPE_LABELS } from '../state/columnConfig.ts';
-import type { ItemAudit, VaultItem } from './types.ts';
+import type { ItemAudit, ItemDetail, VaultItem } from './types.ts';
 import { auditSeverity } from './audit.ts';
+import { hostOf } from '../state/favicons.ts';
 
-/** Lookups grouping needs from the surrounding list (no detail fetch). */
+/** A row's value for a custom-field grouping, by readiness/secrecy. */
+export type CustomFieldGroupValue =
+  | { state: 'loading' } // detail not decrypted yet — bucket is provisional
+  | { state: 'missing' } // item has no such field (or it's empty)
+  | { state: 'hidden' } // hidden-type field: NEVER show the value in a header
+  | { state: 'value'; value: string };
+
+/** Resolve a custom-field group value from a (possibly not-yet-filled) detail
+ *  cache map. Shared by the ordering layer and the list's header renderer so
+ *  both see identical buckets. Hidden fields are masked unconditionally — a
+ *  group header outlives any reveal toggle, so it must never carry the value. */
+export function customFieldGroupValue(
+  details: Map<string, ItemDetail>,
+  id: string,
+  field: string,
+): CustomFieldGroupValue {
+  const d = details.get(id);
+  if (!d) return { state: 'loading' };
+  const f = d.fields.find((x) => x.name === field);
+  if (!f || !f.value) return { state: 'missing' };
+  if (f.fieldType === 'hidden') return { state: 'hidden' };
+  return { state: 'value', value: f.value };
+}
+
+/** Lookups grouping needs from the surrounding list. */
 export interface GroupContext {
   /** Folder display name for a folder id (empty for none/unknown). */
   folderName: (id: string | null) => string;
@@ -16,6 +41,8 @@ export interface GroupContext {
   audit: (id: string) => ItemAudit | undefined;
   /** Whether an offline health report is loaded (security grouping needs it). */
   hasSecurityReport: boolean;
+  /** A row's value for a custom-field grouping (absent ⇒ treated as loading). */
+  fieldValue?: (id: string, field: string) => CustomFieldGroupValue;
 }
 
 /** One item's group placement. */
@@ -28,8 +55,35 @@ export interface GroupValue {
   rank: number;
 }
 
-/** The group an item falls into for a given grouping. Pure. */
-export function groupOf(item: VaultItem, key: GroupKey, ctx: GroupContext): GroupValue {
+/** Order two group placements: rank always pins the special buckets ('No X',
+ *  'Not applicable') to the tail; within a rank the label order follows
+ *  `labelDir`, so sorting descending BY the grouped column flips the groups
+ *  too, not just the rows inside them. */
+export function compareGroups(a: GroupValue, b: GroupValue, labelDir: 1 | -1): number {
+  if (a.rank !== b.rank) return a.rank - b.rank;
+  if (a.id === b.id) return 0;
+  return labelDir * a.label.localeCompare(b.label, undefined, { sensitivity: 'base' });
+}
+
+/** The group an item falls into for a given grouping. Pure. A bare GroupKey
+ *  string is shorthand for the builtin spec. */
+export function groupOf(item: VaultItem, by: GroupKey | GroupSpec, ctx: GroupContext): GroupValue {
+  const spec: GroupSpec = typeof by === 'string' ? { kind: 'builtin', key: by } : by;
+  if (spec.kind === 'custom') {
+    const fv = ctx.fieldValue?.(item.id, spec.field) ?? { state: 'loading' as const };
+    switch (fv.state) {
+      case 'value':
+        return { id: `cf:${fv.value.toLowerCase()}`, label: fv.value, rank: 0 };
+      // Hidden fields share ONE bucket — the value never reaches a header.
+      case 'hidden':
+        return { id: 'cf:hidden', label: 'Hidden', rank: 1 };
+      case 'missing':
+        return { id: 'cf:none', label: `No ${spec.field}`, rank: 2 };
+      case 'loading':
+        return { id: 'cf:loading', label: 'Loading…', rank: 3 };
+    }
+  }
+  const key = spec.key;
   switch (key) {
     case 'name': {
       // Bucket by the first character: A–Z, "#" for digits/symbols, "—" for empty.
@@ -48,6 +102,26 @@ export function groupOf(item: VaultItem, key: GroupKey, ctx: GroupContext): Grou
       return item.hasPasskey
         ? { id: 'k:yes', label: 'Has passkey', rank: 0 }
         : { id: 'k:no', label: 'No passkey', rank: 1 };
+    case 'website': {
+      // Bucket by bare lowercase host (the same derivation favicons use), so
+      // https://login.x.com and login.x.com/path land together.
+      const host = hostOf(item.uri);
+      return host
+        ? { id: `w:${host}`, label: host, rank: 0 }
+        : { id: 'w:none', label: 'No website', rank: 1 };
+    }
+    case 'totp':
+      // Presence only — the code itself is a secret and lives behind a detail
+      // fetch; group headers must never carry secret-derived values.
+      return item.hasTotp
+        ? { id: 'o:yes', label: 'Has one-time code', rank: 0 }
+        : { id: 'o:no', label: 'None', rank: 1 };
+    case 'password':
+      // Presence proxy: only login rows carry a password, and the list row
+      // can't (and must not) see the value. Same never-by-value rule as totp.
+      return item.itemType === 'login'
+        ? { id: 'p:yes', label: 'Has password', rank: 0 }
+        : { id: 'p:no', label: 'No password', rank: 1 };
     case 'folder': {
       const name = ctx.folderName(item.folderId);
       // Foldered rows sort alphabetically (rank 0); "No folder" trails (rank 1).

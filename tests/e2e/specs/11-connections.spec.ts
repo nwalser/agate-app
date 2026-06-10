@@ -7,6 +7,7 @@ import { $, $$, browser } from '@wdio/globals';
 import {
   FIXTURE_EMAIL,
   FIXTURE_LABEL,
+  clickButtonByText,
   domClickByTitle,
   gotoSettings,
   unlockedFake,
@@ -46,7 +47,9 @@ describe('connections', () => {
 
   it('opens the add-connection flow', async () => {
     await gotoSettings(twoConnectionFake());
-    await $('.add-account').click();
+    // The add flow is opened by the "Add connection" button (the old
+    // `.add-account` affordance no longer exists).
+    await clickButtonByText('Add connection');
     await $('.onboarding').waitForExist({ timeout: TIMEOUT.normal });
     expect(await $('.onboarding input[type="email"]').getValue()).to.equal('');
   });

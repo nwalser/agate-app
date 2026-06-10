@@ -240,35 +240,7 @@ input[type='range'] {
   margin-top: 0;
 }
 
-/* Unlock-methods summary rows (read-only status of each method). */
-.settings-method {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  padding: 9px 0;
-  border-bottom: 1px solid var(--border);
-}
-.settings-method:last-of-type {
-  border-bottom: none;
-}
-.settings-method-icon {
-  color: var(--muted-foreground);
-  flex-shrink: 0;
-}
-.settings-method-text {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-  flex: 1;
-}
-.settings-method-label {
-  font-size: 12.5px;
-  font-weight: 600;
-}
-.settings-method-sub {
-  font-size: 11px;
-}
+/* On/off pill for an unlock-method section header (and connection rows). */
 .settings-method-state {
   display: inline-flex;
   align-items: center;
@@ -285,6 +257,12 @@ input[type='range'] {
 .settings-section h3 .settings-h3-state {
   margin-left: auto;
   letter-spacing: 0;
+}
+/* Per-connection status on the Unlock page: pill + optional "Unlock…" jump. */
+.settings-conn-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
 }
 
 /* About page. */

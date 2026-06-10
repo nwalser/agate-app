@@ -5,7 +5,7 @@
 // lifting lives in src/hooks/* and the VaultRailMenu / VaultDetailPane /
 // VaultContextMenu subcomponents; this file switches views and threads props.
 
-import { For, createEffect, createMemo, createSignal, onCleanup, onMount, Match, Show, Switch } from 'solid-js';
+import { For, createEffect, createMemo, createSignal, on, onCleanup, onMount, Match, Show, Switch } from 'solid-js';
 import { Dynamic } from 'solid-js/web';
 import { BookmarkPlus, Plus, PanelRightClose, PanelRightOpen, RotateCcw, Star, Trash2, X, FolderInput } from 'lucide-solid';
 import type { VaultItem } from '../lib/types.ts';
@@ -20,6 +20,11 @@ import { pushToast } from '../state/toast.ts';
 import { templates } from '../state/templates.ts';
 import { templateToSeed, type ItemTemplate } from '../lib/templates.ts';
 import { sameViewConfig } from '../lib/viewConfig.ts';
+import { collectUsernameSuggestions } from '../lib/usernameSuggestions.ts';
+import { pendingReprompt, resolvePendingReprompt } from '../state/reprompt.ts';
+import RepromptGate from '../components/RepromptGate.tsx';
+import { createDetailCache } from '../state/detailCache.ts';
+import { customFieldGroupValue } from '../lib/grouping.ts';
 import { query, setQuery } from '../state/search.ts';
 import { clearConnectionNav, setConnectionNav } from '../state/connections.ts';
 import { recordRecent } from '../state/recentItems.ts';
@@ -87,7 +92,16 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
 
   // ---- hooks: data → filtering → selection → detail → mutations → commands ----
   const data = useVaultData();
-  const filtering = useVaultFiltering({ items: data.items, folders: data.folders, health: data.health });
+  // THE per-row detail cache (one cache, one path): the list's secret/custom
+  // cells read it, and custom-field grouping orders by it. Screen-owned so the
+  // ordering layer (useVaultFiltering) can see it too.
+  const rowDetail = createDetailCache();
+  const filtering = useVaultFiltering({
+    items: data.items,
+    folders: data.folders,
+    health: data.health,
+    fieldValue: (id, field) => customFieldGroupValue(rowDetail.cache(), id, field),
+  });
   const selection = useVaultSelection({
     displayed: filtering.displayed,
     setSelectedId,
@@ -324,18 +338,22 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
   });
 
   // Distinct usernames already used across the vault, for the login editor's
-  // username autocomplete. Sorted, case-insensitively de-duplicated.
-  const usernameSuggestions = createMemo(() => {
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const it of data.items()) {
-      const u = it.username?.trim();
-      if (u && !seen.has(u.toLowerCase())) {
-        seen.add(u.toLowerCase());
-        out.push(u);
-      }
-    }
-    return out.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  // username autocomplete (frequency-ordered, trash excluded — see helper).
+  const usernameSuggestions = createMemo(() => collectUsernameSuggestions(data.items()));
+
+  // Reset the shared row-detail cache after a mutation/sync (the screen owns the
+  // cache, so the screen resets it). Created BEFORE the ensure effect below so a
+  // bump reliably clears first, then re-queues.
+  createEffect(on(() => actions.cacheToken(), () => rowDetail.reset(), { defer: true }));
+
+  // Custom-field grouping needs every displayed row's decrypted detail even when
+  // that field's COLUMN is hidden — the fetch follows the grouping. Free no-op
+  // for builtin groupings; cacheToken re-runs it after a reset.
+  createEffect(() => {
+    const gb = columns().groupBy;
+    if (!gb || gb.kind !== 'custom') return;
+    actions.cacheToken();
+    for (const it of filtering.filtered()) rowDetail.ensure(it.accountEmail, it.id);
   });
 
   // Resolved props for the inline editor, or null when closed. A fresh object on
@@ -670,6 +688,7 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
                   emptyMessage={data.items().length === 0 ? 'Vault is empty or not synced.' : 'No matches.'}
                   cacheToken={actions.cacheToken()}
                   security={data.health()}
+                  detailCache={rowDetail}
                 />
 
                 {/* Floating multi-select action bar. Stays mounted; .is-hidden slides it
@@ -831,6 +850,18 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
       </Show>
 
       <CommandPalette open={paletteOpen()} onClose={() => setPaletteOpen(false)} commands={commands.commands()} />
+
+      {/* THE reprompt gate — every guarded action in the app (detail pane, list
+          cells, context menus) queues here; one modal, one path. */}
+      <Show when={pendingReprompt()}>
+        {(p) => (
+          <RepromptGate
+            itemName={p().name}
+            onVerified={() => resolvePendingReprompt(true)}
+            onClose={() => resolvePendingReprompt(false)}
+          />
+        )}
+      </Show>
     </div>
   );
 }

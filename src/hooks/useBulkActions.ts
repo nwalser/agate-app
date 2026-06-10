@@ -7,14 +7,14 @@
 // list mixes connections. IPC lives in lib/ipc.ts; this only orchestrates it.
 
 import { type Accessor, createSignal } from 'solid-js';
-import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { ipc } from '../lib/ipc.ts';
 import type { Folder, ItemDetail, ItemType, VaultItem } from '../lib/types.ts';
 import type { VaultFilter } from '../lib/search.ts';
 import type { EditorState } from '../lib/vaultConfig.ts';
+import { copyWithAutoClear } from '../lib/clipboard.ts';
+import { guardReprompt } from '../state/reprompt.ts';
 import { pushToast, toastError } from '../state/toast.ts';
-import { clipboardClearSeconds } from '../state/clipboard.ts';
 
 export function useBulkActions(deps: {
   items: Accessor<VaultItem[]>;
@@ -48,34 +48,9 @@ export function useBulkActions(deps: {
     setCacheToken((t) => t + 1);
   }
 
-  async function copy(label: string, value: string | null | undefined) {
-    if (!value) return;
-    try {
-      await writeText(value);
-      // Seconds before a copied secret is wiped from the clipboard (0 = never),
-      // configurable in Settings → Security.
-      const clearSeconds = clipboardClearSeconds();
-      pushToast(
-        'success',
-        clearSeconds > 0 ? `${label} copied — clears in ${clearSeconds}s.` : `${label} copied.`,
-      );
-      if (clearSeconds <= 0) return;
-      const copied = value;
-      // Auto-clear, but only if the clipboard still holds what we wrote (don't
-      // clobber something the user copied afterwards).
-      setTimeout(() => {
-        void (async () => {
-          try {
-            if ((await readText()) === copied) await writeText('');
-          } catch {
-            // ignore: clipboard may be unavailable or hold non-text content
-          }
-        })();
-      }, clearSeconds * 1000);
-    } catch (err) {
-      toastError(err);
-    }
-  }
+  // Clipboard copy with auto-clear — shared with every other secret-copy site
+  // via lib/clipboard.ts.
+  const copy = copyWithAutoClear;
 
   // ---- bulk actions ----
   async function bulkFavorite() {
@@ -248,26 +223,37 @@ export function useBulkActions(deps: {
     }
   }
 
+  // Secret copies honor the item's reprompt flag: the same app-wide gate the
+  // detail pane uses (state/reprompt.ts) — a list cell or context menu must not
+  // be a way around re-verification.
   async function copyPasswordFor(item: VaultItem) {
-    try {
-      const d = await ipc.itemDetail(item.accountEmail, item.id);
-      if (!d.login?.password) {
-        pushToast('error', 'No password on this item.');
-        return;
-      }
-      await copy('Password', d.login.password);
-    } catch (err) {
-      toastError(err);
-    }
+    guardReprompt(item, () => {
+      void (async () => {
+        try {
+          const d = await ipc.itemDetail(item.accountEmail, item.id);
+          if (!d.login?.password) {
+            pushToast('error', 'No password on this item.');
+            return;
+          }
+          await copy('Password', d.login.password);
+        } catch (err) {
+          toastError(err);
+        }
+      })();
+    });
   }
 
   async function copyTotpFor(item: VaultItem) {
-    try {
-      const code = await ipc.itemTotp(item.accountEmail, item.id);
-      await copy('Code', code.code);
-    } catch (err) {
-      toastError(err);
-    }
+    guardReprompt(item, () => {
+      void (async () => {
+        try {
+          const code = await ipc.itemTotp(item.accountEmail, item.id);
+          await copy('Code', code.code);
+        } catch (err) {
+          toastError(err);
+        }
+      })();
+    });
   }
 
   // First populated URI on the item, shared by "copy website" and "open website".
@@ -291,18 +277,23 @@ export function useBulkActions(deps: {
 
   // Copy a named custom field's value from the list (the list cell shows the
   // value but copying always pulls the freshly-decrypted detail to be correct).
+  // Reprompt-gated: a custom field may be a hidden secret.
   async function copyFieldFor(item: VaultItem, fieldName: string) {
-    try {
-      const d = await ipc.itemDetail(item.accountEmail, item.id);
-      const field = d.fields.find((f) => f.name === fieldName);
-      if (!field || !field.value) {
-        pushToast('error', 'No value on this field.');
-        return;
-      }
-      await copy(fieldName, field.value);
-    } catch (err) {
-      toastError(err);
-    }
+    guardReprompt(item, () => {
+      void (async () => {
+        try {
+          const d = await ipc.itemDetail(item.accountEmail, item.id);
+          const field = d.fields.find((f) => f.name === fieldName);
+          if (!field || !field.value) {
+            pushToast('error', 'No value on this field.');
+            return;
+          }
+          await copy(fieldName, field.value);
+        } catch (err) {
+          toastError(err);
+        }
+      })();
+    });
   }
 
   async function openSiteFor(item: VaultItem) {

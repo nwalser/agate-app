@@ -301,6 +301,27 @@
   margin-bottom: 12px;
 }
 
+/* "Scan card" / "From image" OCR buttons above the card preview. */
+.item-editor .ie-card-scan-row {
+  display: flex;
+  gap: 8px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* Section title with a trailing OCR action ("From image"). */
+.item-editor .ie-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.item-editor .ie-title-row .ie-scan-qr {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+}
+
 /* ---- card preview ---- */
 .item-editor .ie-card-preview {
   display: flex;

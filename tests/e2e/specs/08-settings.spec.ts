@@ -24,8 +24,20 @@ describe('settings', () => {
 
   it('navigates between settings pages via the sub-nav', async () => {
     await gotoSettings();
+    // Two group headers split the nav: Vault first, then Global.
+    const groups = await $$('.settings-nav-group');
+    expect(groups.length).to.equal(2);
+    // getText() returns the RENDERED text (CSS uppercases the headers).
+    expect((await groups[0].getText()).toUpperCase()).to.equal('VAULT');
+    expect((await groups[1].getText()).toUpperCase()).to.equal('GLOBAL');
     await domClickByTitle('Unlock');
-    await $('.settings-method').waitForExist({ timeout: TIMEOUT.normal });
+    await $('.settings-method-state').waitForExist({ timeout: TIMEOUT.normal });
+    // Unlock methods stack one after the other, in order (rendered text is
+    // CSS-uppercased, so compare case-insensitively).
+    const heads = await $$('.settings .settings-section h3');
+    expect(heads.length).to.be.at.least(4);
+    expect((await heads[0].getText()).toUpperCase()).to.contain('APP PASSWORD');
+    expect((await heads[1].getText()).toUpperCase()).to.contain('THIS DEVICE');
     await domClickByTitle('Appearance');
     await $('.setting-select').waitForExist({ timeout: TIMEOUT.normal });
   });

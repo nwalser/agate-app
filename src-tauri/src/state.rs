@@ -100,6 +100,14 @@ impl PersistedConfig {
         self.accounts.iter().find(|a| a.email == email)
     }
 
+    /// Forget a connection: drop its account record AND its AI allowlist grants.
+    /// Grants are capability state tied to the connection — leaving them behind
+    /// would silently re-expose the same items if the account is re-added later.
+    pub fn remove_account(&mut self, email: &str) {
+        self.accounts.retain(|a| a.email != email);
+        self.ai_grants.retain(|g| g.account_email != email);
+    }
+
     /// Is this `(account, item)` on the AI allowlist?
     pub fn is_ai_granted(&self, account_email: &str, item_id: &str) -> bool {
         self.ai_grants
@@ -323,5 +331,23 @@ mod tests {
         // Removing an absent grant is a no-op.
         c.set_ai_grant("a@b.com", "missing", false);
         assert_eq!(c.ai_grants.len(), 2);
+    }
+
+    #[test]
+    fn remove_account_drops_its_ai_grants() {
+        let mut c = cfg();
+        c.upsert_account(ServerConfig::default(), "a@b.com", true);
+        c.upsert_account(ServerConfig::default(), "other@b.com", true);
+        c.set_ai_grant("a@b.com", "item-1", true);
+        c.set_ai_grant("other@b.com", "item-2", true);
+
+        c.remove_account("a@b.com");
+
+        assert!(c.account_for("a@b.com").is_none());
+        assert!(
+            !c.is_ai_granted("a@b.com", "item-1"),
+            "grants must not survive connection removal — re-adding the account would silently re-expose them"
+        );
+        assert!(c.is_ai_granted("other@b.com", "item-2"), "other accounts keep their grants");
     }
 }

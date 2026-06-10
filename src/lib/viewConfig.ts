@@ -4,7 +4,7 @@
 // record key-order differences don't read as a spurious change.
 
 import type { ViewConfig } from './sidebarConfig.ts';
-import { columnKey, type ColumnConfig } from '../state/columnConfig.ts';
+import { columnKey, groupSpecKey, type ColumnConfig } from '../state/columnConfig.ts';
 
 function sameStringRecord(a: Record<string, string>, b: Record<string, string>): boolean {
   const ak = Object.keys(a);
@@ -20,7 +20,9 @@ function sameNumberRecord(a: Record<string, number>, b: Record<string, number>):
 
 function sameColumns(a: ColumnConfig | undefined, b: ColumnConfig | undefined): boolean {
   if (!a || !b) return !a && !b; // both absent = equal; one absent = different
-  if (a.favicons !== b.favicons || a.groupBy !== b.groupBy) return false;
+  if (a.favicons !== b.favicons) return false;
+  if (groupSpecKey(a.groupBy) !== groupSpecKey(b.groupBy)) return false;
+  if (a.displayMode !== b.displayMode) return false;
   if (a.columns.length !== b.columns.length) return false;
   for (let i = 0; i < a.columns.length; i++) {
     if (columnKey(a.columns[i]) !== columnKey(b.columns[i])) return false;

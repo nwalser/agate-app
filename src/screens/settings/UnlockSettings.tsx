@@ -1,15 +1,20 @@
-// Settings › Unlock — manage the app-unlock methods:
-//   * App password (always on) — change it.
-//   * This device (machine binding) — always on: a device key is mixed into the
-//     unlock so the stored data can't be opened on another machine.
-//   * Windows Hello — biometric/PIN unlock (Windows only).
+// Settings › Unlock — the app-unlock methods, structured one after the other in
+// the order they apply:
+//   1. App password (always on) — change it.
+//   2. This device (machine binding) — always on: a device key is mixed into the
+//      unlock so the stored data can't be opened on another machine.
+//   3. Windows Hello / Touch ID — biometric/PIN unlock.
+//   4. Connections — what one app unlock opens (per-connection status; the
+//      unlock/2FA flow itself lives on the Connections page).
 
-import { createSignal, onMount, Show } from 'solid-js';
-import { Check, Fingerprint, KeyRound, Laptop, Minus } from 'lucide-solid';
+import { createSignal, For, onMount, Show } from 'solid-js';
+import { Check, Fingerprint, KeyRound, Laptop, Minus, Users } from 'lucide-solid';
 import { ipc } from '../../lib/ipc.ts';
+import type { ConnectionSummary } from '../../lib/types.ts';
 import { refreshSession, status } from '../../state/session.ts';
 import { pushToast, toastError } from '../../state/toast.ts';
-import { Switch } from '../../components/settings/SettingsControls.tsx';
+import { SettingRow, ToggleRow } from '../../components/settings/SettingsControls.tsx';
+import type { Page } from '../Settings.tsx';
 
 // Platform-appropriate name for the biometric unlock method (Windows Hello /
 // Touch ID / generic). The backend picks the matching consent gate per OS.
@@ -20,18 +25,26 @@ const BIOMETRIC_NAME = /Mac/.test(UA)
     ? 'Windows Hello'
     : 'Biometric unlock';
 
-export default function UnlockSettings() {
+export default function UnlockSettings(props: { goto?: (p: Page) => void }) {
   const [newPw, setNewPw] = createSignal('');
   const [confirmPw, setConfirmPw] = createSignal('');
   const [busy, setBusy] = createSignal(false);
 
   const [helloAvailable, setHelloAvailable] = createSignal(false);
   const [helloBusy, setHelloBusy] = createSignal(false);
+  const [connections, setConnections] = createSignal<ConnectionSummary[]>([]);
 
   onMount(() => {
     void (async () => {
       try {
         setHelloAvailable(await ipc.helloAvailable());
+      } catch (err) {
+        toastError(err);
+      }
+    })();
+    void (async () => {
+      try {
+        setConnections(await ipc.listConnections());
       } catch (err) {
         toastError(err);
       }
@@ -152,15 +165,46 @@ export default function UnlockSettings() {
             </div>
           }
         >
-          <div class="settings-row">
-            <span>Use {BIOMETRIC_NAME}</span>
-            <Switch
-              checked={status().helloConfigured}
-              disabled={helloBusy()}
-              onChange={() => void toggleHello()}
-              label={`${BIOMETRIC_NAME} unlock`}
-            />
-          </div>
+          <ToggleRow
+            label={`Use ${BIOMETRIC_NAME}`}
+            checked={status().helloConfigured}
+            disabled={helloBusy()}
+            onChange={() => void toggleHello()}
+          />
+        </Show>
+      </section>
+
+      {/* 4 — Connections: what one app unlock opens. */}
+      <section class="settings-section">
+        <h3>
+          <Users size={14} strokeWidth={1.75} /> Connections
+        </h3>
+        <p class="muted settings-help">
+          One app unlock opens every connection below. Locked ones (and 2FA re-prompts) are
+          completed on the Connections page.
+        </p>
+        <Show
+          when={connections().length > 0}
+          fallback={<p class="muted settings-help">No connections yet.</p>}
+        >
+          <For each={connections()}>
+            {(c) => (
+              <SettingRow
+                label={c.email}
+                desc={c.storeCredentials ? 'Auto-unlocks with the app' : 'Manual unlock only'}
+                control={
+                  <span class="settings-conn-state">
+                    <MethodState on={c.unlocked} />
+                    <Show when={!c.unlocked && props.goto}>
+                      <button class="ghost" onClick={() => props.goto?.('connections')}>
+                        Unlock…
+                      </button>
+                    </Show>
+                  </span>
+                }
+              />
+            )}
+          </For>
         </Show>
       </section>
     </div>

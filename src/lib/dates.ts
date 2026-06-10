@@ -20,6 +20,28 @@ export function relativeFromNow(iso: string, now: number = Date.now()): string {
   return `${Math.floor(mon / 12)}y ago`;
 }
 
+/**
+ * Future counterpart of `relativeFromNow`: "in moments" / "in 5m" / "in 3d" /
+ * "in 2mo" / "in 1y". A date that has already passed falls back to the past
+ * phrasing ("5m ago"), so callers can hand it any timestamp.
+ */
+export function relativeUntil(iso: string, now: number = Date.now()): string {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return '';
+  if (t <= now) return relativeFromNow(iso, now);
+  const sec = Math.floor((t - now) / 1000);
+  if (sec < 60) return 'in moments';
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `in ${min}m`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `in ${hr}h`;
+  const day = Math.floor(hr / 24);
+  if (day < 30) return `in ${day}d`;
+  const mon = Math.floor(day / 30);
+  if (mon < 12) return `in ${mon}mo`;
+  return `in ${Math.floor(mon / 12)}y`;
+}
+
 /** Locale-formatted absolute date/time (for tooltips), or '' if unparseable. */
 export function absoluteDate(iso: string): string {
   const t = Date.parse(iso);

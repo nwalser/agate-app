@@ -30,8 +30,10 @@ describe('unlock (app-unlock)', () => {
         },
       }),
     );
-    await $('.unlock-hello').waitForExist({ timeout: TIMEOUT.normal });
-    await $('.unlock-hello').click();
+    // The Hello affordance is the actionable sign-in-option row (the old
+    // `.unlock-hello` button no longer exists).
+    await $('button.unlock-method-row.is-action').waitForExist({ timeout: TIMEOUT.normal });
+    await $('button.unlock-method-row.is-action').click();
     await $('.vault').waitForExist({ timeout: TIMEOUT.slow });
     expect(await $('.vault').isExisting()).to.equal(true);
   });

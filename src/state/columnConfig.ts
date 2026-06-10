@@ -26,22 +26,57 @@ export type SortKey = 'name' | 'username' | 'folder' | 'type' | 'security';
 export type SortDir = 'asc' | 'desc';
 
 /** Columns the list can group rows under. Restricted to values available without
- *  fetching per-row item detail (Name initial, Username, Folder, Type, Security,
- *  Passkey) so grouping never forces a bulk decrypt. Drives the group-header rows. */
-export type GroupKey = 'name' | 'username' | 'folder' | 'type' | 'security' | 'passkey';
+ *  fetching per-row item detail (so grouping never forces a bulk decrypt): the
+ *  Name initial, Username, Website host, Folder, Type, Security, and the
+ *  TOTP/Password/Passkey PRESENCE flags — secret columns group by has/has-not,
+ *  never by value. Drives the group-header rows. */
+export type GroupKey =
+  | 'name'
+  | 'username'
+  | 'website'
+  | 'folder'
+  | 'type'
+  | 'totp'
+  | 'password'
+  | 'security'
+  | 'passkey';
 
-export const GROUP_KEYS: GroupKey[] = ['name', 'username', 'folder', 'type', 'security', 'passkey'];
+export const GROUP_KEYS: GroupKey[] = [
+  'name',
+  'username',
+  'website',
+  'folder',
+  'type',
+  'totp',
+  'password',
+  'security',
+  'passkey',
+];
 
 /** Labels for the "Group by" picker (the per-group header text is derived from
  *  the rows themselves — see `lib/grouping.ts`). */
 export const GROUP_LABELS: Record<GroupKey, string> = {
   name: 'Name',
   username: 'Username',
+  website: 'Website',
   folder: 'Folder',
   type: 'Type',
+  totp: 'One-time code',
+  password: 'Password',
   security: 'Security',
   passkey: 'Passkey',
 };
+
+/** What rows are grouped by: a builtin group key, or a custom field's value
+ *  (which needs each row's decrypted detail — fetched lazily, with hidden
+ *  fields bucketing as 'Hidden' so group headers never leak a secret). */
+export type GroupSpec = { kind: 'builtin'; key: GroupKey } | { kind: 'custom'; field: string };
+
+/** Stable identity for a GroupSpec (equality, dirty-compare). '' for null. */
+export function groupSpecKey(s: GroupSpec | null): string {
+  if (s === null) return '';
+  return s.kind === 'builtin' ? `builtin:${s.key}` : `custom:${s.field}`;
+}
 
 /** How the vault list lays each item out: the multi-column table, or a compact
  *  single-line list (name + secondary). */
@@ -60,7 +95,7 @@ export interface ColumnConfig {
    *  always-on Name column). Absent = the column's default flexible width. */
   widths: Record<string, number>;
   /** Group rows under header rows by this column's value, or null for a flat list. */
-  groupBy: GroupKey | null;
+  groupBy: GroupSpec | null;
   /** List layout: the column table, or a compact single-line list. */
   displayMode: DisplayMode;
 }
@@ -141,15 +176,11 @@ export function sortKeyOf(c: ColumnSpec): SortKey | null {
   return null;
 }
 
-/** The group key a column maps to, or null if it can't group rows. */
-export function groupKeyOf(c: ColumnSpec): GroupKey | null {
-  if (c.kind !== 'builtin') return null;
-  if (c.id === 'username') return 'username';
-  if (c.id === 'folder') return 'folder';
-  if (c.id === 'type') return 'type';
-  if (c.id === 'security') return 'security';
-  if (c.id === 'passkey') return 'passkey';
-  return null;
+/** The group spec a column maps to — EVERY column groups: builtins by their
+ *  group key (secret columns by presence, website by host), custom-field
+ *  columns by the field's value (hidden fields bucket as 'Hidden'). */
+export function groupSpecOf(c: ColumnSpec): GroupSpec {
+  return c.kind === 'builtin' ? { kind: 'builtin', key: c.id } : { kind: 'custom', field: c.field };
 }
 
 /** Whether a column can be filtered (its value is available without item detail). */
@@ -302,9 +333,23 @@ export function parseColumnConfig(value: unknown): ColumnConfig {
       if (typeof v === 'number' && Number.isFinite(v) && v >= MIN_COL_WIDTH) widths[k] = v;
     }
   }
-  const groupBy = isGroupKey(o.groupBy) ? o.groupBy : null;
+  const groupBy = parseGroupSpec(o.groupBy);
   const displayMode = isDisplayMode(o.displayMode) ? o.displayMode : DEFAULT.displayMode;
   return { columns, revealed, favicons, widths, groupBy, displayMode };
+}
+
+/** Validate a persisted groupBy. Accepts the CURRENT object shape and the
+ *  LEGACY plain-string form (pre-GroupSpec configs + saved-view snapshots store
+ *  e.g. "folder"), which migrates to a builtin spec. Garbage → null. */
+function parseGroupSpec(v: unknown): GroupSpec | null {
+  if (isGroupKey(v)) return { kind: 'builtin', key: v }; // legacy string form
+  if (typeof v !== 'object' || v === null) return null;
+  const o = v as Record<string, unknown>;
+  if (o.kind === 'builtin' && isGroupKey(o.key)) return { kind: 'builtin', key: o.key };
+  if (o.kind === 'custom' && typeof o.field === 'string' && o.field.trim()) {
+    return { kind: 'custom', field: o.field };
+  }
+  return null;
 }
 
 /** Read + validate the persisted config; corrupt/unavailable falls back to DEFAULT. */

@@ -7,13 +7,14 @@ import { $, browser } from '@wdio/globals';
 import { clickRow, gotoVault, waitForToast } from '../helpers/app.ts';
 import { TIMEOUT, waitFor } from '../helpers/wait.ts';
 
-/** Click the copy button inside the detail field whose label matches. */
+/** Copy a detail field: the overview has no copy BUTTONS — clicking the value
+ *  itself copies (title="Copy" on the value element). */
 async function copyField(label: string): Promise<void> {
   const ok = await browser.execute((l: string) => {
     for (const f of Array.from(document.querySelectorAll('.detail-field'))) {
       if ((f.querySelector('label')?.textContent ?? '').trim().includes(l)) {
-        const btn = f.querySelector<HTMLButtonElement>('button[title="Copy"]');
-        if (btn) { btn.click(); return true; }
+        const value = f.querySelector<HTMLElement>('.detail-value[title="Copy"]');
+        if (value) { value.click(); return true; }
       }
     }
     return false;

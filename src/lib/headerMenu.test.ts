@@ -23,12 +23,10 @@ function target(over: Partial<HeaderTarget> = {}): HeaderTarget {
 const ids = (t: HeaderTarget) => headerMenuItems(t).map((i) => i.id);
 
 describe('headerMenuItems', () => {
-  it('Name column: sort + filter only, never move/hide/reveal/group', () => {
-    expect(ids(target({ isName: true, index: -1, sortable: true, filterable: true }))).toEqual([
-      'sort-asc',
-      'sort-desc',
-      'filter',
-    ]);
+  it('Name column: sort + filter + group, never move/hide/reveal', () => {
+    expect(
+      ids(target({ isName: true, index: -1, sortable: true, filterable: true, groupable: true })),
+    ).toEqual(['sort-asc', 'sort-desc', 'filter', 'group']);
   });
 
   it('a sortable, filterable text column gets sort, filter, move, hide', () => {

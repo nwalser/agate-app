@@ -33,6 +33,7 @@ function item(id: string, folderId: string | null, account = ACCT): VaultItem {
     uri: null,
     hasTotp: false,
     hasPasskey: false,
+  reprompt: false,
     favorite: false,
     deleted: false,
     folderId,

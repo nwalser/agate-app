@@ -15,6 +15,7 @@ import {
   type ColumnSpec,
   type DisplayMode,
   type GroupKey,
+  type GroupSpec,
 } from './columnConfig.ts';
 
 const [columns, setColumnsSignal] = createSignal<ColumnConfig>(readColumnConfig());
@@ -137,9 +138,11 @@ export function setFavicons(on: boolean) {
   persist({ ...columns(), favicons: on });
 }
 
-/** Group rows under header rows by a column's value, or null for a flat list. */
-export function setGroupBy(key: GroupKey | null) {
-  persist({ ...columns(), groupBy: key });
+/** Group rows under header rows by a column's value, or null for a flat list.
+ *  A bare GroupKey string is shorthand for the builtin spec. */
+export function setGroupBy(by: GroupSpec | GroupKey | null) {
+  const spec: GroupSpec | null = typeof by === 'string' ? { kind: 'builtin', key: by } : by;
+  persist({ ...columns(), groupBy: spec });
 }
 
 /** Switch the list layout (column table ↔ compact single-line list). */

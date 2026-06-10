@@ -35,6 +35,9 @@ tauri-plugin-dialog = "2"
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Decode user-picked image files for the OCR "fill from image" path (the SDK
+# already pulls `image` in transitively; promoting it costs ~nothing).
+image = "0.25"
 # Robust CSV reader for vault import (quoted fields, embedded newlines). Export
 # writes CSV by hand; import needs a real parser.
 csv = "1"
@@ -52,6 +55,9 @@ aes-gcm = "0.10"
 rand = "0.8"
 zeroize = { version = "1", features = ["derive"] }
 base64 = "0.22"
+# Constant-time equality for the MCP bearer-token check (already in-tree via
+# aes-gcm; made explicit so the auth gate can use it directly).
+subtle = "2"
 
 # Scan a TOTP setup QR off the screen: capture every monitor (xcap) and decode
 # any otpauth:// QR (rqrr). See qrscan.rs. We feed rqrr greyscale bytes via its
@@ -93,7 +99,11 @@ robius-authentication = "0.1"
 # platforms never resolve it.
 windows = { version = "0.58", features = [
     "Foundation",
+    "Foundation_Collections",
+    "Graphics_Imaging",
+    "Media_Ocr",
     "Security_Credentials_UI",
+    "Storage_Streams",
     "Win32_Foundation",
     "Win32_System_WinRT",
     "Win32_System_Com",
@@ -102,6 +112,6 @@ windows = { version = "0.58", features = [
 
 [dev-dependencies]
 # Render a known otpauth:// QR in-process to test the decode path without a real
-# screen capture (qrscan::decode_otpauth_from_rgba).
+# screen capture (qrscan::decode_otpauth_from_rgba). `image` moved to the main
+# [dependencies] for the OCR file path.
 qrcode = "0.14"
-image = "0.25"

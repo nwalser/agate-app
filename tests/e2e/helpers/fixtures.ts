@@ -127,7 +127,10 @@ function item(p: Partial<VaultItem> & { id: string; name: string }): VaultItem {
     accountLabel: FIXTURE_LABEL,
     itemType: 'login',
     username: null,
+    uri: null,
     hasTotp: false,
+    hasPasskey: false,
+    reprompt: false,
     favorite: false,
     deleted: false,
     folderId: null,
@@ -151,6 +154,11 @@ function loginDetail(p: Partial<ItemDetail> & { id: string; name: string }): Ite
     fields: [],
     folderId: null,
     organizationId: null,
+    collectionIds: [],
+    revisionDate: '2026-01-01T00:00:00Z',
+    creationDate: '2026-01-01T00:00:00Z',
+    attachments: [],
+    passkeys: [],
     ...p,
   };
 }

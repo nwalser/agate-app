@@ -4,7 +4,7 @@
 // Reached from the sidebar.
 
 import { createMemo, createSignal, For, Match, Show, Switch } from 'solid-js';
-import { ArrowLeft, Bot, DownloadCloud, Info, LayoutTemplate, Palette, PanelLeft, Search, ShieldAlert, ShieldCheck, Users } from 'lucide-solid';
+import { ArrowLeft, Bot, DownloadCloud, FileDown, Info, LayoutTemplate, Palette, PanelLeft, Search, ShieldAlert, ShieldCheck, Users } from 'lucide-solid';
 import AppearanceSettings from './settings/AppearanceSettings.tsx';
 import AiAccessSettings from './settings/AiAccessSettings.tsx';
 import ConnectionsSettings from './settings/ConnectionsSettings.tsx';
@@ -20,15 +20,25 @@ import { resetSidebarWidth, setSidebarWidth } from '../state/ui.ts';
 import { t, type Key } from '../lib/i18n.ts';
 import './Settings.css';
 
-type Page = 'connections' | 'unlock' | 'security' | 'appearance' | 'sidebar' | 'templates' | 'aiAccess' | 'updates';
+export type Page =
+  | 'connections'
+  | 'export'
+  | 'unlock'
+  | 'security'
+  | 'appearance'
+  | 'sidebar'
+  | 'templates'
+  | 'aiAccess'
+  | 'updates';
 
-// Settings split into two groups: `vault` = per-connection (account-scoped) pages,
-// `global` = app-wide preferences that apply across every connection.
+// Settings split into two groups: `vault` = vault/connection-scoped pages (the
+// accounts, what leaves the vault: exports, AI access), `global` = app-wide
+// preferences that apply across every connection.
 type SettingsGroup = 'vault' | 'global';
 
-const GROUPS: { id: SettingsGroup; label: string }[] = [
-  { id: 'vault', label: 'Vault' },
-  { id: 'global', label: 'Global' },
+const GROUPS: { id: SettingsGroup; labelKey: Key }[] = [
+  { id: 'vault', labelKey: 'settings.group.vault' },
+  { id: 'global', labelKey: 'settings.group.global' },
 ];
 
 // `keywords` lets the nav filter match concepts that aren't in the visible label
@@ -36,12 +46,13 @@ const GROUPS: { id: SettingsGroup; label: string }[] = [
 // drives the localized display label.
 const PAGES: { id: Page; group: SettingsGroup; labelKey: Key; icon: typeof Info; keywords: string }[] = [
   { id: 'connections', group: 'vault', labelKey: 'nav.connections', icon: Users, keywords: 'account email server login add remove' },
+  { id: 'export', group: 'vault', labelKey: 'nav.export', icon: FileDown, keywords: 'export import csv json backup download' },
+  { id: 'aiAccess', group: 'vault', labelKey: 'nav.aiAccess', icon: Bot, keywords: 'ai mcp claude assistant model context protocol allowlist grant token server reveal password' },
   { id: 'unlock', group: 'global', labelKey: 'nav.unlock', icon: ShieldCheck, keywords: 'password windows hello biometric pin device' },
-  { id: 'security', group: 'global', labelKey: 'nav.security', icon: ShieldAlert, keywords: 'clipboard auto-lock timeout breach dark web exposed monitor audit health score weak reused old totp threshold export import' },
+  { id: 'security', group: 'global', labelKey: 'nav.security', icon: ShieldAlert, keywords: 'clipboard auto-lock timeout breach dark web exposed monitor audit health score weak reused old totp threshold' },
   { id: 'appearance', group: 'global', labelKey: 'nav.appearance', icon: Palette, keywords: 'theme dark light density rows color language' },
   { id: 'sidebar', group: 'global', labelKey: 'nav.sidebar', icon: PanelLeft, keywords: 'rail entries order saved queries' },
   { id: 'templates', group: 'global', labelKey: 'nav.templates', icon: LayoutTemplate, keywords: 'template custom field new item preset skeleton reusable' },
-  { id: 'aiAccess', group: 'global', labelKey: 'nav.aiAccess', icon: Bot, keywords: 'ai mcp claude assistant model context protocol allowlist grant token server reveal password' },
   { id: 'updates', group: 'global', labelKey: 'nav.updates', icon: DownloadCloud, keywords: 'version auto update install release about license credits' },
 ];
 
@@ -81,7 +92,7 @@ export default function Settings(props: { onBack: () => void }) {
               const pages = createMemo(() => shownPages().filter((p) => p.group === g.id));
               return (
                 <Show when={pages().length > 0}>
-                  <div class="settings-nav-group">{g.label}</div>
+                  <div class="settings-nav-group">{t(g.labelKey)}</div>
                   <For each={pages()}>
                     {(p) => {
                       const Icon = p.icon;
@@ -120,14 +131,18 @@ export default function Settings(props: { onBack: () => void }) {
             <Match when={page() === 'connections'}>
               <ConnectionsSettings />
             </Match>
+            <Match when={page() === 'export'}>
+              <div class="settings-page">
+                <ExportSettings />
+              </div>
+            </Match>
             <Match when={page() === 'unlock'}>
-              <UnlockSettings />
+              <UnlockSettings goto={setPage} />
             </Match>
             <Match when={page() === 'security'}>
               <div class="settings-page">
                 <SecuritySettings />
                 <AuditSettings />
-                <ExportSettings />
               </div>
             </Match>
             <Match when={page() === 'appearance'}>
