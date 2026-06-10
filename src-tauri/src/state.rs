@@ -227,10 +227,22 @@ impl AppState {
         }
     }
 
-    /// Persist the current config atomically (temp file + rename).
-    pub async fn save_config(&self) -> AgateResult<()> {
-        let cfg = self.config.lock().await;
-        write_config(&self.config_path, &cfg)
+    /// THE config write path: mutate + persist as one transaction. If the disk
+    /// write fails the in-memory value is ROLLED BACK, so memory and disk can
+    /// never disagree (the failure mode where a command errors but the app keeps
+    /// acting on the unsaved state). Returns the closure's value on success.
+    pub async fn update_config<T>(
+        &self,
+        mutate: impl FnOnce(&mut PersistedConfig) -> T,
+    ) -> AgateResult<T> {
+        let mut cfg = self.config.lock().await;
+        let backup = cfg.clone();
+        let out = mutate(&mut cfg);
+        if let Err(e) = write_config(&self.config_path, &cfg) {
+            *cfg = backup;
+            return Err(e);
+        }
+        Ok(out)
     }
 
     /// Append one entry to the in-memory MCP audit log, trimming to the cap.

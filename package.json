@@ -12,7 +12,7 @@
     "build": "tauri build",
     "vite:build": "vite build",
     "vite:dev": "vite",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tests/e2e --noEmit",
     "lint": "eslint .",
     "lint:rust": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
     "test:unit": "vitest run",

@@ -14,86 +14,25 @@
  * Vault items/folders/details are scoped to an owning connection (accountEmail).
  */
 
+// The REAL app types + shared factories — type-only imports vanish at runtime,
+// so everything still crosses the WebDriver boundary as plain JSON. Typing the
+// fixtures with the app's own interfaces is what keeps them from rotting when
+// a DTO grows a field (the drift that broke five specs at once).
+import type {
+  ConnectionSummary,
+  Folder,
+  ItemDetail,
+  LoginResult,
+  ServerConfig,
+  SessionStatus,
+  VaultHealthReport,
+  VaultItem,
+} from '../../../src/lib/types.ts';
+import { makeDetail, makeItem } from '../../../src/testing/factories.ts';
+
+export type { ConnectionSummary, Folder, ItemDetail, ServerConfig, VaultHealthReport, VaultItem };
 export type Region = 'us' | 'eu' | 'selfHosted';
-export type ServerConfig = { region: 'us' } | { region: 'eu' } | { region: 'selfHosted'; baseUrl: string };
-export type ItemType = 'login' | 'secureNote' | 'card' | 'identity' | 'sshKey' | 'unknown';
-export type TwoFactorKind = 'authenticator' | 'email';
-export type LoginResult = { status: 'success' } | { status: 'twoFactorRequired'; providers: TwoFactorKind[] };
-
-export interface FakeStatus {
-  appUnlockConfigured: boolean;
-  unlocked: boolean;
-  helloConfigured: boolean;
-  darkwebConsent: boolean;
-  connectionCount: number;
-  liveCount: number;
-}
-
-export interface ConnectionSummary {
-  email: string;
-  serverLabel: string;
-  server: ServerConfig;
-  unlocked: boolean;
-  /** Optional in fixtures; the app treats an absent value as false (manual). */
-  storeCredentials?: boolean;
-}
-
-export interface VaultItem {
-  id: string;
-  accountEmail: string;
-  accountLabel: string;
-  name: string;
-  itemType: ItemType;
-  username: string | null;
-  hasTotp: boolean;
-  favorite: boolean;
-  deleted: boolean;
-  folderId: string | null;
-  organizationId: string | null;
-}
-
-export interface Folder {
-  id: string | null;
-  name: string;
-  accountEmail: string;
-  accountLabel: string;
-}
-
-export interface ItemDetail {
-  id: string;
-  accountEmail: string;
-  accountLabel: string;
-  name: string;
-  itemType: ItemType;
-  favorite: boolean;
-  reprompt: boolean;
-  notes: string | null;
-  login: {
-    username: string | null;
-    password: string | null;
-    totp: string | null;
-    uris: { uri: string | null; matchType: number | null }[];
-    hasTotp: boolean;
-  } | null;
-  card: unknown | null;
-  identity: unknown | null;
-  sshKey: unknown | null;
-  fields: { name: string | null; value: string | null; fieldType: string }[];
-  folderId: string | null;
-  organizationId: string | null;
-}
-
-export interface VaultHealthReport {
-  score: number;
-  band: 'critical' | 'poor' | 'fair' | 'good' | 'excellent';
-  totalLogins: number;
-  reused: number;
-  weak: number;
-  old: number;
-  insecure: number;
-  noTotp: number;
-  atRisk: unknown[];
-}
+export type FakeStatus = SessionStatus;
 
 /** The full config the fake router answers from. */
 export interface FakeConfig {
@@ -121,46 +60,14 @@ export interface FakeConfig {
 export const FIXTURE_EMAIL = 'tester@example.com';
 export const FIXTURE_LABEL = 'Bitwarden — US';
 
+// Thin wrappers over the SHARED factories (src/testing/factories.ts) so the
+// object shape lives in exactly one place; only the e2e defaults live here.
 function item(p: Partial<VaultItem> & { id: string; name: string }): VaultItem {
-  return {
-    accountEmail: FIXTURE_EMAIL,
-    accountLabel: FIXTURE_LABEL,
-    itemType: 'login',
-    username: null,
-    uri: null,
-    hasTotp: false,
-    hasPasskey: false,
-    reprompt: false,
-    favorite: false,
-    deleted: false,
-    folderId: null,
-    organizationId: null,
-    ...p,
-  };
+  return makeItem({ accountEmail: FIXTURE_EMAIL, accountLabel: FIXTURE_LABEL, ...p });
 }
 
 function loginDetail(p: Partial<ItemDetail> & { id: string; name: string }): ItemDetail {
-  return {
-    accountEmail: FIXTURE_EMAIL,
-    accountLabel: FIXTURE_LABEL,
-    itemType: 'login',
-    favorite: false,
-    reprompt: false,
-    notes: null,
-    login: { username: null, password: null, totp: null, uris: [], hasTotp: false },
-    card: null,
-    identity: null,
-    sshKey: null,
-    fields: [],
-    folderId: null,
-    organizationId: null,
-    collectionIds: [],
-    revisionDate: '2026-01-01T00:00:00Z',
-    creationDate: '2026-01-01T00:00:00Z',
-    attachments: [],
-    passkeys: [],
-    ...p,
-  };
+  return makeDetail({ accountEmail: FIXTURE_EMAIL, accountLabel: FIXTURE_LABEL, ...p });
 }
 
 /** Favorite TOTP login, plain login, card, note, and one trashed item. */
@@ -267,7 +174,15 @@ export function lockedFake(over: Partial<FakeConfig> = {}): FakeConfig {
       appUnlockConfigured: true, unlocked: false, helloConfigured: false,
       darkwebConsent: false, connectionCount: 1, liveCount: 0,
     },
-    connections: [{ email: FIXTURE_EMAIL, serverLabel: FIXTURE_LABEL, server: { region: 'us' }, unlocked: false }],
+    connections: [
+      {
+        email: FIXTURE_EMAIL,
+        serverLabel: FIXTURE_LABEL,
+        server: { region: 'us' },
+        unlocked: false,
+        storeCredentials: true,
+      },
+    ],
     ...over,
   });
 }

@@ -50,8 +50,7 @@ pub async fn hello_enable(state: State<'_>) -> AgateResult<()> {
 pub async fn hello_disable(state: State<'_>) -> AgateResult<()> {
     // Cross-platform: forget the stored VMK + clear the flag (no biometric API needed).
     secrets::delete_hello_blob()?;
-    state.config.lock().await.hello_configured = false;
-    state.save_config().await
+    state.update_config(|cfg| cfg.hello_configured = false).await
 }
 
 #[tauri::command]

@@ -1,24 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { filterItems, fuzzyContains, matchesQuery, passesFilter } from './search.ts';
+import { makeItem } from '../testing/factories.ts';
 import type { VaultItem } from './types.ts';
 
 function item(partial: Partial<VaultItem>): VaultItem {
-  return {
-    id: partial.id ?? 'id',
-    accountEmail: partial.accountEmail ?? 'a@example.com',
-    accountLabel: partial.accountLabel ?? 'Bitwarden US',
-    name: partial.name ?? 'name',
-    itemType: partial.itemType ?? 'login',
-    username: partial.username ?? null,
-    uri: partial.uri ?? null,
-    hasTotp: partial.hasTotp ?? false,
-    hasPasskey: partial.hasPasskey ?? false,
-    reprompt: partial.reprompt ?? false,
-    favorite: partial.favorite ?? false,
-    deleted: partial.deleted ?? false,
-    folderId: partial.folderId ?? null,
-    organizationId: partial.organizationId ?? null,
-  };
+  return makeItem({
+    id: 'id',
+    name: 'name',
+    accountEmail: 'a@example.com',
+    accountLabel: 'Bitwarden US',
+    ...partial,
+  });
 }
 
 describe('fuzzyContains', () => {

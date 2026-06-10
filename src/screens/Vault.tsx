@@ -62,11 +62,12 @@ import SecurityCenter from '../components/SecurityCenter.tsx';
 import SendsView from '../components/SendsView.tsx';
 import SyncStatus from '../components/SyncStatus.tsx';
 import CommandPalette from '../components/CommandPalette.tsx';
-import VaultList from '../components/VaultList.tsx';
+import VaultListConnected from './vault/VaultListConnected.tsx';
+import VaultDetailPaneConnected from './vault/VaultDetailPaneConnected.tsx';
+import { VaultProvider, type VaultApi } from './vault/VaultContext.tsx';
 import GeneratorPage from '../components/GeneratorPage.tsx';
 import VaultRailMenu from '../components/VaultRailMenu.tsx';
 import Resizer from '../components/Resizer.tsx';
-import VaultDetailPane from '../components/VaultDetailPane.tsx';
 import VaultContextMenu, { type CtxMenuTarget } from '../components/VaultContextMenu.tsx';
 import { typeIcon } from '../lib/vaultIcons.ts';
 import { ipc } from '../lib/ipc.ts';
@@ -478,7 +479,22 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
     document.removeEventListener('mousedown', onGlobalMouseDown);
   });
 
+  // The screen's capability surface — everything connected adapters (and future
+  // feature components) reach through useVault() instead of prop drilling.
+  const vaultApi: VaultApi = {
+    data,
+    filtering,
+    selection,
+    detailState,
+    actions,
+    rowDetail,
+    selectedId,
+    copyCell,
+    openRowCtxMenu: openCtxMenu,
+  };
+
   return (
+    <VaultProvider api={vaultApi}>
     <div class="vault">
       <div class="vault-body">
         <VaultRailMenu
@@ -665,31 +681,7 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
                   classList={{ 'has-selection': selection.selectedCount() > 0, 'list-full': previewCollapsed() }}
                   data-density={rowDensity()}
                 >
-                <VaultList
-                  items={filtering.displayed()}
-                  folders={data.folders()}
-                  sortKey={filtering.sortKey()}
-                  sortDir={filtering.sortDir()}
-                  onSort={filtering.toggleSort}
-                  onSetSort={filtering.setSort}
-                  selectedId={selectedId()}
-                  selectedCount={selection.selectedCount()}
-                  isSelected={selection.isSelected}
-                  cursorId={selection.cursorId()}
-                  onRowClick={selection.onRowClick}
-                  onRowContextMenu={openCtxMenu}
-                  onCheckboxToggle={selection.onCheckboxToggle}
-                  onCopyCell={copyCell}
-                  onListKeyDown={selection.handleListKeyDown}
-                  onMarqueeSelect={selection.marqueeSelect}
-                  enableItemDrag={filtering.filter().kind !== 'trash'}
-                  onCreateItem={(type) => actions.openCreate(type)}
-                  onSelectAll={selection.selectAll}
-                  emptyMessage={data.items().length === 0 ? 'Vault is empty or not synced.' : 'No matches.'}
-                  cacheToken={actions.cacheToken()}
-                  security={data.health()}
-                  detailCache={rowDetail}
-                />
+                <VaultListConnected />
 
                 {/* Floating multi-select action bar. Stays mounted; .is-hidden slides it
                     away so toggling selection never reflows the list (no layout shift). */}
@@ -797,29 +789,14 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
                   </Show>
                   <Show
                     when={editor().mode === 'closed' && detailState.detail()}
+                    keyed
                     fallback={
                       editor().mode === 'closed' ? (
                         <div class="vault-detail-empty muted">Select an item to view its details.</div>
                       ) : null
                     }
                   >
-                    {(d) => (
-                      <VaultDetailPane
-                        detail={d()}
-                        inTrash={filtering.inTrash()}
-                        revealed={detailState.revealed()}
-                        setRevealed={detailState.setRevealed}
-                        totp={detailState.totp()}
-                        selectedSecurity={detailState.selectedSecurity()}
-                        selectedBreaches={detailState.selectedBreaches()}
-                        copy={(label, value) => void actions.copy(label, value)}
-                        onFavorite={(item) => void actions.detailFavorite(item)}
-                        onEdit={(item) => actions.openEdit(item)}
-                        onClone={(id) => void actions.detailClone(id)}
-                        onDelete={(id, permanent) => void actions.detailDelete(id, permanent)}
-                        onRestore={(id) => void actions.detailRestore(id)}
-                      />
-                    )}
+                    {(d) => <VaultDetailPaneConnected detail={d} />}
                   </Show>
                 </section>
               </Show>
@@ -863,5 +840,6 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
         )}
       </Show>
     </div>
+    </VaultProvider>
   );
 }

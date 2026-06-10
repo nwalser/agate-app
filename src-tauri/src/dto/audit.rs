@@ -5,6 +5,7 @@
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, Serialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub enum HealthBand {
     Critical,
@@ -16,6 +17,7 @@ pub enum HealthBand {
 
 /// Per-item offline audit findings.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct ItemAudit {
     pub id: String,
@@ -30,6 +32,7 @@ pub struct ItemAudit {
 
 /// Aggregate vault-health report (all offline; no secret leaves the device).
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct VaultHealthReport {
     pub score: u8,
@@ -45,6 +48,7 @@ pub struct VaultHealthReport {
 
 /// Result of the opt-in HIBP exposed-password check (k-anonymity).
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct ExposedResult {
     pub id: String,
@@ -61,6 +65,7 @@ pub struct ExposedResult {
 
 /// One breach. `data_classes` is the headline: *what personal data leaked*.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct BreachRecord {
     /// Display/stable name, e.g. "Adobe".
@@ -85,6 +90,7 @@ pub struct BreachRecord {
 
 /// Per-email scan result from the dark-web monitor.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct AccountBreaches {
     pub email: String,
@@ -100,6 +106,7 @@ pub struct AccountBreaches {
 /// apart from clean results so a transient failure is never read as "clean"; it is
 /// retried on the next scan. `error` is the secret-free `AgateError` message.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct EmailError {
     pub email: String,
@@ -108,6 +115,7 @@ pub struct EmailError {
 
 /// Aggregate dark-web report across every account email found in the vault.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct DarkWebReport {
     /// Every email actually checked this run, including clean ones (empty `breaches`).

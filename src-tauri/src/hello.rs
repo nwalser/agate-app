@@ -90,8 +90,7 @@ pub async fn enable(state: &AppState) -> AgateResult<()> {
     }
     let vmk = crate::appunlock::current_vmk(state).await?;
     crate::secrets::store_hello_blob(&*vmk)?;
-    state.config.lock().await.hello_configured = true;
-    state.save_config().await
+    state.update_config(|cfg| cfg.hello_configured = true).await
 }
 
 /// Unlock every connection after a successful Windows Hello check.

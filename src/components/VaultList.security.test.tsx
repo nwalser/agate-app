@@ -10,49 +10,31 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import VaultList from './VaultList.tsx';
 import { resetColumns, toggleColumn } from '../state/columns.ts';
 import { createDetailCache } from '../state/detailCache.ts';
+import { makeAudit as audit, makeItem, makeReport } from '../testing/factories.ts';
 import type { ItemAudit, VaultHealthReport, VaultItem } from '../lib/types.ts';
 
-const login = (over: Partial<VaultItem> = {}): VaultItem => ({
-  id: 'i1',
-  accountEmail: 'a@b.c',
-  accountLabel: 'Cloud',
-  name: 'Example',
-  itemType: 'login',
-  username: 'user',
-  uri: 'https://example.com',
-  hasTotp: false,
-  hasPasskey: false,
-  reprompt: false,
-  favorite: false,
-  deleted: false,
-  folderId: null,
-  organizationId: null,
-  ...over,
-});
+const login = (over: Partial<VaultItem> = {}): VaultItem =>
+  makeItem({
+    id: 'i1',
+    name: 'Example',
+    accountEmail: 'a@b.c',
+    accountLabel: 'Cloud',
+    username: 'user',
+    uri: 'https://example.com',
+    ...over,
+  });
 
-const audit = (over: Partial<ItemAudit> = {}): ItemAudit => ({
-  id: 'i1',
-  name: 'Example',
-  reused: false,
-  weak: false,
-  weakScore: null,
-  old: false,
-  insecureUri: false,
-  noTotp: false,
-  ...over,
-});
-
-const report = (atRisk: ItemAudit[]): VaultHealthReport => ({
-  score: 50,
-  band: 'fair',
-  totalLogins: 10,
-  reused: atRisk.filter((a) => a.reused).length,
-  weak: atRisk.filter((a) => a.weak).length,
-  old: atRisk.filter((a) => a.old).length,
-  insecure: atRisk.filter((a) => a.insecureUri).length,
-  noTotp: atRisk.filter((a) => a.noTotp).length,
-  atRisk,
-});
+const report = (atRisk: ItemAudit[]): VaultHealthReport =>
+  makeReport(atRisk, {
+    score: 50,
+    band: 'fair',
+    totalLogins: 10,
+    reused: atRisk.filter((a) => a.reused).length,
+    weak: atRisk.filter((a) => a.weak).length,
+    old: atRisk.filter((a) => a.old).length,
+    insecure: atRisk.filter((a) => a.insecureUri).length,
+    noTotp: atRisk.filter((a) => a.noTotp).length,
+  });
 
 function renderList(items: VaultItem[], security: VaultHealthReport | null) {
   return render(() => (

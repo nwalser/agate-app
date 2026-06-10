@@ -52,3 +52,10 @@ jobs:
 
       - name: Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      # The export_ts_types cargo test above just regenerated
+      # src/lib/generated/dto.ts from the Rust DTOs; if it differs from the
+      # committed file, the Rust types and the frontend types have drifted —
+      # fail loudly instead of letting the mirror rot.
+      - name: Generated TS types are in sync with the Rust DTOs
+        run: git diff --exit-code -- src/lib/generated/dto.ts

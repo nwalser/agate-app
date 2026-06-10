@@ -1,39 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import { cellContent, type CellContext } from './cellRendering.ts';
 import type { ColumnSpec } from '../state/columnConfig.ts';
-import type { ItemAudit, VaultItem } from './types.ts';
+import { makeAudit as audit, makeItem } from '../testing/factories.ts';
+import type { VaultItem } from './types.ts';
 
 const SECURITY_COL: ColumnSpec = { kind: 'builtin', id: 'security' };
 
-const login = (over: Partial<VaultItem> = {}): VaultItem => ({
-  id: 'i1',
-  accountEmail: 'a@b.c',
-  accountLabel: 'Cloud',
-  name: 'Example',
-  itemType: 'login',
-  username: 'user',
-  uri: 'https://example.com',
-  hasTotp: false,
-  hasPasskey: false,
-  reprompt: false,
-  favorite: false,
-  deleted: false,
-  folderId: null,
-  organizationId: null,
-  ...over,
-});
-
-const audit = (over: Partial<ItemAudit> = {}): ItemAudit => ({
-  id: 'i1',
-  name: 'Example',
-  reused: false,
-  weak: false,
-  weakScore: null,
-  old: false,
-  insecureUri: false,
-  noTotp: false,
-  ...over,
-});
+const login = (over: Partial<VaultItem> = {}): VaultItem =>
+  makeItem({
+    id: 'i1',
+    name: 'Example',
+    accountEmail: 'a@b.c',
+    accountLabel: 'Cloud',
+    username: 'user',
+    uri: 'https://example.com',
+    ...over,
+  });
 
 const ctx = (over: Partial<CellContext> = {}): CellContext => ({
   isRevealed: () => false,

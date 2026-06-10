@@ -14,6 +14,7 @@ import {
   segments,
   subtreeOf,
 } from './folders.ts';
+import { makeItem } from '../testing/factories.ts';
 import type { VaultItem } from './types.ts';
 
 const ACCT = 'a@example.com';
@@ -23,22 +24,13 @@ function folder(id: string, name: string, account = ACCT): RealFolder {
 }
 
 function item(id: string, folderId: string | null, account = ACCT): VaultItem {
-  return {
+  return makeItem({
     id,
+    name: id,
     accountEmail: account,
     accountLabel: 'Bitwarden US',
-    name: id,
-    itemType: 'login',
-    username: null,
-    uri: null,
-    hasTotp: false,
-    hasPasskey: false,
-  reprompt: false,
-    favorite: false,
-    deleted: false,
     folderId,
-    organizationId: null,
-  };
+  });
 }
 
 // A small tree:  Work, Work/Email, Work/Projects, Personal, Workshop

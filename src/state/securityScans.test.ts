@@ -1,94 +1,120 @@
-// The scan-orchestration loop: consent must never be auto-granted by the scan
-// itself (only the explicit Settings toggle grants it), scans defer off the
-// unlock critical path, fresh cached results suppress re-runs, and locking
-// cancels a pending deferred scan.
+// The scan-orchestration loop, tested through the FACTORY with injected deps —
+// no module mocking, no shared singleton state between tests. Consent is not
+// even part of the scan's dependency surface (`SecurityScanIpc`), so the old
+// "scan auto-grants consent" bug is now unrepresentable by construction.
 
+import { createSignal } from 'solid-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createSecurityScans, type SecurityScansDeps } from './securityScans.ts';
+import type { DarkWebReport } from '../lib/types.ts';
 
-vi.mock('../lib/ipc.ts', () => ({
-  ipc: {
-    loadSecurityScans: vi.fn(async () => null),
-    cacheSecurityScans: vi.fn(async () => undefined),
-    darkwebScanVault: vi.fn(async () => ({ accounts: [], errored: [], pending: [] })),
-    auditExposed: vi.fn(async () => []),
-    setDarkwebConsent: vi.fn(async () => undefined),
-  },
-}));
-
-vi.mock('./session.ts', async () => {
-  const { createSignal } = await import('solid-js');
-  const [status, setStatus] = createSignal({ unlocked: false });
-  return { status, __setUnlocked: (v: boolean) => setStatus({ unlocked: v }) };
+const emptyRun = (): DarkWebReport => ({
+  accounts: [],
+  errored: [],
+  pending: [],
+  lockedConnections: [],
+  totalBreaches: 0,
+  clean: 0,
 });
 
-vi.mock('./security.ts', () => ({
-  darkwebMonitor: () => true,
-  exposedCheck: () => true,
-}));
+function makeHarness(over: Partial<SecurityScansDeps> = {}) {
+  const [unlocked, setUnlocked] = createSignal(false);
+  const calls = { darkweb: 0, exposed: 0, load: 0, cache: 0 };
+  const deps: SecurityScansDeps = {
+    ipc: {
+      loadSecurityScans: async () => {
+        calls.load += 1;
+        return null;
+      },
+      cacheSecurityScans: async () => {
+        calls.cache += 1;
+      },
+      darkwebScanVault: async () => {
+        calls.darkweb += 1;
+        return emptyRun();
+      },
+      auditExposed: async () => {
+        calls.exposed += 1;
+        return [];
+      },
+    },
+    unlocked,
+    darkwebEnabled: () => true,
+    exposedEnabled: () => true,
+    onError: (err) => {
+      throw err instanceof Error ? err : new Error(String(err));
+    },
+    ...over,
+  };
+  return { scans: createSecurityScans(deps), setUnlocked, calls };
+}
 
-vi.mock('./toast.ts', () => ({ toastError: vi.fn() }));
+beforeEach(() => vi.useFakeTimers());
+afterEach(() => vi.useRealTimers());
 
-import { ipc } from '../lib/ipc.ts';
-import * as session from './session.ts';
-import { initSecurity, runDarkwebScan, runExposedCheck, runStaleScans } from './securityScans.ts';
-
-const setUnlocked = (session as unknown as { __setUnlocked: (v: boolean) => void }).__setUnlocked;
-
-beforeEach(() => {
-  vi.useFakeTimers();
-  vi.clearAllMocks();
-});
-afterEach(() => {
-  setUnlocked(false);
-  vi.useRealTimers();
-});
-
-describe('securityScans', () => {
-  it('runDarkwebScan never auto-grants backend consent', async () => {
+describe('createSecurityScans', () => {
+  it('runs the dark-web scan with no consent call — consent is not in its IPC surface', async () => {
+    const { scans, setUnlocked, calls } = makeHarness();
     setUnlocked(true);
-    await runDarkwebScan();
-    expect(ipc.darkwebScanVault).toHaveBeenCalledTimes(1);
-    expect(ipc.setDarkwebConsent).not.toHaveBeenCalled();
+    await scans.runDarkwebScan();
+    expect(calls.darkweb).toBe(1);
+    // Nothing else was touched beyond the scan + the cache write.
+    expect(calls.load).toBe(0);
+  });
+
+  it('skips scans while locked or disabled', async () => {
+    const { scans, calls } = makeHarness(); // locked
+    await scans.runDarkwebScan();
+    await scans.runExposedCheck();
+    expect(calls.darkweb + calls.exposed).toBe(0);
+
+    const disabled = makeHarness({ darkwebEnabled: () => false, exposedEnabled: () => false });
+    disabled.setUnlocked(true);
+    await disabled.scans.runDarkwebScan();
+    await disabled.scans.runExposedCheck();
+    expect(disabled.calls.darkweb + disabled.calls.exposed).toBe(0);
   });
 
   it('runStaleScans skips fresh results and re-runs stale ones', async () => {
+    const { scans, setUnlocked, calls } = makeHarness();
     setUnlocked(true);
-    await runDarkwebScan();
-    await runExposedCheck();
-    vi.clearAllMocks();
+    await scans.runDarkwebScan();
+    await scans.runExposedCheck();
+    expect(calls.darkweb).toBe(1);
+    expect(calls.exposed).toBe(1);
 
-    runStaleScans(); // both results are fresh — nothing should run
+    scans.runStaleScans(); // both fresh — nothing runs
     await vi.runAllTimersAsync();
-    expect(ipc.darkwebScanVault).not.toHaveBeenCalled();
-    expect(ipc.auditExposed).not.toHaveBeenCalled();
+    expect(calls.darkweb).toBe(1);
+    expect(calls.exposed).toBe(1);
 
     vi.advanceTimersByTime(7 * 60 * 60 * 1000); // past the 6h freshness window
-    runStaleScans();
+    scans.runStaleScans();
     await vi.runAllTimersAsync();
-    expect(ipc.darkwebScanVault).toHaveBeenCalledTimes(1);
-    expect(ipc.auditExposed).toHaveBeenCalledTimes(1);
+    expect(calls.darkweb).toBe(2);
+    expect(calls.exposed).toBe(2);
   });
 
-  it('defers scans 20s after unlock, and locking cancels the pending defer', async () => {
-    initSecurity();
+  it('defers scans after unlock, and locking cancels the pending defer', async () => {
+    const { scans, setUnlocked, calls } = makeHarness();
+    scans.initSecurity();
 
     // Unlock: hydrate the cache immediately, but no scans yet.
     setUnlocked(true);
     await vi.advanceTimersByTimeAsync(1);
-    expect(ipc.loadSecurityScans).toHaveBeenCalledTimes(1);
-    expect(ipc.darkwebScanVault).not.toHaveBeenCalled();
+    expect(calls.load).toBe(1);
+    expect(calls.darkweb).toBe(0);
 
     // Lock 10s in — the pending deferred scan must die with it.
     await vi.advanceTimersByTimeAsync(10_000);
     setUnlocked(false);
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(ipc.darkwebScanVault).not.toHaveBeenCalled();
-    expect(ipc.auditExposed).not.toHaveBeenCalled();
+    expect(calls.darkweb + calls.exposed).toBe(0);
 
     // Unlock again and let the 20s defer elapse — now the scans run.
     setUnlocked(true);
     await vi.advanceTimersByTimeAsync(21_000);
-    expect(ipc.darkwebScanVault).toHaveBeenCalledTimes(1);
-    expect(ipc.auditExposed).toHaveBeenCalledTimes(1);
+    expect(calls.darkweb).toBe(1);
+    expect(calls.exposed).toBe(1);
   });
 });

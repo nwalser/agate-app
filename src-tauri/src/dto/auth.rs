@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 /// Which Bitwarden server to talk to.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(tag = "region", rename_all = "camelCase")]
 pub enum ServerConfig {
     /// Bitwarden US cloud (bitwarden.com).
@@ -21,6 +22,7 @@ pub enum ServerConfig {
 
 /// Second-factor input from the unlock/login screen.
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct TwoFactorInput {
     pub provider: TwoFactorKind,
@@ -30,6 +32,7 @@ pub struct TwoFactorInput {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub enum TwoFactorKind {
     Authenticator,
@@ -38,6 +41,7 @@ pub enum TwoFactorKind {
 
 /// Result of a login attempt.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(tag = "status", rename_all = "camelCase")]
 pub enum LoginResult {
     /// Authenticated and the vault is unlocked.
@@ -50,6 +54,7 @@ pub enum LoginResult {
 /// One configured connection for the unlock screen, settings, and the
 /// add-connection quick-pick. Non-secret (server + email only).
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionSummary {
     pub email: String,
@@ -66,6 +71,7 @@ pub struct ConnectionSummary {
 /// Per-connection result of an `unlock_all`, so the UI can show progress and
 /// drive per-connection reconnect / 2FA.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(tag = "status", rename_all = "camelCase")]
 pub enum UnlockStatus {
     /// Connection re-logged-in and unlocked.
@@ -84,6 +90,7 @@ pub enum UnlockStatus {
 
 /// One connection's outcome from `unlock_all`.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct UnlockOutcome {
     pub email: String,
@@ -94,6 +101,7 @@ pub struct UnlockOutcome {
 
 /// Overall app/session status the frontend uses to pick a screen.
 #[derive(Debug, Clone, Serialize, Default)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct SessionStatus {
     /// An app-unlock password has been configured (the unified unlock secret).

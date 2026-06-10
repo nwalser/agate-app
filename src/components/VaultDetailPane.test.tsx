@@ -6,8 +6,10 @@
 import { cleanup, fireEvent, render } from '@solidjs/testing-library';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import VaultDetailPane from './VaultDetailPane.tsx';
+import { makeDetail } from '../testing/factories.ts';
 import type { ItemDetail, LoginDetail, TotpCode } from '../lib/types.ts';
 
+// LoginDetail has no shared factory (sub-shape of ItemDetail) — stays local.
 const loginDetail = (over: Partial<LoginDetail> = {}): LoginDetail => ({
   username: 'alice@example.com',
   password: 'hunter2',
@@ -17,29 +19,17 @@ const loginDetail = (over: Partial<LoginDetail> = {}): LoginDetail => ({
   ...over,
 });
 
-const detail = (over: Partial<ItemDetail> = {}): ItemDetail => ({
-  id: 'i1',
-  accountEmail: 'a@b.c',
-  accountLabel: 'Cloud',
-  name: 'Example',
-  itemType: 'login',
-  favorite: false,
-  reprompt: false,
-  notes: null,
-  login: loginDetail(),
-  card: null,
-  identity: null,
-  sshKey: null,
-  fields: [],
-  folderId: null,
-  organizationId: null,
-  revisionDate: '2024-01-01T00:00:00Z',
-  creationDate: '2024-01-01T00:00:00Z',
-  collectionIds: [],
-  attachments: [],
-  passkeys: [],
-  ...over,
-});
+const detail = (over: Partial<ItemDetail> = {}): ItemDetail =>
+  makeDetail({
+    id: 'i1',
+    name: 'Example',
+    accountEmail: 'a@b.c',
+    accountLabel: 'Cloud',
+    login: loginDetail(),
+    revisionDate: '2024-01-01T00:00:00Z',
+    creationDate: '2024-01-01T00:00:00Z',
+    ...over,
+  });
 
 function renderPane(over: Partial<ItemDetail> = {}, opts: { totp?: TotpCode | null; revealed?: boolean } = {}) {
   const copy = vi.fn();

@@ -142,8 +142,7 @@ pub async fn configure(state: &AppState, app_password: Zeroizing<String>) -> Aga
     secrets::store_app_unlock(&build_blob(&salt, sealed_vmk))?;
 
     state.session.lock().await.vmk = Some(vmk);
-    state.config.lock().await.app_unlock_configured = true;
-    state.save_config().await
+    state.update_config(|cfg| cfg.app_unlock_configured = true).await
 }
 
 /// Change the app password: re-wrap the VMK under a new AUK. A single keychain write
@@ -354,4 +353,68 @@ pub(crate) fn seal_connection(vmk: &[u8; 32], stored: &StoredConnection) -> Agat
     );
     let blob = secrets::seal_with_key(vmk, &json, &secrets::cred_aad(&stored.email))?;
     secrets::store_cred(&stored.email, &blob)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::secrets::keychain_testing::install_in_memory_keychain;
+    use crate::secrets::StoredConnection;
+    use crate::state::AppState;
+
+    fn temp_state() -> AppState {
+        let dir = std::env::temp_dir()
+            .join(format!("agate-appunlock-test-{}-{}", std::process::id(), rand::random::<u32>()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        AppState::load(dir)
+    }
+
+    /// The full unlock-envelope ORCHESTRATION against the in-memory keychain
+    /// (no SDK, no network): configure wraps the VMK; the right app password
+    /// verifies and a wrong one fails the GCM tag; a connection credential
+    /// sealed under the VMK round-trips; changing the app password is one
+    /// atomic re-wrap — the old password dies, the new one lives, and the
+    /// sealed credential is untouched. This is the orchestration layer the
+    /// pure envelope/kdf unit tests can't see.
+    #[tokio::test]
+    async fn unlock_envelope_orchestration_roundtrip() {
+        let _keychain = install_in_memory_keychain();
+        let state = temp_state();
+        let pw = Zeroizing::new("correct horse battery".to_string());
+
+        configure(&state, pw.clone()).await.expect("configure");
+        assert!(state.config.lock().await.app_unlock_configured);
+
+        assert!(verify_app_password(&state, pw.clone()).await.expect("verify right pw"));
+        assert!(
+            !verify_app_password(&state, Zeroizing::new("wrong password!".to_string()))
+                .await
+                .expect("verify wrong pw"),
+            "a wrong app password must fail the GCM tag, not verify"
+        );
+
+        // Seal a connection credential under the live VMK and read it back.
+        let vmk = current_vmk(&state).await.expect("vmk held after configure");
+        let stored = StoredConnection {
+            server: crate::dto::ServerConfig::Us,
+            email: "alice@example.com".to_string(),
+            master_password: "hunter2hunter2".to_string(),
+        };
+        seal_connection(&vmk, &stored).expect("seal cred");
+        let loaded = load_connection("alice@example.com", &vmk).expect("open cred");
+        assert_eq!(loaded.email, "alice@example.com");
+        assert_eq!(loaded.master_password, "hunter2hunter2");
+
+        // Change the app password: one atomic re-wrap of the VMK.
+        let new_pw = Zeroizing::new("a brand new app password".to_string());
+        change(&state, new_pw.clone()).await.expect("change");
+        assert!(
+            !verify_app_password(&state, pw).await.expect("verify old"),
+            "the old app password must be dead after a change"
+        );
+        assert!(verify_app_password(&state, new_pw).await.expect("verify new"));
+        // The per-connection blobs never move during a re-key.
+        let survived = load_connection("alice@example.com", &vmk).expect("cred survives re-key");
+        assert_eq!(survived.master_password, "hunter2hunter2");
+    }
 }

@@ -5,6 +5,7 @@ use serde::Deserialize;
 
 /// Password-generator options from the UI.
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct PasswordGenOptions {
     pub length: u8,
@@ -37,6 +38,7 @@ impl Default for PasswordGenOptions {
 
 /// Passphrase-generator options from the UI.
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct PassphraseGenOptions {
     pub num_words: u8,
@@ -54,6 +56,7 @@ impl Default for PassphraseGenOptions {
 /// Username-generator mode (closed set). Forwarded-email aliases (SimpleLogin,
 /// addy.io, …) are intentionally out of scope — these modes need no network.
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub enum UsernameMode {
     /// `local+<random>@domain`, derived from a base email ("plus addressing").
@@ -66,6 +69,7 @@ pub enum UsernameMode {
 
 /// Username-generator options from the UI.
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct UsernameGenOptions {
     pub mode: UsernameMode,

@@ -70,19 +70,9 @@ pub async fn ai_set_server_enabled(
     if enabled {
         aiserver::ensure_started(app)?;
     }
-    let prev = {
-        let mut cfg = state.config.lock().await;
-        let prev = cfg.ai_server_enabled;
-        cfg.ai_server_enabled = enabled;
-        prev
-    };
-    if let Err(e) = state.save_config().await {
-        // Roll back so the in-memory flag never disagrees with what persisted —
-        // otherwise an already-bound listener would serve while the UI shows the
-        // toggle failed.
-        state.config.lock().await.ai_server_enabled = prev;
-        return Err(e);
-    }
+    // update_config rolls the in-memory flag back if the disk write fails, so an
+    // already-bound listener can never serve while the UI shows the toggle failed.
+    state.update_config(|cfg| cfg.ai_server_enabled = enabled).await?;
     Ok(status(enabled, token))
 }
 
@@ -98,14 +88,12 @@ pub async fn ai_set_grant(
     item_id: String,
     granted: bool,
 ) -> AgateResult<()> {
-    state.config.lock().await.set_ai_grant(&account_email, &item_id, granted);
-    state.save_config().await
+    state.update_config(|cfg| cfg.set_ai_grant(&account_email, &item_id, granted)).await
 }
 
 #[tauri::command]
 pub async fn ai_clear_grants(state: State<'_>) -> AgateResult<()> {
-    state.config.lock().await.ai_grants.clear();
-    state.save_config().await
+    state.update_config(|cfg| cfg.ai_grants.clear()).await
 }
 
 #[tauri::command]

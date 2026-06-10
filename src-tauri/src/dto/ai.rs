@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 /// Non-secret — just the owning account + the opaque cipher id. Persisted in
 /// `config.json` (see `state::PersistedConfig`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct AiGrant {
     pub account_email: String,
@@ -22,6 +23,7 @@ pub struct AiGrant {
 /// `token` are only populated when the server is enabled, so the page can render
 /// the connect string + bearer token for the user to paste into their MCP client.
 #[derive(Clone, Serialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct AiServerStatus {
     /// The user has switched the MCP server on (persisted).
@@ -52,6 +54,7 @@ impl std::fmt::Debug for AiServerStatus {
 /// access timing + item names are sensitive). `allowed` is false for a denied
 /// (non-allowlisted) read attempt.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct AiAuditEntry {
     /// RFC 3339 timestamp of the access.

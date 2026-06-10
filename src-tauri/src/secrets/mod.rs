@@ -54,6 +54,10 @@ pub use keychain::{
     store_device_pepper, store_hello_blob, store_scan_cache,
 };
 
+/// In-memory keychain backend for integration tests (compiled out of releases).
+#[cfg(test)]
+pub use keychain::testing as keychain_testing;
+
 const KEYRING_SERVICE: &str = "com.agate.desktop";
 /// Bumped from the original local-unlock blob (v1) to the AUK model.
 pub const BLOB_VERSION: u32 = 2;

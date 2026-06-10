@@ -10,8 +10,8 @@
 // backend consent flag (via the scan module) so turning the toggle off also
 // revokes the backend's permission to call out.
 
-import { createSignal } from 'solid-js';
 import { ipc } from '../lib/ipc.ts';
+import { createPersistedStore, parseRawBool } from './persisted.ts';
 import {
   clearDarkwebScan,
   clearExposedCheck,
@@ -23,40 +23,28 @@ import { toastError } from './toast.ts';
 // Re-exported so existing callers (e.g. main.tsx) keep their import path stable.
 export { initSecurity } from './securityScans.ts';
 
-const KEY_DARKWEB = 'agate.security.darkwebMonitor';
-const KEY_EXPOSED = 'agate.security.exposedCheck';
-
-function readBool(key: string, fallback: boolean): boolean {
-  try {
-    const v = localStorage.getItem(key);
-    if (v === 'true') return true;
-    if (v === 'false') return false;
-  } catch {
-    // ignore: localStorage may be unavailable (private mode); use the default
-  }
-  return fallback;
-}
-
-function writeBool(key: string, value: boolean): void {
-  try {
-    localStorage.setItem(key, String(value));
-  } catch {
-    // ignore: persistence is best-effort; the in-memory signal still applies
-  }
-}
-
 // The dark-web monitor sends the vault's account emails to an external provider
 // (XposedOrNot), so it is OPT-IN — default OFF, matching the backend consent
 // flag's default. The exposed-password check stays default ON: k-anonymity, only
 // 5 hex chars of a SHA-1 ever leave the device.
-const [darkwebMonitor, setDarkwebMonitorSig] = createSignal(readBool(KEY_DARKWEB, false));
-const [exposedCheck, setExposedCheckSig] = createSignal(readBool(KEY_EXPOSED, true));
+const darkweb = createPersistedStore<boolean>({
+  key: 'agate.security.darkwebMonitor',
+  parse: parseRawBool,
+  fallback: () => false,
+  raw: true,
+});
+const exposed = createPersistedStore<boolean>({
+  key: 'agate.security.exposedCheck',
+  parse: parseRawBool,
+  fallback: () => true,
+  raw: true,
+});
 
-export { darkwebMonitor, exposedCheck };
+export const darkwebMonitor = darkweb.value;
+export const exposedCheck = exposed.value;
 
 export async function setDarkwebMonitor(enabled: boolean): Promise<void> {
-  setDarkwebMonitorSig(enabled);
-  writeBool(KEY_DARKWEB, enabled);
+  darkweb.set(enabled);
   if (enabled) {
     // The ONE place backend consent is granted: the user's explicit toggle.
     try {
@@ -72,8 +60,7 @@ export async function setDarkwebMonitor(enabled: boolean): Promise<void> {
 }
 
 export function setExposedCheck(enabled: boolean): void {
-  setExposedCheckSig(enabled);
-  writeBool(KEY_EXPOSED, enabled);
+  exposed.set(enabled);
   if (enabled) {
     void runExposedCheck();
   } else {

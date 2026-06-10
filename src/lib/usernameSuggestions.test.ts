@@ -1,25 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { collectUsernameSuggestions } from './usernameSuggestions.ts';
+import { makeItem } from '../testing/factories.ts';
 import type { VaultItem } from './types.ts';
 
 function item(over: Partial<VaultItem>): VaultItem {
-  return {
-    id: Math.random().toString(36).slice(2),
+  return makeItem({
+    id: Math.random().toString(36).slice(2), // fresh id per call — tests build many distinct rows
+    name: 'Item',
     accountEmail: 'a@b.com',
     accountLabel: 'Cloud',
-    name: 'Item',
-    itemType: 'login',
-    username: null,
-    uri: null,
-    favorite: false,
-    reprompt: false,
-    deleted: false,
-    folderId: null,
-    organizationId: null,
-    hasTotp: false,
-    hasPasskey: false,
     ...over,
-  } as VaultItem;
+  });
 }
 
 const items = (...usernames: (string | null)[]) => usernames.map((u) => item({ username: u }));

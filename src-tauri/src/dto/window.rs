@@ -7,6 +7,7 @@ use serde::Serialize;
 /// a borderless window (Windows/Linux) matches the host. On Linux this is read
 /// from the desktop's `button-layout`; elsewhere it's a fixed platform default.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct WindowControlsLayout {
     pub side: ControlsSide,
@@ -14,6 +15,7 @@ pub struct WindowControlsLayout {
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub enum ControlsSide {
     // `Left` is only ever produced on Linux (from the desktop button-layout); on
@@ -24,6 +26,7 @@ pub enum ControlsSide {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub enum WindowControl {
     Minimize,

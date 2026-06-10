@@ -11,6 +11,7 @@ use serde::Serialize;
 
 /// Closed set of error kinds the frontend may branch on.
 #[derive(Debug, Clone, Copy, Serialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub enum ErrorKind {
     /// No session / not logged in when one was required.
@@ -37,6 +38,7 @@ pub enum ErrorKind {
 
 /// Error returned from commands. `message` is human-readable and secret-free.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(specta::Type))]
 pub struct AgateError {
     pub kind: ErrorKind,
     pub message: String,

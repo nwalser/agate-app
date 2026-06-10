@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 /// Closed set of vault-export file formats (frontend → backend).
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub enum ExportFormat {
     /// Pretty JSON: an array of full item details (Agate's own shape).
@@ -15,6 +16,7 @@ pub enum ExportFormat {
 
 /// Closed set of Bitwarden item types.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub enum ItemType {
     Login,
@@ -27,6 +29,7 @@ pub enum ItemType {
 
 /// Row in the vault list (no secrets beyond what a list needs).
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct VaultItem {
     pub id: String,
@@ -56,6 +59,7 @@ pub struct VaultItem {
 
 /// A single login URI (with its match strategy so edits round-trip).
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct LoginUri {
     pub uri: Option<String>,
@@ -64,6 +68,7 @@ pub struct LoginUri {
 
 /// Login-type detail.
 #[derive(Debug, Clone, Serialize, Default)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct LoginDetail {
     pub username: Option<String>,
@@ -78,6 +83,7 @@ pub struct LoginDetail {
 /// camelCase yields exactly "text" / "hidden" / "boolean" / "linked" — the same
 /// wire values the frontend contract expects.
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub enum CustomFieldType {
     Text,
@@ -88,6 +94,7 @@ pub enum CustomFieldType {
 
 /// A custom field on an item.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct CustomField {
     pub name: Option<String>,
@@ -99,6 +106,7 @@ pub struct CustomField {
 
 /// Full decrypted item detail for the detail pane and the editor (prefill).
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct ItemDetail {
     pub id: String,
@@ -132,6 +140,7 @@ pub struct ItemDetail {
 
 /// A generated TOTP code plus timing so the UI can render a countdown.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct TotpCode {
     pub code: String,
@@ -144,6 +153,7 @@ pub struct TotpCode {
 /// private key material never leaves the backend. Standalone vaults can show and
 /// manage passkeys; using them for sign-in needs browser integration (extension).
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct PasskeyCredential {
     /// Relying-party (site) id, e.g. "github.com".
@@ -159,6 +169,7 @@ pub struct PasskeyCredential {
 /// One file attachment on an item (metadata only — bytes are fetched + decrypted
 /// on demand by `download_attachment`). The encryption key/URL stay in the backend.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct Attachment {
     pub id: String,
@@ -171,6 +182,7 @@ pub struct Attachment {
 /// `SendSummary` to avoid colliding with the `Send` marker trait. Read + revoke
 /// only for now (create is a follow-up).
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct SendSummary {
     pub id: String,
@@ -192,6 +204,7 @@ pub struct SendSummary {
 /// A decrypted collection (a shared-vault grouping). Per-connection in the
 /// unified view, like folders. Read-only browsing for now.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct Collection {
     pub id: String,
@@ -204,13 +217,12 @@ pub struct Collection {
 /// A vault folder. In the unified view folders are per-connection, so each
 /// carries its owning account; "move to folder" is scoped to that account.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct Folder {
     pub id: Option<String>,
     pub name: String,
-    #[serde(default)]
     pub account_email: String,
-    #[serde(default)]
     pub account_label: String,
 }
 
@@ -220,6 +232,7 @@ pub struct Folder {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct UriInput {
     pub uri: Option<String>,
@@ -228,6 +241,7 @@ pub struct UriInput {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct LoginInput {
     pub username: Option<String>,
@@ -238,6 +252,7 @@ pub struct LoginInput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct CardInput {
     pub cardholder_name: Option<String>,
@@ -249,6 +264,7 @@ pub struct CardInput {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct IdentityInput {
     pub title: Option<String>,
@@ -272,6 +288,7 @@ pub struct IdentityInput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct SshKeyInput {
     pub private_key: String,
@@ -280,6 +297,7 @@ pub struct SshKeyInput {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct FieldInput {
     pub name: Option<String>,
@@ -292,6 +310,7 @@ pub struct FieldInput {
 
 /// One create-or-edit payload for any item type.
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct ItemInput {
     /// Present → edit; absent → create.

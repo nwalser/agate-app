@@ -1,24 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { sendMeta } from './SendsView.tsx';
+import { makeSend } from '../testing/factories.ts';
 import type { SendSummary } from '../lib/types.ts';
 
 const NOW = Date.parse('2026-06-09T12:00:00Z');
 
 function send(over: Partial<SendSummary> = {}): SendSummary {
-  return {
+  return makeSend({
     id: 's1',
     name: 'My share',
-    sendType: 'text',
-    disabled: false,
-    hasPassword: false,
-    accessCount: 0,
-    maxAccessCount: null,
-    deletionDate: '2026-07-01T00:00:00Z',
-    expirationDate: null,
     accountEmail: 'a@b.com',
     accountLabel: 'a@b.com',
     ...over,
-  };
+  });
 }
 
 describe('sendMeta', () => {

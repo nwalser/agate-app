@@ -22,8 +22,8 @@ function twoConnectionFake() {
       darkwebConsent: false, connectionCount: 2, liveCount: 2,
     },
     connections: [
-      { email: FIXTURE_EMAIL, serverLabel: FIXTURE_LABEL, server: { region: 'us' }, unlocked: true },
-      { email: 'second@example.com', serverLabel: 'Bitwarden — EU', server: { region: 'eu' }, unlocked: true },
+      { email: FIXTURE_EMAIL, serverLabel: FIXTURE_LABEL, server: { region: 'us' }, unlocked: true, storeCredentials: true },
+      { email: 'second@example.com', serverLabel: 'Bitwarden — EU', server: { region: 'eu' }, unlocked: true, storeCredentials: true },
     ],
   });
 }

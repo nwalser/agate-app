@@ -70,11 +70,12 @@ pub async fn add_connection(
                 secrets::delete_cred(&email)?;
             }
 
-            {
-                let mut cfg = state.config.lock().await;
-                cfg.upsert_account(server.clone(), &email, store_credentials);
-                cfg.server = server;
-            }
+            state
+                .update_config(|cfg| {
+                    cfg.upsert_account(server.clone(), &email, store_credentials);
+                    cfg.server = server.clone();
+                })
+                .await?;
             {
                 let mut session = state.session.lock().await;
                 session.connections.insert(email.clone(), LiveConnection::new(client));
@@ -82,7 +83,6 @@ pub async fn add_connection(
                     session.active_email = Some(email.clone());
                 }
             }
-            state.save_config().await?;
             Ok(LoginResult::Success)
         }
     }
@@ -135,10 +135,9 @@ pub async fn update_connection(
                 } else {
                     secrets::delete_cred(&email)?;
                 }
-                {
-                    let mut cfg = state.config.lock().await;
-                    cfg.upsert_account(server.clone(), &email, store_credentials);
-                }
+                state
+                    .update_config(|cfg| cfg.upsert_account(server.clone(), &email, store_credentials))
+                    .await?;
                 {
                     let mut session = state.session.lock().await;
                     session.connections.insert(email.clone(), LiveConnection::new(client));
@@ -146,7 +145,6 @@ pub async fn update_connection(
                         session.active_email = Some(email.clone());
                     }
                 }
-                state.save_config().await?;
                 return Ok(LoginResult::Success);
             }
         }
@@ -169,11 +167,9 @@ pub async fn update_connection(
         // Turning storage off: forget the sealed password (the live session stays).
         secrets::delete_cred(&email)?;
     }
-    {
-        let mut cfg = state.config.lock().await;
-        cfg.upsert_account(existing.server.clone(), &email, store_credentials);
-    }
-    state.save_config().await?;
+    state
+        .update_config(|cfg| cfg.upsert_account(existing.server.clone(), &email, store_credentials))
+        .await?;
     Ok(LoginResult::Success)
 }
 
@@ -239,12 +235,8 @@ pub async fn remove_connection(state: &AppState, email: String) -> AgateResult<(
             session.active_email = session.connections.keys().next().cloned();
         }
     }
-    {
-        let mut cfg = state.config.lock().await;
-        // Drops the account record AND its AI allowlist grants — see remove_account.
-        cfg.remove_account(&email);
-    }
-    state.save_config().await
+    // Drops the account record AND its AI allowlist grants — see remove_account.
+    state.update_config(|cfg| cfg.remove_account(&email)).await
 }
 
 /// Set which account is "active" (the default target for creating new items).
@@ -259,8 +251,7 @@ pub async fn set_active(state: &AppState, email: String) -> AgateResult<()> {
 
 /// Remember the last-used server (add-connection form prefill).
 pub async fn set_server(state: &AppState, server: ServerConfig) -> AgateResult<()> {
-    state.config.lock().await.server = server;
-    state.save_config().await
+    state.update_config(|cfg| cfg.server = server).await
 }
 
 /// Lock the app: drop every client, the decrypted caches, and the VMK. Re-unlock
@@ -287,15 +278,16 @@ pub async fn logout(state: &AppState) -> AgateResult<()> {
     state.session.lock().await.clear_secrets();
     *state.breach_directory.lock().await = None;
     *state.ai_audit.lock().await = Vec::new();
-    {
-        let mut cfg = state.config.lock().await;
-        cfg.app_unlock_configured = false;
-        cfg.hello_configured = false;
-        cfg.darkweb_consent = false;
-        // The MCP server's allowlist + opt-in are capability state — drop them on
-        // logout. The bound listener stays up but fails closed (disabled + locked).
-        cfg.ai_server_enabled = false;
-        cfg.ai_grants.clear();
-    }
-    state.save_config().await
+    state
+        .update_config(|cfg| {
+            cfg.app_unlock_configured = false;
+            cfg.hello_configured = false;
+            cfg.darkweb_consent = false;
+            // The MCP server's allowlist + opt-in are capability state — drop them
+            // on logout. The bound listener stays up but fails closed (disabled +
+            // locked).
+            cfg.ai_server_enabled = false;
+            cfg.ai_grants.clear();
+        })
+        .await
 }

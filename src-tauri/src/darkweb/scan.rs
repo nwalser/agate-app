@@ -83,11 +83,7 @@ pub async fn scan_vault(state: &AppState) -> AgateResult<DarkWebReport> {
 
     // Advance the rotation offset for next run (only meaningful when capped).
     if total > window_len {
-        {
-            let mut cfg = state.config.lock().await;
-            cfg.darkweb_scan_offset = next_offset;
-        }
-        if let Err(e) = state.save_config().await {
+        if let Err(e) = state.update_config(|cfg| cfg.darkweb_scan_offset = next_offset).await {
             // Non-fatal: a failed persist just means next run may repeat this window.
             log::warn!("darkweb: failed to persist scan rotation offset: {e}");
         }
@@ -100,8 +96,7 @@ pub async fn scan_vault(state: &AppState) -> AgateResult<DarkWebReport> {
 
 /// Persist the user's opt-in decision for the dark-web monitor.
 pub async fn set_consent(state: &AppState, enabled: bool) -> AgateResult<()> {
-    state.config.lock().await.darkweb_consent = enabled;
-    state.save_config().await
+    state.update_config(|cfg| cfg.darkweb_consent = enabled).await
 }
 
 #[cfg(test)]

@@ -2,6 +2,14 @@
 //! typed store/load/delete helpers for each blob kind. Reads distinguish "absent"
 //! (`Ok(None)`) from a real keychain failure or a corrupt value (a loud `Err`), so
 //! callers never silently treat broken storage as not-enrolled.
+//!
+//! The PRIMITIVE layer (string store/load/delete) routes through a swappable
+//! [`SecretBackend`]: the OS keychain in the app, an in-memory map in tests —
+//! which makes the unlock-envelope ORCHESTRATION (configure → seal creds →
+//! change password → verify) integration-testable without a real keychain.
+//! The swap hook is `#[cfg(test)]`-only, so no alternate backend can ship.
+
+use std::sync::{Arc, OnceLock, RwLock};
 
 use base64::Engine;
 use zeroize::Zeroizing;
@@ -12,34 +20,70 @@ use super::{
 };
 use crate::error::{AgateError, AgateResult, ErrorKind};
 
-fn entry(key: &str) -> AgateResult<keyring::Entry> {
-    keyring::Entry::new(KEYRING_SERVICE, key)
-        .map_err(|e| AgateError::new(ErrorKind::Keychain, format!("keychain entry: {e}")))
+/// Primitive secret storage: keyed strings, absent ≠ broken.
+pub trait SecretBackend: Send + Sync {
+    fn store(&self, key: &str, value: &str) -> AgateResult<()>;
+    /// `Ok(None)` == absent; `Err` == a real storage failure.
+    fn load(&self, key: &str) -> AgateResult<Option<String>>;
+    /// Absent is success (idempotent).
+    fn delete(&self, key: &str) -> AgateResult<()>;
+}
+
+/// The OS keychain (keyring crate) — the only backend outside tests.
+struct KeyringBackend;
+
+impl KeyringBackend {
+    fn entry(&self, key: &str) -> AgateResult<keyring::Entry> {
+        keyring::Entry::new(KEYRING_SERVICE, key)
+            .map_err(|e| AgateError::new(ErrorKind::Keychain, format!("keychain entry: {e}")))
+    }
+}
+
+impl SecretBackend for KeyringBackend {
+    fn store(&self, key: &str, value: &str) -> AgateResult<()> {
+        self.entry(key)?
+            .set_password(value)
+            .map_err(|e| AgateError::new(ErrorKind::Keychain, format!("keychain write: {e}")))
+    }
+    fn load(&self, key: &str) -> AgateResult<Option<String>> {
+        match self.entry(key)?.get_password() {
+            Ok(s) => Ok(Some(s)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(e) => Err(AgateError::new(ErrorKind::Keychain, format!("keychain read: {e}"))),
+        }
+    }
+    fn delete(&self, key: &str) -> AgateResult<()> {
+        match self.entry(key)?.delete_credential() {
+            Ok(()) => Ok(()),
+            Err(keyring::Error::NoEntry) => Ok(()),
+            Err(e) => Err(AgateError::new(ErrorKind::Keychain, format!("keychain delete: {e}"))),
+        }
+    }
+}
+
+static BACKEND: OnceLock<RwLock<Arc<dyn SecretBackend>>> = OnceLock::new();
+
+fn backend_cell() -> &'static RwLock<Arc<dyn SecretBackend>> {
+    BACKEND.get_or_init(|| RwLock::new(Arc::new(KeyringBackend)))
+}
+
+fn backend() -> Arc<dyn SecretBackend> {
+    backend_cell().read().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
 fn store_string(key: &str, value: &str) -> AgateResult<()> {
-    entry(key)?
-        .set_password(value)
-        .map_err(|e| AgateError::new(ErrorKind::Keychain, format!("keychain write: {e}")))
+    backend().store(key, value)
 }
 
 /// Read a keychain string. `Ok(None)` == absent; an `Err` == a real keychain
 /// failure (never silently swallowed) so callers distinguish absent from broken.
 fn load_string(key: &str) -> AgateResult<Option<String>> {
-    match entry(key)?.get_password() {
-        Ok(s) => Ok(Some(s)),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(AgateError::new(ErrorKind::Keychain, format!("keychain read: {e}"))),
-    }
+    backend().load(key)
 }
 
 /// Delete a keychain entry; absent is success (idempotent).
 pub fn delete_key(key: &str) -> AgateResult<()> {
-    match entry(key)?.delete_credential() {
-        Ok(()) => Ok(()),
-        Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(AgateError::new(ErrorKind::Keychain, format!("keychain delete: {e}"))),
-    }
+    backend().delete(key)
 }
 
 // ---- typed helpers ----
@@ -167,4 +211,50 @@ pub fn load_ai_token() -> AgateResult<Option<String>> {
 
 pub fn delete_ai_token() -> AgateResult<()> {
     delete_key(AI_TOKEN_KEY)
+}
+
+// ---- test backend (compiled out of every shipping build) ----
+
+#[cfg(test)]
+pub mod testing {
+    use super::*;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    /// In-memory secret store for integration tests.
+    #[derive(Default)]
+    pub struct InMemoryBackend {
+        map: Mutex<HashMap<String, String>>,
+    }
+
+    impl SecretBackend for InMemoryBackend {
+        fn store(&self, key: &str, value: &str) -> AgateResult<()> {
+            self.map
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(key.to_string(), value.to_string());
+            Ok(())
+        }
+        fn load(&self, key: &str) -> AgateResult<Option<String>> {
+            Ok(self.map.lock().unwrap_or_else(|e| e.into_inner()).get(key).cloned())
+        }
+        fn delete(&self, key: &str) -> AgateResult<()> {
+            self.map.lock().unwrap_or_else(|e| e.into_inner()).remove(key);
+            Ok(())
+        }
+    }
+
+    /// Held for the duration of a keychain-touching test: serializes such tests
+    /// (they share the process-global backend) while a FRESH in-memory store is
+    /// installed. The store is left in place on drop — unit tests must never
+    /// touch the real OS keychain, even between guards.
+    pub struct KeychainTestGuard(#[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
+
+    pub fn install_in_memory_keychain() -> KeychainTestGuard {
+        static TEST_LOCK: Mutex<()> = Mutex::new(());
+        let guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        *backend_cell().write().unwrap_or_else(|e| e.into_inner()) =
+            Arc::new(InMemoryBackend::default());
+        KeychainTestGuard(guard)
+    }
 }

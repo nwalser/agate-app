@@ -115,3 +115,5 @@ windows = { version = "0.58", features = [
 # screen capture (qrscan::decode_otpauth_from_rgba). `image` moved to the main
 # [dependencies] for the OCR file path.
 qrcode = "0.14"
+specta = { version = "=2.0.0-rc.22", features = ["derive"] }
+specta-typescript = "=0.0.9"
