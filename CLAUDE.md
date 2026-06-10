@@ -43,7 +43,10 @@ src/
   styles.css            # Global reset + design tokens (CSS variables)
   lib/
     ipc.ts              # Typed wrappers over Tauri invoke() — the ONLY place invoke is called
-    types.ts            # DTOs + discriminated unions shared with Rust (mirror src-tauri/src/dto.rs)
+    types.ts            # Re-export shim over generated/dto.ts (+ frontend-only helpers)
+    generated/dto.ts    # GENERATED from src-tauri/src/dto by `cargo test export_ts_types`
+                        # — never hand-edit; change the Rust type and regenerate
+  testing/factories.ts  # THE shared test-data factories (unit tests + e2e fixtures)
   state/
     session.ts          # Auth/lock state store (locked | unlocked | logged-out)
     vault.ts            # Decrypted vault items store + search
@@ -60,7 +63,9 @@ src-tauri/
     lib.rs              # Tauri command registration + managed AppState
     state.rs            # AppState: the SDK Client + session status behind a Mutex
     error.rs            # AgateError → serialized to the frontend (typed, no panics)
-    dto.rs              # serde structs sent to the frontend (mirror src/lib/types.ts)
+    dto/                # serde structs sent to the frontend — the SINGLE SOURCE OF
+                        # TRUTH for IPC shapes; dto/typegen.rs exports them to
+                        # src/lib/generated/dto.ts (cargo test fails when stale)
     server.rs           # Server config (cloud regions + self-hosted URL), prelogin/KDF
     auth.rs             # master-password login helpers (2FA-capable), shared
     appunlock.rs        # app-unlock: VMK wrap/unwrap, unlock-all, per-connection 2FA
@@ -132,6 +137,22 @@ secrecy are the product):
 - **Design tokens, not literals:** use `var(--primary)` etc.; never hardcode the accent.
 - **One path, properly implemented — never two.** Replace old paths cleanly; don't gate
   a structural change behind a flag that keeps the old impl alive.
+- **IPC types are generated, never mirrored.** Change the Rust DTO, run
+  `cargo test --manifest-path src-tauri/Cargo.toml export_ts_types` (it fails when
+  `src/lib/generated/dto.ts` is stale), commit the diff. Never hand-edit the
+  generated file or re-declare an IPC shape in TS.
+- **Config writes go through `AppState::update_config`** (mutate + persist +
+  rollback as one transaction). Order: rollback-able config write FIRST, then
+  irreversible keychain side effects (best-effort, loud) — see `connections.rs`.
+- **Stores and screen wiring stay injectable.** New localStorage prefs use
+  `state/persisted.ts`; stateful stores follow the `createSecurityScans(deps)`
+  factory pattern (tests inject deps, no module mocking); Vault-screen features
+  consume `useVault()` via a connected adapter (`src/screens/vault/`) instead of
+  threading props through Vault.tsx. Test objects come from
+  `src/testing/factories.ts` — never re-declare a DTO shape in a test or fixture.
+- **Keychain-touching Rust tests** use
+  `secrets::keychain_testing::install_in_memory_keychain()` — unit tests must
+  never touch the real OS keychain.
 
 ## Build & Dev
 ```bash
