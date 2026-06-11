@@ -11,6 +11,8 @@
 mod ai;
 mod audit;
 mod auth;
+mod autofill;
+mod cleanup;
 mod generator;
 mod vault;
 mod window;
@@ -18,6 +20,8 @@ mod window;
 pub use ai::*;
 pub use audit::*;
 pub use auth::*;
+pub use autofill::*;
+pub use cleanup::*;
 pub use generator::*;
 pub use vault::*;
 pub use window::*;

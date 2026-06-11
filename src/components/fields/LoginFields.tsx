@@ -58,6 +58,7 @@ export default function LoginFields(props: {
       matchType: u.matchType ?? null,
     })),
   );
+  const [autofill, setAutofill] = createSignal(props.item?.login?.autofillOnPageLoad ?? false);
   const strength = createMemo(() => passwordStrength(password()));
 
   // ---- uri rows ----
@@ -135,6 +136,9 @@ export default function LoginFields(props: {
       password: orNull(password()),
       totp: orNull(totp()),
       uris: uriInputs,
+      // Persist null (not false) when off so it stays "inherit default", matching
+      // how Bitwarden stores the unset state.
+      autofillOnPageLoad: autofill() ? true : null,
     };
   }
   props.onReady(buildLogin);
@@ -271,6 +275,17 @@ export default function LoginFields(props: {
             </div>
           )}
         </For>
+      </div>
+
+      <div class="field">
+        <label class="ie-check">
+          <input
+            type="checkbox"
+            checked={autofill()}
+            onChange={(e) => setAutofill(e.currentTarget.checked)}
+          />
+          {t('fields.autofillOnPageLoad')}
+        </label>
       </div>
     </div>
   );

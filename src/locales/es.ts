@@ -48,6 +48,7 @@ export const es: PartialMessages = {
     sidebar: 'Barra lateral',
     templates: 'Plantillas',
     aiAccess: 'Acceso IA',
+    autofill: 'Autorrelleno',
     updates: 'Actualizaciones',
     about: 'Acerca de',
   },
@@ -85,6 +86,9 @@ export const es: PartialMessages = {
     closeToTray: 'Seguir en la bandeja al cerrar la ventana',
     closeToTrayDesc:
       'Cerrar la ventana oculta Agate en vez de salir; usa el icono de la bandeja para reabrir o salir.',
+    startInTray: 'Iniciar oculto en la bandeja',
+    startInTrayDesc:
+      'Al iniciarse con la sesión solo aparece el icono de la bandeja — abre la ventana desde ahí cuando la necesites.',
   },
 
   offline: {
@@ -174,6 +178,7 @@ export const es: PartialMessages = {
     sends: 'Envíos',
     security: 'Seguridad',
     atRisk: 'En riesgo',
+    cleanup: 'Limpieza',
     sync: 'Sincronizar',
   },
 
@@ -353,7 +358,6 @@ export const es: PartialMessages = {
     serverEnabled: 'Servidor de acceso IA activado.',
     serverDisabled: 'Servidor de acceso IA desactivado.',
     revokedAll: 'Revocado el acceso IA a todos los elementos.',
-    copied: '{label} copiado.',
     title: 'Acceso IA',
     help: 'Ejecuta un servidor local que permite a un asistente de IA (p. ej. Claude) leer los elementos de la bóveda que elijas abajo — y nada más. El servidor escucha solo en tu equipo (127.0.0.1) y requiere un token secreto.',
     warning:
@@ -656,6 +660,9 @@ export const es: PartialMessages = {
     collections: 'Colecciones',
     created: 'Creado {date}',
     updated: 'Actualizado {date}',
+    passwordUpdated: 'Contraseña actualizada',
+    passwordHistory: 'Historial de contraseñas',
+    autofillOnPageLoad: 'Autocompletar al cargar la página',
     copyField: 'Copiar {label}',
     openWebsite: 'Abrir sitio web',
     cardBrandFallback: 'Tarjeta',
@@ -701,6 +708,10 @@ export const es: PartialMessages = {
     // ── Formulario de creación ──
     new: 'Nuevo Envío',
     account: 'Cuenta',
+    typeLabel: 'Tipo',
+    typeText: 'Texto',
+    typeFile: 'Archivo',
+    fileNote: 'Se abrirá un selector de archivos al crear el Envío.',
     nameLabel: 'Nombre',
     namePlaceholder: 'Una etiqueta para esta compartición',
     textLabel: 'Texto a compartir',
@@ -748,6 +759,7 @@ export const es: PartialMessages = {
     totpCaptured: 'Clave TOTP capturada desde la pantalla.',
     uris: 'URIs',
     addUri: 'Añadir URI',
+    autofillOnPageLoad: 'Autocompletar al cargar la página',
     ocrNothingRecognized: 'No se reconoció nada utilizable en esa imagen.',
     filledFromImage: 'Se rellenaron {count} campo(s) desde la imagen.',
     strength: {
@@ -937,6 +949,26 @@ export const es: PartialMessages = {
     disabledNotice: '{what} está desactivado. Actívalo en Ajustes → Monitorización de seguridad.',
   },
 
+  cleanup: {
+    title: 'Limpieza',
+    linkHealth: 'Estado de enlaces',
+    scanNow: 'Analizar ahora',
+    scanning: 'Comprobando cada enlace guardado…',
+    privacyNote:
+      'Comprueba si hay enlaces rotos en cada sitio web guardado en tu caja fuerte. Esto envía una solicitud a cada sitio, revelando tus dominios guardados, por lo que solo se ejecuta cuando pulsas Analizar ahora.',
+    scannedCount: '{count} comprobados',
+    brokenCount: '{count} rotos',
+    uncertainCount: '{count} dudosos',
+    allReachable: 'Todos los enlaces son accesibles.',
+    needsUpdate: 'Necesita actualización',
+    couldNotReach: 'No se pudo acceder',
+    couldNotReachHint:
+      'Estos agotaron el tiempo de espera o devolvieron un error del servidor; puede que solo estén caídos temporalmente.',
+    openItem: 'Abrir elemento',
+    statusUnreachable: 'Inaccesible',
+    statusTimeout: 'Sin respuesta',
+  },
+
   // ── Bandeja, paleta de comandos, menús, cromo ──────────────────────────────
   tray: {
     repromptBlocked: 'Protegido con contraseña maestra — abre Agate para copiar.',
@@ -947,7 +979,52 @@ export const es: PartialMessages = {
     openAgate: 'Abrir Agate',
     searchPlaceholder: 'Buscar en la bóveda…',
     noMatches: 'Sin coincidencias.',
-    footerHint: '↵ copiar contraseña · Esc cerrar',
+    footerHint: '↵ contraseña · ⇧↵ usuario · ⌃↵ TOTP · Esc',
+    appPasswordPlaceholder: 'Contraseña de la aplicación…',
+    unlock: 'Desbloquear',
+    unlocking: 'Desbloqueando…',
+    unlockWithHello: 'Desbloquear con Windows Hello',
+    twoFactorPending: 'Se necesita 2FA para {emails} — abre Agate para terminar.',
+    addLogin: 'Añadir inicio de sesión',
+    newLogin: 'Nuevo inicio de sesión',
+    generatePassword: 'Generar contraseña',
+    saveLogin: 'Guardar inicio de sesión',
+    saving: 'Guardando…',
+    loginSaved: 'Inicio de sesión guardado.',
+    passwordReused: 'Esta contraseña ya la usan {count} de tus inicios de sesión.',
+    similarExisting: 'Ya hay inicios de sesión similares en tu bóveda:',
+    noUnlockedAccount: 'Desbloquea una cuenta para añadir un inicio de sesión.',
+    strength: {
+      veryWeak: 'Muy débil',
+      weak: 'Débil',
+      fair: 'Aceptable',
+      strong: 'Fuerte',
+      veryStrong: 'Muy fuerte',
+    },
+  },
+
+  autofill: {
+    title: 'Autorrelleno',
+    help: 'Deja que Agate detecte campos de inicio de sesión en otras apps — ventanas de inicio de sesión en webview (Microsoft, OAuth) y apps nativas — y rellene el inicio de sesión correspondiente sin copiar y pegar.',
+    modeLabel: 'Detección',
+    mode: {
+      off: 'Desactivado',
+      hotkey: 'Con atajo',
+      watch: 'Vigilar siempre',
+    },
+    offHint: 'Agate nunca inspecciona otras ventanas.',
+    hotkeyHint: 'Pulsa {hotkey} con un campo de inicio de sesión enfocado para ofrecer el relleno.',
+    watchHint: 'Ofrece rellenar cuando un campo de inicio de sesión — usuario, contraseña o código de un solo uso — de cualquier app recibe el foco.',
+    unsupported: 'El autorrelleno solo está disponible en Windows por ahora.',
+    securityNote:
+      'Siempre eliges el inicio de sesión en la ventana emergente antes de rellenar nada; los elementos protegidos con contraseña maestra nunca se rellenan aquí. Rellenar en una app que se ejecuta como administrador puede ser bloqueado por Windows.',
+    fillInto: 'Rellenar en {target}',
+    noneFound: 'No se encontró inicio de sesión para {target}',
+    unknownTarget: 'la ventana enfocada',
+    searchPlaceholder: 'Buscar en la bóveda para rellenar…',
+    noMatches: 'No hay inicios de sesión que coincidan — escribe para buscar en tu bóveda.',
+    hint: '↵ rellenar · Esc cancelar',
+    fill: 'Rellenar',
   },
 
   commandPalette: {
@@ -1133,24 +1210,6 @@ export const es: PartialMessages = {
   },
 
   clipboard: {
-    copied: '{label} copiado.',
-    copiedClears: '{label} copiado — se borra en {seconds}s.',
-    labels: {
-      username: 'Usuario',
-      password: 'Contraseña',
-      totpCode: 'Código TOTP',
-      website: 'Sitio web',
-      folder: 'Carpeta',
-      token: 'Token',
-      command: 'Comando',
-      code: 'Código',
-      url: 'URL',
-      publicKey: 'Clave pública',
-      fingerprint: 'Huella',
-      privateKey: 'Clave privada',
-      number: 'Número',
-      cardholder: 'Titular',
-      securityCode: 'Código de seguridad',
-    },
+    clearsIn: 'Se borra en {seconds}s',
   },
 };

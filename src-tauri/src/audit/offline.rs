@@ -81,6 +81,18 @@ fn band_for(score: u8) -> HealthBand {
     }
 }
 
+/// zxcvbn strength score (0–4) for `password`, with related strings (the
+/// username, URIs, name) fed as dictionary `context` so a password equal to one
+/// of them scores at the floor. The single source of truth for "how strong is
+/// this password": the offline audit loop and the tray add-form's live strength
+/// meter (`audit::password_strength`) both route through here.
+pub(super) fn password_score(password: &str, context: &[&str]) -> u8 {
+    if password.is_empty() {
+        return 0;
+    }
+    u8::from(zxcvbn::zxcvbn(password, context).score())
+}
+
 /// Run the enabled offline checks (with the configured thresholds) and produce a
 /// vault-health report. Disabled checks contribute nothing to the counts, the
 /// at-risk list, or the score.
@@ -109,7 +121,7 @@ pub async fn audit_offline(state: &AppState, config: AuditConfig) -> AgateResult
         for uri in &l.uris {
             inputs.push(uri.as_str());
         }
-        let score = u8::from(zxcvbn::zxcvbn(l.password.as_str(), &inputs).score());
+        let score = password_score(l.password.as_str(), &inputs);
         let is_weak = config.weak && score < config.weak_max_score;
         let is_old = config.old && l.age_days > config.old_days;
         let is_insecure = config.insecure_uri
@@ -188,6 +200,18 @@ mod tests {
         assert!(partial.reused); // unspecified -> default true
         assert_eq!(partial.old_days, 30);
         assert_eq!(partial.weak_max_score, 2);
+    }
+
+    #[test]
+    fn password_score_rates_weak_low_and_strong_high() {
+        // Empty short-circuits to the floor (no zxcvbn call).
+        assert_eq!(password_score("", &[]), 0);
+        // A dictionary word is weak.
+        assert!(password_score("password", &[]) <= 1);
+        // Equal to a context input (e.g. the username) scores at the floor.
+        assert_eq!(password_score("hunter2", &["hunter2"]), 0);
+        // A long, mixed-class secret tops the scale.
+        assert!(password_score("9x!Kq2$wPz7@mLr4", &[]) >= 3);
     }
 
     #[test]

@@ -1,5 +1,9 @@
 # Agate — design & feature roadmap
 
+> **Note:** this document is the historical design/roadmap snapshot. The
+> authoritative, up-to-date feature spec is [docs/SPEC.md](SPEC.md); where the
+> two disagree, SPEC.md (and the security model in CLAUDE.md) wins.
+
 Distilled from a research sweep of the official Bitwarden clients, `sdk-internal`
 @ `ef81e7ae1fa63616d84a8275511f4db98c09a64e`, HIBP, Tauri CI/signing/updater, and
 desktop-security best practice. This is the plan the implementation follows.
@@ -81,8 +85,14 @@ DriversLicense7/Passport8. `CipherRepromptType`: None0/Password1.
    `xattr -dr com.apple.quarantine`, `tauri-plugin-updater` + `latest.json`.
 
 ## Privacy/security invariants (non-negotiable)
-- Master password never persisted. Only the 5-char SHA-1 prefix ever leaves the device,
-  and only for the opt-in exposed-password check, always with `Add-Padding: true` (drop count==0).
+- **Superseded:** the original "master password never persisted" invariant no longer
+  holds, by deliberate design. Each connection's master password IS persisted, sealed
+  under the Vault Master Key (AES-256-GCM with AAD; App Unlock Key derived via Argon2id
+  from the app password; device pepper), because the pinned SDK exposes no public token
+  restore and surviving a restart requires re-login with the cleartext password.
+  Current model: SPEC.md §4 and the "Inverted invariant" section of CLAUDE.md.
+- Only the 5-char SHA-1 prefix ever leaves the device, and only for the opt-in
+  exposed-password check, always with `Add-Padding: true` (drop count==0).
 - Reused/duplicate grouping keys off a password hash, not plaintext; zeroize buffers.
 - Updater drives secure shutdown (zeroize session key) before Windows force-exits.
 - One path, properly implemented; SDK calls isolated in wrappers; no `any` in IPC/crypto.

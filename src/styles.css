@@ -280,3 +280,30 @@ body.is-resizing {
   cursor: col-resize;
   user-select: none;
 }
+
+/* Value-click copy feedback (lib/copyPop.ts): the copied text pops and flashes
+   the success color. transform-only, so it never disturbs surrounding layout. */
+.copied-pop {
+  /* inline-block so transform applies even to inline value spans; a no-op for
+     the flex/grid value cells, which are already blockified. */
+  display: inline-block;
+  animation: copied-pop 0.42s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transform-origin: left center;
+}
+@keyframes copied-pop {
+  0% {
+    transform: scale(1);
+  }
+  35% {
+    transform: scale(1.14);
+    color: var(--success);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .copied-pop {
+    animation: none;
+  }
+}

@@ -16,6 +16,7 @@ import { KeyRound, ShieldAlert, ShieldCheck, ShieldX } from 'lucide-solid';
 import type { CellContent } from '../lib/cellRendering.ts';
 import TotpRing from './TotpRing.tsx';
 import { t } from '../lib/i18n.ts';
+import { copyPop } from '../lib/copyPop.ts';
 
 const SEC_ICON = { ok: ShieldCheck, warn: ShieldAlert, risk: ShieldX } as const;
 
@@ -116,6 +117,8 @@ function actionHandlers(
     title: onOpen ? t('menu.openWebsite') : t('common.copy'),
     onClick: (e: MouseEvent) => {
       e.stopPropagation();
+      // Pop the cell only on a copy (the website-open action isn't a copy).
+      if (!onOpen) copyPop(e.currentTarget);
       action();
     },
   };

@@ -72,6 +72,7 @@ pub fn parse_csv(content: &str) -> AgateResult<Vec<ItemInput>> {
                     password: get(c_pass),
                     totp: get(c_totp),
                     uris,
+                    autofill_on_page_load: None,
                 }),
             )
         } else {

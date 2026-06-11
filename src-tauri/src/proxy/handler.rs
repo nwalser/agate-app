@@ -2,7 +2,9 @@
 //! `127.0.0.1`, rewrite the one prelogin path + `/sync` body, and forward
 //! everything else verbatim over HTTPS to the real upstream server.
 
-use super::rewrite::{skeleton, strip_legacy_cipher_data, NEW_PRELOGIN, OLD_PRELOGIN};
+use super::rewrite::{
+    skeleton, strip_legacy_cipher_data, strip_legacy_cipher_data_object, NEW_PRELOGIN, OLD_PRELOGIN,
+};
 use super::sync_shape_cell;
 
 pub(super) fn run_proxy(server: tiny_http::Server, upstream: String) {
@@ -87,6 +89,18 @@ fn handle(client: &reqwest::blocking::Client, upstream: &str, mut request: tiny_
             if let Ok(mut v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
                 *sync_shape_cell().lock().unwrap_or_else(|e| e.into_inner()) = Some(skeleton(&v, 8));
                 strip_legacy_cipher_data(&mut v);
+                if let Ok(reserialized) = serde_json::to_vec(&v) {
+                    bytes = reserialized;
+                }
+            }
+        } else if path.contains("/ciphers") {
+            // Cipher create (`POST /ciphers`) and save (`PUT /ciphers/{id}`) reply
+            // with the written cipher, which on Vaultwarden carries the same legacy
+            // `data` OBJECT as the /sync ciphers. The SDK deserializes this reply
+            // into `CipherResponseModel` (data typed as string), so strip it here
+            // too or the write fails with "invalid type: map, expected a string".
+            if let Ok(mut v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                strip_legacy_cipher_data_object(&mut v);
                 if let Ok(reserialized) = serde_json::to_vec(&v) {
                     bytes = reserialized;
                 }

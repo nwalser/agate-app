@@ -16,6 +16,7 @@ import {
   ExternalLink,
   Eye,
   EyeOff,
+  History,
   KeyRound,
   Link as LinkIcon,
   Paperclip,
@@ -28,8 +29,17 @@ import {
   Trash2,
 } from 'lucide-solid';
 import { openUrl } from '@tauri-apps/plugin-opener';
-import type { Attachment, BreachRecord, CardInput, CustomField, ItemDetail, TotpCode } from '../lib/types.ts';
+import type {
+  Attachment,
+  BreachRecord,
+  CardInput,
+  CustomField,
+  ItemDetail,
+  PasswordHistoryEntry,
+  TotpCode,
+} from '../lib/types.ts';
 import { t } from '../lib/i18n.ts';
+import { copyPop } from '../lib/copyPop.ts';
 import { ipc } from '../lib/ipc.ts';
 import { pushToast, toastError } from '../state/toast.ts';
 import {
@@ -206,7 +216,10 @@ export default function VaultDetailPane(props: {
                       <code
                         class="detail-value mono copyable"
                         title={t('common.copy')}
-                        onClick={() => guard(() => props.copy('Password', login().password))}
+                        onClick={(e) => {
+                          copyPop(e.currentTarget);
+                          guard(() => props.copy('Password', login().password));
+                        }}
                       >
                         {pwShown() ? login().password : '••••••••••••'}
                       </code>
@@ -221,6 +234,17 @@ export default function VaultDetailPane(props: {
                   </div>
                 );
               })()}
+            </Show>
+
+            <Show when={login().passwordRevisionDate}>
+              {(rev) => (
+                <div class="detail-field detail-pw-updated">
+                  <label>{t('detail.passwordUpdated')}</label>
+                  <span class="detail-value muted" title={absoluteDate(rev())}>
+                    {relativeFromNow(rev())}
+                  </span>
+                </div>
+              )}
             </Show>
 
             <Show when={props.totp}>
@@ -241,7 +265,10 @@ export default function VaultDetailPane(props: {
                     <code
                       class="detail-value mono totp-code copyable"
                       title={t('common.copy')}
-                      onClick={() => guard(() => props.copy('Code', code().code))}
+                      onClick={(e) => {
+                        copyPop(e.currentTarget);
+                        guard(() => props.copy('Code', code().code));
+                      }}
                     >
                       {/* Reprompt protects the code from being READ, not just
                           copied — masked until the gate has been passed. */}
@@ -271,7 +298,10 @@ export default function VaultDetailPane(props: {
                       <span
                         class="detail-value truncate copyable"
                         title={t('common.copy')}
-                        onClick={() => props.copy('URL', u.uri)}
+                        onClick={(e) => {
+                          copyPop(e.currentTarget);
+                          props.copy('URL', u.uri);
+                        }}
                       >
                         {u.uri}
                       </span>
@@ -283,6 +313,23 @@ export default function VaultDetailPane(props: {
                 </Show>
               )}
             </For>
+
+            <Show when={login().autofillOnPageLoad}>
+              <div class="detail-field detail-autofill">
+                <label>{t('detail.autofillOnPageLoad')}</label>
+                <div class="detail-bool on">
+                  <Check size={14} strokeWidth={2.25} /> {t('detail.on')}
+                </div>
+              </div>
+            </Show>
+
+            <Show when={login().passwordHistory.length > 0}>
+              <PasswordHistory
+                entries={login().passwordHistory}
+                onCopy={(value) => props.copy('Password', value)}
+                gate={guard}
+              />
+            </Show>
           </>
         )}
       </Show>
@@ -594,7 +641,14 @@ function Field(props: { label: string; value: string | null; onCopy: () => void;
     >
       <label>{props.label}</label>
       <div class="detail-value-row">
-        <span class="detail-value truncate copyable" title={t('common.copy')} onClick={() => props.onCopy()}>
+        <span
+          class="detail-value truncate copyable"
+          title={t('common.copy')}
+          onClick={(e) => {
+            copyPop(e.currentTarget);
+            props.onCopy();
+          }}
+        >
           {props.value}
         </span>
       </div>
@@ -627,7 +681,14 @@ function SecretField(props: {
     >
       <label>{props.label}</label>
       <div class="detail-value-row">
-        <code class="detail-value mono copyable" title={t('common.copy')} onClick={() => gate(props.onCopy)}>
+        <code
+          class="detail-value mono copyable"
+          title={t('common.copy')}
+          onClick={(e) => {
+            copyPop(e.currentTarget);
+            gate(props.onCopy);
+          }}
+        >
           {show() ? props.value : '••••••••••••'}
         </code>
         <button
@@ -638,6 +699,52 @@ function SecretField(props: {
           {show() ? <EyeOff size={14} /> : <Eye size={14} />}
         </button>
       </div>
+    </div>
+  );
+}
+
+// Collapsible viewer for a login's past passwords. Old passwords are secrets, so
+// the whole section sits behind the owner's reprompt `gate`: expanding it (and
+// copying any entry) runs through the gate, and nothing renders until expanded.
+function PasswordHistory(props: {
+  entries: PasswordHistoryEntry[];
+  onCopy: (value: string) => void;
+  gate: (action: () => void) => void;
+}) {
+  const [open, setOpen] = createSignal(false);
+  return (
+    <div class="detail-field detail-pwhist">
+      <button
+        type="button"
+        class="ghost detail-pwhist-toggle"
+        onClick={() => props.gate(() => setOpen((o) => !o))}
+      >
+        <History size={13} strokeWidth={1.75} />
+        {t('detail.passwordHistory')} ({props.entries.length})
+      </button>
+      <Show when={open()}>
+        <ul class="detail-pwhist-list">
+          <For each={props.entries}>
+            {(entry) => (
+              <li class="detail-pwhist-row">
+                <code
+                  class="detail-value mono copyable"
+                  title={t('common.copy')}
+                  onClick={(e) => {
+                    copyPop(e.currentTarget);
+                    props.gate(() => props.onCopy(entry.password));
+                  }}
+                >
+                  {entry.password}
+                </code>
+                <span class="muted detail-pwhist-date" title={absoluteDate(entry.lastUsedDate)}>
+                  {relativeFromNow(entry.lastUsedDate)}
+                </span>
+              </li>
+            )}
+          </For>
+        </ul>
+      </Show>
     </div>
   );
 }
@@ -682,7 +789,11 @@ function CardVisual(props: {
           class="card-visual-number mono"
           classList={{ copyable: !!number() }}
           title={number() ? t('common.copy') : undefined}
-          onClick={() => number() && gate(() => props.onCopy('Number', number()))}
+          onClick={(e) => {
+            if (!number()) return;
+            copyPop(e.currentTarget);
+            gate(() => props.onCopy('Number', number()));
+          }}
         >
           {numberText()}
         </span>
@@ -723,7 +834,10 @@ function CardVisual(props: {
               <span
                 class="card-visual-val copyable"
                 title={t('common.copy')}
-                onClick={() => gate(() => props.onCopy('Security code', props.card.code))}
+                onClick={(e) => {
+                  copyPop(e.currentTarget);
+                  gate(() => props.onCopy('Security code', props.card.code));
+                }}
               >
                 {revealed() ? props.card.code : '•••'}
               </span>
@@ -815,7 +929,10 @@ function CustomFieldView(props: {
                 <span
                   class="detail-value truncate copyable"
                   title={t('common.copy')}
-                  onClick={() => props.onCopy(label(), value)}
+                  onClick={(e) => {
+                    copyPop(e.currentTarget);
+                    props.onCopy(label(), value);
+                  }}
                 >
                   {value}
                 </span>

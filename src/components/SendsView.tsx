@@ -6,11 +6,19 @@
 // the vault so shares are managed alongside the vault.
 
 import { createSignal, For, onMount, Show } from 'solid-js';
-import { Copy, Plus, Send as SendIcon, Trash2, X } from 'lucide-solid';
+import { Paperclip, Plus, Send as SendIcon, Trash2, X } from 'lucide-solid';
 import { ipc } from '../lib/ipc.ts';
-import type { ConnectionSummary, SendCreateInput, SendCreated, SendExpiry, SendSummary } from '../lib/types.ts';
+import type {
+  ConnectionSummary,
+  SendCreateInput,
+  SendCreated,
+  SendExpiry,
+  SendFileCreateInput,
+  SendSummary,
+} from '../lib/types.ts';
 import { relativeUntil } from '../lib/dates.ts';
 import { copyWithAutoClear } from '../lib/clipboard.ts';
+import CopyButton from './CopyButton.tsx';
 import { t } from '../lib/i18n.ts';
 import { pushToast, toastError } from '../state/toast.ts';
 import { Select, Switch } from './settings/SettingsControls.tsx';
@@ -41,8 +49,12 @@ export function sendMeta(s: SendSummary, now: number = Date.now()): string {
   return parts.join(' · ');
 }
 
+/** Whether the draft shares text or a file. */
+export type SendKind = 'text' | 'file';
+
 /** Editable state of the create form. */
 export interface SendDraft {
+  kind: SendKind;
   accountEmail: string;
   name: string;
   text: string;
@@ -54,27 +66,48 @@ export interface SendDraft {
   hideEmail: boolean;
 }
 
-/** Map the create form's draft onto the IPC input: trim where a blank means
- *  "unset", coerce max-views to a positive integer or null (unlimited). Pure so
- *  the field→payload mapping is unit-tested without rendering the form. */
+/** Coerce the "max views" input to a positive integer, or null (unlimited). */
+function parseMaxViews(raw: string): number | null {
+  const trimmed = raw.trim();
+  const n = Number(trimmed);
+  return trimmed !== '' && Number.isInteger(n) && n > 0 ? n : null;
+}
+
+/** A whitespace-only password means "no password", not a blank one. */
+function normalizePassword(p: string): string | null {
+  return p.trim() === '' ? null : p;
+}
+
+/** Map the draft onto the text-Send IPC input. Pure so the field→payload mapping
+ *  is unit-tested without rendering the form. */
 export function buildSendInput(d: SendDraft): SendCreateInput {
-  const raw = d.maxViews.trim();
-  const n = Number(raw);
-  const maxAccessCount = raw !== '' && Number.isInteger(n) && n > 0 ? n : null;
   return {
     accountEmail: d.accountEmail,
     name: d.name.trim(),
     text: d.text,
     hidden: d.hidden,
     expiry: d.expiry,
-    maxAccessCount,
-    // Whitespace-only password means "no password", not a blank one.
-    password: d.password.trim() === '' ? null : d.password,
+    maxAccessCount: parseMaxViews(d.maxViews),
+    password: normalizePassword(d.password),
+    hideEmail: d.hideEmail,
+  };
+}
+
+/** Map the draft onto the file-Send IPC input (no text/hidden — the file itself
+ *  is chosen by a native picker in the backend). */
+export function buildFileSendInput(d: SendDraft): SendFileCreateInput {
+  return {
+    accountEmail: d.accountEmail,
+    name: d.name.trim(),
+    expiry: d.expiry,
+    maxAccessCount: parseMaxViews(d.maxViews),
+    password: normalizePassword(d.password),
     hideEmail: d.hideEmail,
   };
 }
 
 const emptyDraft = (accountEmail = ''): SendDraft => ({
+  kind: 'text',
   accountEmail,
   name: '',
   text: '',
@@ -139,7 +172,9 @@ export default function SendsView() {
 
   const canSubmit = () => {
     const d = draft();
-    return !!d && !!d.accountEmail && d.name.trim() !== '' && d.text !== '' && !saving();
+    if (!d || !d.accountEmail || d.name.trim() === '' || saving()) return false;
+    // A file Send picks its file at create time; a text Send needs its body now.
+    return d.kind === 'file' ? true : d.text !== '';
   };
 
   async function submit() {
@@ -147,7 +182,13 @@ export default function SendsView() {
     if (!d || !canSubmit()) return;
     setSaving(true);
     try {
-      const result = await ipc.createSend(buildSendInput(d));
+      const result =
+        d.kind === 'file'
+          ? await ipc.createFileSend(buildFileSendInput(d))
+          : await ipc.createSend(buildSendInput(d));
+      // A file Send returns null when the user cancels the picker — keep the form
+      // open so they can try again, no toast.
+      if (!result) return;
       setCreated(result);
       setDraft(null);
       pushToast('success', t('sends.created'));
@@ -210,12 +251,12 @@ export default function SendsView() {
               <p class="send-created-msg">{t('sends.linkReady')}</p>
               <div class="send-link-row">
                 <input class="send-link" type="text" readOnly value={c().url} />
-                <button
+                <CopyButton
                   class="primary"
-                  onClick={() => void copyWithAutoClear('URL', c().url)}
-                >
-                  <Copy size={13} strokeWidth={1.75} /> {t('sends.copyLink')}
-                </button>
+                  size={13}
+                  label={t('sends.copyLink')}
+                  onCopy={() => copyWithAutoClear('URL', c().url)}
+                />
               </div>
               <button class="send-done" onClick={closeForm}>
                 {t('sends.done')}
@@ -228,17 +269,31 @@ export default function SendsView() {
         <Show when={draft()}>
           {(d) => (
             <div class="send-form">
-              <Show when={accounts().length > 1}>
+              <div class="send-field-row">
                 <label class="send-field">
-                  <span>{t('sends.account')}</span>
+                  <span>{t('sends.typeLabel')}</span>
                   <Select
-                    value={d().accountEmail}
-                    options={accounts().map((a) => ({ value: a.email, label: a.email }))}
-                    onChange={(v) => patch('accountEmail', v)}
-                    ariaLabel={t('sends.account')}
+                    value={d().kind}
+                    options={[
+                      { value: 'text', label: t('sends.typeText') },
+                      { value: 'file', label: t('sends.typeFile') },
+                    ]}
+                    onChange={(v) => patch('kind', v)}
+                    ariaLabel={t('sends.typeLabel')}
                   />
                 </label>
-              </Show>
+                <Show when={accounts().length > 1}>
+                  <label class="send-field">
+                    <span>{t('sends.account')}</span>
+                    <Select
+                      value={d().accountEmail}
+                      options={accounts().map((a) => ({ value: a.email, label: a.email }))}
+                      onChange={(v) => patch('accountEmail', v)}
+                      ariaLabel={t('sends.account')}
+                    />
+                  </label>
+                </Show>
+              </div>
 
               <label class="send-field">
                 <span>{t('sends.nameLabel')}</span>
@@ -250,15 +305,24 @@ export default function SendsView() {
                 />
               </label>
 
-              <label class="send-field">
-                <span>{t('sends.textLabel')}</span>
-                <textarea
-                  rows={4}
-                  value={d().text}
-                  placeholder={t('sends.textPlaceholder')}
-                  onInput={(e) => patch('text', e.currentTarget.value)}
-                />
-              </label>
+              <Show when={d().kind === 'text'}>
+                <label class="send-field">
+                  <span>{t('sends.textLabel')}</span>
+                  <textarea
+                    rows={4}
+                    value={d().text}
+                    placeholder={t('sends.textPlaceholder')}
+                    onInput={(e) => patch('text', e.currentTarget.value)}
+                  />
+                </label>
+              </Show>
+
+              <Show when={d().kind === 'file'}>
+                <div class="send-file-note">
+                  <Paperclip size={15} strokeWidth={1.75} />
+                  <span class="muted">{t('sends.fileNote')}</span>
+                </div>
+              </Show>
 
               <div class="send-field-row">
                 <label class="send-field">
@@ -294,17 +358,19 @@ export default function SendsView() {
                 />
               </label>
 
-              <div class="send-toggle">
-                <Switch
-                  checked={d().hidden}
-                  onChange={(v) => patch('hidden', v)}
-                  label={t('sends.hideText')}
-                />
-                <span class="send-toggle-text">
-                  <span>{t('sends.hideText')}</span>
-                  <span class="muted">{t('sends.hideTextDesc')}</span>
-                </span>
-              </div>
+              <Show when={d().kind === 'text'}>
+                <div class="send-toggle">
+                  <Switch
+                    checked={d().hidden}
+                    onChange={(v) => patch('hidden', v)}
+                    label={t('sends.hideText')}
+                  />
+                  <span class="send-toggle-text">
+                    <span>{t('sends.hideText')}</span>
+                    <span class="muted">{t('sends.hideTextDesc')}</span>
+                  </span>
+                </div>
+              </Show>
 
               <div class="send-toggle">
                 <Switch

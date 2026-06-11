@@ -8,12 +8,40 @@
 // passes them explicitly (or keeps a thin local wrapper with its own defaults).
 
 import type {
+  ConnectionSummary,
   ItemAudit,
   ItemDetail,
+  LoginDetail,
   SendSummary,
   VaultHealthReport,
   VaultItem,
 } from '../lib/types.ts';
+
+export function makeConnection(
+  over: Partial<ConnectionSummary> & { email: string },
+): ConnectionSummary {
+  return {
+    serverLabel: 'Test server',
+    server: { region: 'us' },
+    unlocked: true,
+    storeCredentials: true,
+    ...over,
+  };
+}
+
+export function makeLoginDetail(over: Partial<LoginDetail> = {}): LoginDetail {
+  return {
+    username: null,
+    password: null,
+    totp: null,
+    uris: [],
+    hasTotp: false,
+    passwordRevisionDate: null,
+    autofillOnPageLoad: null,
+    passwordHistory: [],
+    ...over,
+  };
+}
 
 export function makeItem(over: Partial<VaultItem> & { id: string; name: string }): VaultItem {
   return {
@@ -41,7 +69,7 @@ export function makeDetail(over: Partial<ItemDetail> & { id: string; name: strin
     favorite: false,
     reprompt: false,
     notes: null,
-    login: { username: null, password: null, totp: null, uris: [], hasTotp: false },
+    login: makeLoginDetail(),
     card: null,
     identity: null,
     sshKey: null,

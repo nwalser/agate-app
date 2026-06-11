@@ -2,11 +2,13 @@
 //! (`VaultItem` list rows and `ItemDetail`), including the `CustomField`
 //! construction. No SDK calls and no state — just shape conversion.
 
-use bitwarden_vault::{CipherRepromptType, CipherType, CipherView, FieldType};
+use bitwarden_vault::{
+    CipherRepromptType, CipherType, CipherView, FieldType, PasswordHistoryView,
+};
 
 use crate::dto::{
     Attachment, CustomField, CustomFieldType, ItemDetail, ItemType, LoginDetail, LoginUri,
-    VaultItem,
+    PasswordHistoryEntry, VaultItem,
 };
 
 /// Map the SDK field type to our closed `CustomFieldType`, preserving the exact
@@ -18,6 +20,22 @@ fn field_type_to_dto(t: FieldType) -> CustomFieldType {
         FieldType::Linked => CustomFieldType::Linked,
         _ => CustomFieldType::Text,
     }
+}
+
+/// Map the decrypted password-history views into the frontend DTO (RFC 3339
+/// dates). Pure so the date formatting + ordering are unit-tested without a vault.
+fn password_history_to_dto(history: Option<&Vec<PasswordHistoryView>>) -> Vec<PasswordHistoryEntry> {
+    history
+        .map(|entries| {
+            entries
+                .iter()
+                .map(|e| PasswordHistoryEntry {
+                    password: e.password.clone(),
+                    last_used_date: e.last_used_date.to_rfc3339(),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 pub(super) fn cipher_type_to_dto(t: CipherType) -> ItemType {
@@ -81,6 +99,11 @@ pub fn view_to_detail(view: &CipherView, account_email: &str, account_label: &st
             })
             .unwrap_or_default(),
         has_totp: l.totp.as_ref().map(|t| !t.is_empty()).unwrap_or(false),
+        password_revision_date: l.password_revision_date.map(|d| d.to_rfc3339()),
+        autofill_on_page_load: l.autofill_on_page_load,
+        // Password history lives on the cipher, not the login sub-view; surface it
+        // under the login so the pane shows it next to the current password.
+        password_history: password_history_to_dto(view.password_history.as_ref()),
     });
 
     let card = view
@@ -152,5 +175,33 @@ pub fn view_to_detail(view: &CipherView, account_email: &str, account_label: &st
         // Passkeys are decrypted separately (needs a KeyStoreContext on the view);
         // `item_detail` fills this in. Defaults to none here.
         passkeys: Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{DateTime, Utc};
+
+    fn at(iso: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(iso).expect("valid rfc3339").with_timezone(&Utc)
+    }
+
+    #[test]
+    fn password_history_maps_value_and_rfc3339_date() {
+        let history = vec![
+            PasswordHistoryView { password: "old1".into(), last_used_date: at("2026-01-02T03:04:05Z") },
+            PasswordHistoryView { password: "old2".into(), last_used_date: at("2025-06-01T00:00:00Z") },
+        ];
+        let out = password_history_to_dto(Some(&history));
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].password, "old1");
+        assert_eq!(out[0].last_used_date, "2026-01-02T03:04:05+00:00");
+        assert_eq!(out[1].password, "old2");
+    }
+
+    #[test]
+    fn password_history_none_is_empty() {
+        assert!(password_history_to_dto(None).is_empty());
     }
 }

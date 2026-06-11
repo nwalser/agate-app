@@ -66,6 +66,18 @@ pub struct LoginUri {
     pub match_type: Option<u8>,
 }
 
+/// One past password (with when it was replaced) for the login's history viewer.
+/// The password VALUE is a secret — the pane masks/reprompt-gates it like any
+/// password before revealing.
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(specta::Type))]
+#[serde(rename_all = "camelCase")]
+pub struct PasswordHistoryEntry {
+    pub password: String,
+    /// When this password was replaced (RFC 3339).
+    pub last_used_date: String,
+}
+
 /// Login-type detail.
 #[derive(Debug, Clone, Serialize, Default)]
 #[cfg_attr(test, derive(specta::Type))]
@@ -77,6 +89,13 @@ pub struct LoginDetail {
     pub totp: Option<String>,
     pub uris: Vec<LoginUri>,
     pub has_totp: bool,
+    /// When the password was last changed (RFC 3339). None if never recorded.
+    pub password_revision_date: Option<String>,
+    /// Whether autofill-on-page-load is enabled (None = inherit the global default).
+    pub autofill_on_page_load: Option<bool>,
+    /// Past passwords (cipher-level in Bitwarden; surfaced here under the login for
+    /// the history viewer). Empty when none stored.
+    pub password_history: Vec<PasswordHistoryEntry>,
 }
 
 /// Closed set of custom-field kinds on a decrypted item (backend → frontend).
@@ -239,6 +258,25 @@ pub struct SendCreateInput {
     pub hide_email: bool,
 }
 
+/// Create-a-file-Send input (frontend → backend). The file itself is chosen via a
+/// native picker in the backend (no path crosses IPC), so this carries only the
+/// Send's settings — the same options as a text Send minus the text body.
+#[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(specta::Type))]
+#[serde(rename_all = "camelCase")]
+pub struct SendFileCreateInput {
+    /// Which unlocked connection owns the new Send.
+    pub account_email: String,
+    pub name: String,
+    pub expiry: SendExpiry,
+    /// Cap on how many times the Send can be opened (None = unlimited).
+    pub max_access_count: Option<u32>,
+    /// Optional access password. SECRET — never logged.
+    pub password: Option<String>,
+    /// Hide the sender's email from recipients.
+    pub hide_email: bool,
+}
+
 /// Result of creating a Send: the public share link to hand out, plus the identity
 /// the list needs to show it.
 #[derive(Debug, Clone, Serialize)]
@@ -300,6 +338,9 @@ pub struct LoginInput {
     // No serde(default): an edit payload missing uris must be REJECTED, not
     // silently treated as wipe every URI (same for favorite/reprompt/fields).
     pub uris: Vec<UriInput>,
+    /// Autofill-on-page-load toggle (None = inherit the global default). Optional
+    /// so an older payload that omits it round-trips to None.
+    pub autofill_on_page_load: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

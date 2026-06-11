@@ -59,6 +59,7 @@ import { useBulkActions } from '../hooks/useBulkActions.ts';
 import { useVaultCommands } from '../hooks/useVaultCommands.ts';
 import ItemEditor from '../components/ItemEditor.tsx';
 import SecurityCenter from '../components/SecurityCenter.tsx';
+import CleanupCenter from '../components/CleanupCenter.tsx';
 import SendsView from '../components/SendsView.tsx';
 import SyncStatus from '../components/SyncStatus.tsx';
 import CommandPalette from '../components/CommandPalette.tsx';
@@ -541,6 +542,9 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
               onOpenItem={openItem}
               onViewAtRisk={() => selectFilter({ kind: 'atRisk' })}
             />
+          </Match>
+          <Match when={view() === 'cleanup'}>
+            <CleanupCenter onOpenItem={openItem} />
           </Match>
           <Match when={view() === 'sync'}>
             <SyncStatus

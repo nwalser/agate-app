@@ -32,11 +32,17 @@ export type {
   AccountBreaches,
   EmailError,
   DarkWebReport,
+  // ---- vault cleanup (link health) ----
+  LinkStatusKind,
+  LinkStatus,
+  LinkHealthItem,
+  LinkCheckReport,
   // ---- vault read shapes ----
   ItemType,
   VaultItem,
   LoginUri,
   LoginDetail,
+  PasswordHistoryEntry,
   CustomField,
   ItemDetail,
   PasskeyCredential,
@@ -44,6 +50,7 @@ export type {
   SendSummary,
   SendExpiry,
   SendCreateInput,
+  SendFileCreateInput,
   SendCreated,
   Collection,
   TotpCode,
@@ -66,6 +73,12 @@ export type {
   AiGrant,
   AiServerStatus,
   AiAuditEntry,
+  // ---- autofill (watch other apps' login fields + fill the matching login) ----
+  AutofillMode,
+  AutofillContext,
+  AutofillCandidate,
+  AutofillPending,
+  AutofillStatus,
   // ---- typed backend error ----
   ErrorKind,
   AgateError,

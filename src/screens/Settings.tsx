@@ -4,9 +4,10 @@
 // Reached from the sidebar.
 
 import { createMemo, createSignal, For, Match, Show, Switch } from 'solid-js';
-import { ArrowLeft, Bot, DownloadCloud, FileDown, Info, LayoutTemplate, Palette, PanelLeft, Search, ShieldAlert, ShieldCheck, Users } from 'lucide-solid';
+import { ArrowLeft, Bot, DownloadCloud, FileDown, Info, LayoutTemplate, Palette, PanelLeft, Search, ShieldAlert, ShieldCheck, Users, Wand2 } from 'lucide-solid';
 import AppearanceSettings from './settings/AppearanceSettings.tsx';
 import AiAccessSettings from './settings/AiAccessSettings.tsx';
+import AutofillSettings from './settings/AutofillSettings.tsx';
 import ConnectionsSettings from './settings/ConnectionsSettings.tsx';
 import UnlockSettings from './settings/UnlockSettings.tsx';
 import AuditSettings from './settings/AuditSettings.tsx';
@@ -29,6 +30,7 @@ export type Page =
   | 'sidebar'
   | 'templates'
   | 'aiAccess'
+  | 'autofill'
   | 'updates';
 
 // Settings split into two groups: `vault` = vault/connection-scoped pages (the
@@ -53,6 +55,7 @@ const PAGES: { id: Page; group: SettingsGroup; labelKey: string; icon: typeof In
   { id: 'appearance', group: 'global', labelKey: 'nav.appearance', icon: Palette, keywords: 'theme dark light density rows color language' },
   { id: 'sidebar', group: 'global', labelKey: 'nav.sidebar', icon: PanelLeft, keywords: 'rail entries order saved queries' },
   { id: 'templates', group: 'global', labelKey: 'nav.templates', icon: LayoutTemplate, keywords: 'template custom field new item preset skeleton reusable' },
+  { id: 'autofill', group: 'global', labelKey: 'nav.autofill', icon: Wand2, keywords: 'autofill auto type fill login password field watch hotkey window app webview oauth outlook native inject' },
   { id: 'updates', group: 'global', labelKey: 'nav.updates', icon: DownloadCloud, keywords: 'version auto update install release about license credits' },
 ];
 
@@ -156,6 +159,9 @@ export default function Settings(props: { onBack: () => void }) {
             </Match>
             <Match when={page() === 'aiAccess'}>
               <AiAccessSettings />
+            </Match>
+            <Match when={page() === 'autofill'}>
+              <AutofillSettings />
             </Match>
             <Match when={page() === 'updates'}>
               <UpdatesSettings />

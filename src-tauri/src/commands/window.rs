@@ -40,6 +40,17 @@ pub fn hide_tray_window(window: tauri::WebviewWindow) {
     }
 }
 
+/// Re-show + refocus the tray popup after a focus-stealing flow (the Windows
+/// Hello consent dialog) auto-hid it via the focus-loss handler. Scoped to the
+/// calling window and a no-op for any window other than the popup.
+#[tauri::command]
+pub fn show_tray_window(window: tauri::WebviewWindow) {
+    if window.label() == "tray" {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
 /// Whether closing the main window keeps Agate running in the tray.
 #[tauri::command]
 pub async fn get_close_to_tray(state: State<'_>) -> AgateResult<bool> {
@@ -67,4 +78,38 @@ pub fn set_autostart(app: tauri::AppHandle, enabled: bool) -> AgateResult<()> {
     let manager = app.autolaunch();
     let result = if enabled { manager.enable() } else { manager.disable() };
     result.map_err(|e| AgateError::internal(format!("Could not change autostart: {e}")))
+}
+
+/// Whether an autostart launch shows only the tray icon (the main window
+/// stays hidden until summoned from the tray).
+#[tauri::command]
+pub async fn get_start_in_tray(state: State<'_>) -> AgateResult<bool> {
+    Ok(state.config.lock().await.start_in_tray)
+}
+
+/// Enable or disable tray-only autostart. Config write first (rollback-able);
+/// then, best-effort, refresh the OS autostart registration so it carries the
+/// `--autostart` flag even if it was created before the flag existed — without
+/// the flag a login launch is indistinguishable from a manual one and the
+/// setting would silently never apply.
+#[tauri::command]
+pub async fn set_start_in_tray(
+    app: tauri::AppHandle,
+    state: State<'_>,
+    enabled: bool,
+) -> AgateResult<()> {
+    state.update_config(|c| c.start_in_tray = enabled).await?;
+    if enabled {
+        let manager = app.autolaunch();
+        match manager.is_enabled() {
+            Ok(true) => {
+                if let Err(e) = manager.enable() {
+                    log::warn!("could not refresh the autostart registration: {e}");
+                }
+            }
+            Ok(false) => {} // autostart off — nothing to refresh
+            Err(e) => log::warn!("could not read the autostart state: {e}"),
+        }
+    }
+    Ok(())
 }

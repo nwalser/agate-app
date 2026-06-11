@@ -4,11 +4,12 @@
 // CSS classes (the parent imports ItemEditor.css), so it must render inside that
 // scope to pick them up.
 import { createSignal, For, Show } from 'solid-js';
-import { Copy, Dices, History, Trash2 } from 'lucide-solid';
-import { writeText } from '@tauri-apps/plugin-clipboard-manager';
+import { Dices, History, Trash2 } from 'lucide-solid';
 import { ipc } from '../lib/ipc.ts';
 import { t } from '../lib/i18n.ts';
 import { toastError } from '../state/toast.ts';
+import { copyWithAutoClear } from '../lib/clipboard.ts';
+import CopyButton from './CopyButton.tsx';
 import {
   clearGeneratorHistory,
   generatorHistory,
@@ -62,12 +63,10 @@ export default function PasswordGenerator(props: {
   }
 
   // Copy a past value to the clipboard without disturbing the edited field.
+  // Routed through the single copy path (feedback + auto-clear); these are
+  // generated passwords, so they clear like any other secret.
   async function copyEntry(value: string) {
-    try {
-      await writeText(value);
-    } catch (err) {
-      toastError(err);
-    }
+    await copyWithAutoClear('Password', value);
   }
 
   return (
@@ -216,9 +215,7 @@ export default function PasswordGenerator(props: {
                     >
                       {entry.value}
                     </button>
-                    <button class="ghost icon-btn" title={t('common.copy')} onClick={() => void copyEntry(entry.value)}>
-                      <Copy size={12} strokeWidth={1.75} />
-                    </button>
+                    <CopyButton class="ghost icon-btn" size={12} onCopy={() => copyEntry(entry.value)} />
                   </div>
                 )}
               </For>

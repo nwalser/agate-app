@@ -63,6 +63,7 @@ fn build_login(i: &LoginInput) -> AgateResult<Value> {
         "password": i.password,
         "totp": i.totp,
         "uris": uris,
+        "autofillOnPageLoad": i.autofill_on_page_load,
     }))
 }
 
@@ -236,10 +237,12 @@ pub async fn save_item(state: &AppState, account_email: &str, input: ItemInput) 
             set_type_payload(&mut v, &input)?;
 
             // Restore login fields the editor form can't carry (passkeys, password
-            // revision date, autofill flag, and a TOTP the editor couldn't show).
+            // revision date, and a TOTP the editor couldn't show). NOT
+            // autofillOnPageLoad — the editor now owns that toggle, so `build_login`
+            // already wrote the user's value and we must not clobber it from `prev`.
             if matches!(input.item_type, ItemType::Login) {
                 if let (Some(prev), Some(new_login)) = (prev_login.as_ref(), v.get_mut("login")) {
-                    for k in ["fido2Credentials", "passwordRevisionDate", "autofillOnPageLoad"] {
+                    for k in ["fido2Credentials", "passwordRevisionDate"] {
                         if let Some(val) = prev.get(k) {
                             new_login[k] = val.clone();
                         }
@@ -339,7 +342,31 @@ pub async fn restore_items(state: &AppState, account_email: &str, ids: Vec<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dto::FieldInput;
+    use crate::dto::{FieldInput, UriInput};
+
+    /// `build_login` must emit `autofillOnPageLoad` so the editor's toggle round-
+    /// trips. Regression guard: it was previously dropped (only restored from the
+    /// prior cipher on edit), so a create or a toggle change never persisted.
+    #[test]
+    fn build_login_carries_autofill_on_page_load() {
+        let on = LoginInput {
+            username: Some("u".into()),
+            password: None,
+            totp: None,
+            uris: vec![UriInput { uri: Some("https://x".into()), match_type: None }],
+            autofill_on_page_load: Some(true),
+        };
+        assert_eq!(build_login(&on).unwrap()["autofillOnPageLoad"], json!(true));
+
+        let unset = LoginInput {
+            username: None,
+            password: None,
+            totp: None,
+            uris: Vec::new(),
+            autofill_on_page_load: None,
+        };
+        assert_eq!(build_login(&unset).unwrap()["autofillOnPageLoad"], Value::Null);
+    }
 
     fn login_input() -> ItemInput {
         ItemInput {

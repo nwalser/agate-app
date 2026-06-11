@@ -13,14 +13,20 @@ import { ToggleRow } from '../../components/settings/SettingsControls.tsx';
 export default function StartupSettings() {
   const [autostart, setAutostart] = createSignal(false);
   const [closeToTray, setCloseToTray] = createSignal(false);
+  const [startInTray, setStartInTray] = createSignal(false);
   const [busy, setBusy] = createSignal(false);
 
   onMount(() => {
     void (async () => {
       try {
-        const [auto, tray] = await Promise.all([ipc.getAutostart(), ipc.getCloseToTray()]);
+        const [auto, tray, hidden] = await Promise.all([
+          ipc.getAutostart(),
+          ipc.getCloseToTray(),
+          ipc.getStartInTray(),
+        ]);
         setAutostart(auto);
         setCloseToTray(tray);
+        setStartInTray(hidden);
       } catch (err) {
         toastError(err);
       }
@@ -53,6 +59,15 @@ export default function StartupSettings() {
         checked={autostart()}
         disabled={busy()}
         onChange={() => void toggle(autostart, ipc.setAutostart, setAutostart)}
+      />
+      {/* Only meaningful for login launches, so it stays disabled until
+          launch-at-login is on; a manual launch always shows the window. */}
+      <ToggleRow
+        label={t('startup.startInTray')}
+        desc={t('startup.startInTrayDesc')}
+        checked={startInTray()}
+        disabled={busy() || !autostart()}
+        onChange={() => void toggle(startInTray, ipc.setStartInTray, setStartInTray)}
       />
       <ToggleRow
         label={t('startup.closeToTray')}

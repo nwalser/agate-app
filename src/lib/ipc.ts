@@ -7,6 +7,9 @@ import type {
   AiAuditEntry,
   AiGrant,
   AiServerStatus,
+  AutofillMode,
+  AutofillPending,
+  AutofillStatus,
   BreachRecord,
   Collection,
   ConnectionSummary,
@@ -16,9 +19,11 @@ import type {
   Folder,
   SendSummary,
   SendCreateInput,
+  SendFileCreateInput,
   SendCreated,
   ItemDetail,
   ItemInput,
+  LinkCheckReport,
   LoginResult,
   PassphraseGenOptions,
   PasswordGenOptions,
@@ -84,6 +89,10 @@ export const ipc = {
 
   /** Hide the tray quick-access popup (Escape key; no-op elsewhere). */
   hideTrayWindow: (): Promise<void> => invoke('hide_tray_window'),
+
+  /** Re-show + refocus the tray popup after a focus-stealing flow (the Windows
+   *  Hello consent dialog) auto-hid it. No-op outside the popup window. */
+  showTrayWindow: (): Promise<void> => invoke('show_tray_window'),
 
   setServerConfig: (server: ServerConfig): Promise<void> =>
     invoke('set_server_config', { server }),
@@ -181,6 +190,11 @@ export const ipc = {
   createSend: (input: SendCreateInput): Promise<SendCreated> =>
     invoke('create_send', { input }),
 
+  /** Create a file Send: opens a native picker, encrypts + uploads the chosen
+   *  file, and returns its share link — or null if the user cancels the picker. */
+  createFileSend: (input: SendFileCreateInput): Promise<SendCreated | null> =>
+    invoke('create_file_send', { input }),
+
   /** Revoke (delete) one Send. */
   deleteSend: (accountEmail: string, sendId: string): Promise<void> =>
     invoke('delete_send', { accountEmail, sendId }),
@@ -208,6 +222,17 @@ export const ipc = {
 
   generatePassword: (options: PasswordGenOptions): Promise<string> =>
     invoke('generate_password', { options }),
+
+  /** How many existing logins (across every unlocked vault) already use this
+   *  password — the tray add-form's reuse callout. Count only, never which. */
+  passwordInUse: (password: string): Promise<number> =>
+    invoke('password_in_use', { password }),
+
+  /** zxcvbn strength score (0–4) for a candidate password — the tray add-form's
+   *  live strength meter. `context` is the draft's non-secret fields (username /
+   *  website / name) so a password equal to one of them scores low. */
+  passwordStrength: (password: string, context: string[]): Promise<number> =>
+    invoke('password_strength', { password, context }),
 
   generatePassphrase: (options: PassphraseGenOptions): Promise<string> =>
     invoke('generate_passphrase', { options }),
@@ -267,6 +292,11 @@ export const ipc = {
 
   setAutostart: (enabled: boolean): Promise<void> => invoke('set_autostart', { enabled }),
 
+  /** Whether an autostart launch opens tray-icon-only (main window hidden). */
+  getStartInTray: (): Promise<boolean> => invoke('get_start_in_tray'),
+
+  setStartInTray: (enabled: boolean): Promise<void> => invoke('set_start_in_tray', { enabled }),
+
   // ---- security audit ----
 
   // Always sends the current audit config so every audit surface (Security
@@ -276,6 +306,12 @@ export const ipc = {
     invoke('audit_offline', { config: auditConfigPayload() }),
 
   auditExposed: (): Promise<ExposedResult[]> => invoke('audit_exposed'),
+
+  // ---- vault cleanup (link health) ----
+
+  // On-demand only: pings every login URL and flags the dead ones. Never runs in
+  // the background (it reveals the vault's domain list to every site it probes).
+  linkCheckVault: (): Promise<LinkCheckReport> => invoke('link_check_vault'),
 
   // ---- dark-web / breach monitor ----
 
@@ -328,4 +364,23 @@ export const ipc = {
   aiClearGrants: (): Promise<void> => invoke('ai_clear_grants'),
 
   aiAuditLog: (): Promise<AiAuditEntry[]> => invoke('ai_audit_log'),
+
+  // ---- autofill (watch other apps' login fields + fill the matching login) ----
+
+  autofillStatus: (): Promise<AutofillStatus> => invoke('autofill_status'),
+
+  /** Switch the detection mode (off / hotkey / always-watch). Persists + (re)starts
+   *  or stops the platform watcher. */
+  autofillSetMode: (mode: AutofillMode): Promise<void> => invoke('autofill_set_mode', { mode }),
+
+  /** The current detection awaiting a pick (context + ranked candidates), or null. */
+  autofillPending: (): Promise<AutofillPending | null> => invoke('autofill_pending'),
+
+  /** Fill the chosen login into the detected target; the backend validates the
+   *  one-shot token, injects the secret, and hides the popup. */
+  autofillFill: (token: string, accountEmail: string, itemId: string): Promise<void> =>
+    invoke('autofill_fill', { token, accountEmail, itemId }),
+
+  /** Discard the pending detection without filling (popup dismissed). */
+  autofillDismiss: (): Promise<void> => invoke('autofill_dismiss'),
 };

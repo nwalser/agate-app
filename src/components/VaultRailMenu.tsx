@@ -181,6 +181,17 @@ export default function VaultRailMenu(props: {
         />
       );
     }
+    if (id === 'cleanup') {
+      return (
+        <FilterButton
+          label={meta.label}
+          icon={meta.icon}
+          active={props.view === 'cleanup'}
+          onClick={() => props.setView('cleanup')}
+          onContextMenu={onCtx}
+        />
+      );
+    }
     if (id === 'atRisk') {
       // A filter view (not the Security center), carrying the same at-risk badge.
       const f = builtinFilter(id);

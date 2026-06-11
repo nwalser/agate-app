@@ -2,20 +2,31 @@
 //!
 //! Left-click toggles the popup (the second window, label `tray`, declared in
 //! `tauri.conf.json`) placed next to the click and clamped onto the monitor;
-//! the tray menu keeps explicit Show / Quit entries. The popup hides on focus
-//! loss and close (see `on_window_event` in `lib.rs`), and its webview re-reads
-//! session state every time it shows, so it never renders a stale unlocked
-//! list after a lock.
+//! the tray menu keeps explicit Show / Quit entries. The popup is pinned: it
+//! stays always-on-top and never hides on focus loss — only the tray icon
+//! (toggle), Escape, or a close request dismiss it (see `on_window_event` in
+//! `lib.rs`). Because it can stay visible across a lock/unlock in the main
+//! window, the command layer broadcasts `agate://session-changed` (see
+//! `commands/mod.rs`) and the popup re-reads session state on it (plus on
+//! every show), so it never renders a stale unlocked list after a lock.
 //!
 //! Linux caveat: appindicator trays deliver no left-click events, so only the
 //! menu works there — the popup is effectively Windows/macOS.
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 /// Gap between the popup and the click point / monitor edges (physical px).
 const POPUP_MARGIN: i32 = 8;
+
+/// Emitted to the popup the instant it is shown, so it re-reads session + items
+/// deterministically. The popup also refreshes on the OS focus event, but
+/// WebView2 doesn't reliably deliver that after a hide()/show() cycle (a popup
+/// can be shown without taking foreground), which left it rendering stale state —
+/// e.g. still "locked" after the vault was unlocked in the main window. This
+/// signal does not depend on focus, so the refresh always fires on show.
+const TRAY_SHOWN_EVENT: &str = "agate://tray-shown";
 
 /// Bring the main window to the front (tray menu "Show", a second app launch,
 /// and the popup's "Open Agate" button).
@@ -72,14 +83,57 @@ fn toggle_popup(app: &tauri::AppHandle, cursor: tauri::PhysicalPosition<f64>) {
         reveal_main(app);
         return;
     };
+    // A tray-icon open/close is never an autofill flow — drop any pending
+    // detection so a stale one can't render the popup in fill mode here.
+    crate::autofill::clear_pending_for(app);
     if popup.is_visible().unwrap_or(false) {
         let _ = popup.hide();
         return;
     }
+    place_and_show(app, &popup, (cursor.x, cursor.y));
+}
+
+/// Show the popup next to the tray icon, unconditionally (never a toggle). Used by
+/// autofill detection so the picker appears exactly where the popup always opens —
+/// reusing the same work-area clamping as a tray click.
+pub fn show_popup_near_tray(app: &tauri::AppHandle) {
+    let Some(popup) = app.get_webview_window("tray") else {
+        log::warn!("tray popup window missing; revealing the main window instead");
+        reveal_main(app);
+        return;
+    };
+    place_and_show(app, &popup, tray_anchor_point(app, &popup));
+}
+
+/// The physical screen point to open the popup at: the centre of the tray icon
+/// when its rectangle is known, else the bottom-right corner of the primary work
+/// area (where the Windows tray lives). `place_and_show` clamps it onto the
+/// monitor and opens upward, so either way the popup hugs the tray.
+fn tray_anchor_point(app: &tauri::AppHandle, popup: &tauri::WebviewWindow) -> (f64, f64) {
+    if let Some(tray) = app.tray_by_id("main-tray") {
+        if let Ok(Some(rect)) = tray.rect() {
+            let scale = popup.scale_factor().unwrap_or(1.0);
+            let pos = rect.position.to_physical::<f64>(scale);
+            let size = rect.size.to_physical::<f64>(scale);
+            return (pos.x + size.width / 2.0, pos.y + size.height / 2.0);
+        }
+    }
+    if let Ok(Some(monitor)) = popup.primary_monitor() {
+        let area = monitor.work_area();
+        return (
+            (area.position.x + area.size.width as i32) as f64,
+            (area.position.y + area.size.height as i32) as f64,
+        );
+    }
+    (0.0, 0.0)
+}
+
+/// Clamp the popup onto the work area around `cursor` and show + focus it.
+fn place_and_show(app: &tauri::AppHandle, popup: &tauri::WebviewWindow, cursor: (f64, f64)) {
     // Best-effort placement: without monitor info the popup still opens, just
     // wherever the OS last left it.
     let monitor = app
-        .monitor_from_point(cursor.x, cursor.y)
+        .monitor_from_point(cursor.0, cursor.1)
         .ok()
         .flatten()
         .or_else(|| popup.primary_monitor().ok().flatten());
@@ -88,7 +142,7 @@ fn toggle_popup(app: &tauri::AppHandle, cursor: tauri::PhysicalPosition<f64>) {
         // it is what keeps the popup from overlapping the taskbar.
         let area = monitor.work_area();
         let (x, y) = popup_position(
-            (cursor.x, cursor.y),
+            cursor,
             (area.position.x, area.position.y),
             (area.size.width, area.size.height),
             (size.width, size.height),
@@ -97,6 +151,9 @@ fn toggle_popup(app: &tauri::AppHandle, cursor: tauri::PhysicalPosition<f64>) {
     }
     let _ = popup.show();
     let _ = popup.set_focus();
+    // Tell the now-visible popup to re-read session state, independent of whether
+    // the OS delivered a focus event (see TRAY_SHOWN_EVENT). Best-effort.
+    let _ = app.emit_to("tray", TRAY_SHOWN_EVENT, ());
 }
 
 /// Top-left corner for the popup so it hugs the click point and stays fully

@@ -266,7 +266,21 @@ pub(crate) async fn finish_unlock(
             session.active_email = session.connections.keys().next().cloned();
         }
     }
+    sync_freshly_unlocked(state).await;
     Ok(outcomes)
+}
+
+/// Sync the connections that just logged in, so every surface (main window AND the
+/// tray popup) shows a populated, decrypted list the instant unlock finishes —
+/// login alone leaves the cipher cache empty, which is why a tray unlock used to
+/// open onto nothing. Best-effort: connections still owing 2FA aren't in the
+/// session yet (skipped, then synced by `unlock_connection_2fa`); if nothing is
+/// live the sync reports "not authenticated" and a transient failure just retries
+/// on the next background tick — neither must fail the unlock.
+async fn sync_freshly_unlocked(state: &AppState) {
+    if let Err(e) = crate::vault::sync(state, false).await {
+        log::warn!("post-unlock sync failed: {}", e.message);
+    }
 }
 
 enum UnlockOneError {
@@ -317,11 +331,16 @@ pub async fn unlock_connection_2fa(
     let pw = Zeroizing::new(conn.master_password.clone());
     match auth::login_password(state, &conn.server, &conn.email, pw, Some(two_factor)).await? {
         LoginOutcome::Success(client) => {
-            let mut session = state.session.lock().await;
-            session.connections.insert(email.clone(), LiveConnection::new(client));
-            if session.active_email.is_none() {
-                session.active_email = Some(email);
+            {
+                let mut session = state.session.lock().await;
+                session.connections.insert(email.clone(), LiveConnection::new(client));
+                if session.active_email.is_none() {
+                    session.active_email = Some(email);
+                }
             }
+            // The connection only just came online — sync it so its items appear
+            // alongside the ones unlocked in the first pass (best-effort).
+            sync_freshly_unlocked(state).await;
             Ok(())
         }
         LoginOutcome::TwoFactorRequired(_) => Err(AgateError::new(

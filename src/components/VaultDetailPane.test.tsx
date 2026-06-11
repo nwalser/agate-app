@@ -6,18 +6,18 @@
 import { cleanup, fireEvent, render } from '@solidjs/testing-library';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import VaultDetailPane from './VaultDetailPane.tsx';
-import { makeDetail } from '../testing/factories.ts';
+import { makeDetail, makeLoginDetail } from '../testing/factories.ts';
 import type { ItemDetail, LoginDetail, TotpCode } from '../lib/types.ts';
 
-// LoginDetail has no shared factory (sub-shape of ItemDetail) — stays local.
-const loginDetail = (over: Partial<LoginDetail> = {}): LoginDetail => ({
-  username: 'alice@example.com',
-  password: 'hunter2',
-  totp: null,
-  uris: [{ uri: 'https://example.com', matchType: null }],
-  hasTotp: false,
-  ...over,
-});
+// Pane-local defaults (username/password/uri populated) layered on the shared
+// LoginDetail factory so new DTO fields land in one place (factories.ts).
+const loginDetail = (over: Partial<LoginDetail> = {}): LoginDetail =>
+  makeLoginDetail({
+    username: 'alice@example.com',
+    password: 'hunter2',
+    uris: [{ uri: 'https://example.com', matchType: null }],
+    ...over,
+  });
 
 const detail = (over: Partial<ItemDetail> = {}): ItemDetail =>
   makeDetail({
@@ -132,5 +132,74 @@ describe('VaultDetailPane — copy affordance', () => {
     expect(code.textContent).not.toContain('123456');
     fireEvent.click(code);
     expect(copy).not.toHaveBeenCalled();
+  });
+});
+
+describe('VaultDetailPane — surfaced login metadata', () => {
+  afterEach(cleanup);
+
+  it('shows when the password was last changed', () => {
+    renderPane({ login: loginDetail({ passwordRevisionDate: '2024-03-04T05:06:07Z' }) });
+    expect(document.querySelector('.detail-pw-updated')).toBeTruthy();
+  });
+
+  it('omits the password-updated row when no revision date', () => {
+    renderPane({ login: loginDetail({ passwordRevisionDate: null }) });
+    expect(document.querySelector('.detail-pw-updated')).toBeNull();
+  });
+
+  it('shows the autofill-on-page-load chip only when enabled', () => {
+    renderPane({ login: loginDetail({ autofillOnPageLoad: true }) });
+    expect(document.querySelector('.detail-autofill')).toBeTruthy();
+
+    cleanup();
+    renderPane({ login: loginDetail({ autofillOnPageLoad: null }) });
+    expect(document.querySelector('.detail-autofill')).toBeNull();
+  });
+
+  it('hides password-history entries until the section is expanded', () => {
+    renderPane({
+      login: loginDetail({
+        passwordHistory: [
+          { password: 'oldsecret1', lastUsedDate: '2024-01-01T00:00:00Z' },
+          { password: 'oldsecret2', lastUsedDate: '2023-01-01T00:00:00Z' },
+        ],
+      }),
+    });
+    const toggle = document.querySelector<HTMLButtonElement>('.detail-pwhist-toggle')!;
+    expect(toggle).toBeTruthy();
+    // Count in the toggle, but the secrets are not in the DOM yet.
+    expect(toggle.textContent).toContain('2');
+    expect(document.body.textContent).not.toContain('oldsecret1');
+
+    fireEvent.click(toggle);
+    expect(document.body.textContent).toContain('oldsecret1');
+    expect(document.body.textContent).toContain('oldsecret2');
+  });
+
+  it('copies a past password when its revealed value is clicked', () => {
+    const { copy } = renderPane({
+      login: loginDetail({
+        passwordHistory: [{ password: 'oldsecret1', lastUsedDate: '2024-01-01T00:00:00Z' }],
+      }),
+    });
+    fireEvent.click(document.querySelector('.detail-pwhist-toggle')!);
+    const value = Array.from(document.querySelectorAll('.detail-pwhist-row .detail-value')).find(
+      (el) => el.textContent === 'oldsecret1',
+    )!;
+    fireEvent.click(value);
+    expect(copy).toHaveBeenCalledWith('Password', 'oldsecret1');
+  });
+
+  it('keeps password history gated behind reprompt', () => {
+    renderPane({
+      reprompt: true,
+      login: loginDetail({
+        passwordHistory: [{ password: 'oldsecret1', lastUsedDate: '2024-01-01T00:00:00Z' }],
+      }),
+    });
+    fireEvent.click(document.querySelector('.detail-pwhist-toggle')!);
+    // Reprompt blocks the expand action, so the secret never enters the DOM.
+    expect(document.body.textContent).not.toContain('oldsecret1');
   });
 });

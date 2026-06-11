@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { buildSendInput, sendMeta, type SendDraft } from './SendsView.tsx';
+import { buildFileSendInput, buildSendInput, sendMeta, type SendDraft } from './SendsView.tsx';
 import { makeSend } from '../testing/factories.ts';
 import type { SendSummary } from '../lib/types.ts';
 
 function draft(over: Partial<SendDraft> = {}): SendDraft {
   return {
+    kind: 'text',
     accountEmail: 'a@b.com',
     name: 'My share',
     text: 'secret',
@@ -100,5 +101,29 @@ describe('buildSendInput', () => {
     expect(i.accountEmail).toBe('x@y.com');
     expect(i.hidden).toBe(true);
     expect(i.hideEmail).toBe(true);
+  });
+});
+
+describe('buildFileSendInput', () => {
+  it('carries the shared settings but omits the text body', () => {
+    const i = buildFileSendInput(
+      draft({ kind: 'file', name: '  doc  ', expiry: 'thirtyDays', maxViews: '3', password: 'pw', hideEmail: true }),
+    );
+    expect(i).toEqual({
+      accountEmail: 'a@b.com',
+      name: 'doc',
+      expiry: 'thirtyDays',
+      maxAccessCount: 3,
+      password: 'pw',
+      hideEmail: true,
+    });
+    // No text/hidden leak onto the file payload.
+    expect('text' in i).toBe(false);
+    expect('hidden' in i).toBe(false);
+  });
+
+  it('shares the max-views and password normalization with text Sends', () => {
+    expect(buildFileSendInput(draft({ maxViews: '0' })).maxAccessCount).toBeNull();
+    expect(buildFileSendInput(draft({ password: '   ' })).password).toBeNull();
   });
 });

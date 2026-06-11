@@ -55,22 +55,33 @@ pub async fn hello_disable(state: State<'_>) -> AgateResult<()> {
 
 #[tauri::command]
 pub async fn hello_unlock(
+    app: tauri::AppHandle,
     state: State<'_>,
     window: tauri::WebviewWindow,
 ) -> AgateResult<Vec<UnlockOutcome>> {
-    #[cfg(target_os = "windows")]
-    {
-        hello::unlock_all(&state, &window).await
-    }
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
-    {
-        // macOS/Linux consent gates don't need the window handle.
-        let _ = &window;
-        hello_unix::unlock_all(&state).await
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-    {
-        let _ = (&state, &window);
-        Err(AgateError::new(ErrorKind::Internal, "Biometric unlock isn't available on this platform."))
-    }
+    // Mirror the decrypt animation on every window for the whole consent + login +
+    // sync, then resolve it (see `unlock_all`).
+    super::emit_unlock_started(&app);
+    let res = {
+        #[cfg(target_os = "windows")]
+        {
+            hello::unlock_all(&state, &window).await
+        }
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        {
+            // macOS/Linux consent gates don't need the window handle.
+            let _ = &window;
+            hello_unix::unlock_all(&state).await
+        }
+        #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+        {
+            let _ = (&state, &window);
+            Err(AgateError::new(
+                ErrorKind::Internal,
+                "Biometric unlock isn't available on this platform.",
+            ))
+        }
+    };
+    super::emit_session_changed(&app);
+    res
 }

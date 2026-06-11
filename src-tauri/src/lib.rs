@@ -8,6 +8,8 @@ mod aiserver;
 mod appunlock;
 mod audit;
 mod auth;
+mod autofill;
+mod cleanup;
 mod commands;
 mod connections;
 mod darkweb;
@@ -45,9 +47,11 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_log::Builder::new().build())
         // Launch-at-login (toggled via the set_autostart/get_autostart commands).
+        // The flag marks login launches so start-in-tray can apply only to them
+        // (see setup::start_hidden).
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            None,
+            Some(vec![setup::AUTOSTART_FLAG]),
         ))
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
@@ -72,19 +76,19 @@ pub fn run() {
                 .build(),
         )
         .on_window_event(|window, event| match window.label() {
-            // The tray popup never closes for real: focus loss and the close
-            // button both just hide it, so the next tray click re-shows it
-            // instantly.
-            "tray" => match event {
-                tauri::WindowEvent::Focused(false) => {
-                    let _ = window.hide();
-                }
-                tauri::WindowEvent::CloseRequested { api, .. } => {
+            // The tray popup never closes for real — a close request just hides
+            // it, so the next tray click re-shows it instantly. It deliberately
+            // does NOT hide on focus loss: it's pinned (always-on-top) until the
+            // user dismisses it via the tray icon or Escape.
+            "tray" => {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    use tauri::Manager;
                     api.prevent_close();
+                    // Closing the popup ends any autofill prompt it was showing.
+                    autofill::clear_pending_for(window.app_handle());
                     let _ = window.hide();
                 }
-                _ => {}
-            },
+            }
             // Close-to-tray (Settings → Startup): closing the main window hides
             // it and Agate keeps running in the tray. When OFF, exit explicitly —
             // the hidden tray-popup window would otherwise keep the process
@@ -133,6 +137,7 @@ pub fn run() {
             list_custom_field_names,
             list_sends,
             create_send,
+            create_file_send,
             delete_send,
             download_attachment,
             item_detail,
@@ -158,13 +163,19 @@ pub fn run() {
             window_controls_layout,
             show_main_window,
             hide_tray_window,
+            show_tray_window,
             get_system_locale,
             get_close_to_tray,
             set_close_to_tray,
             get_autostart,
             set_autostart,
+            get_start_in_tray,
+            set_start_in_tray,
             audit_offline,
             audit_exposed,
+            password_in_use,
+            password_strength,
+            link_check_vault,
             set_darkweb_consent,
             darkweb_scan_email,
             darkweb_scan_vault,
@@ -183,6 +194,11 @@ pub fn run() {
             ai_set_grant,
             ai_clear_grants,
             ai_audit_log,
+            autofill_status,
+            autofill_set_mode,
+            autofill_pending,
+            autofill_fill,
+            autofill_dismiss,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Agate");

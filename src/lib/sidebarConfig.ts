@@ -5,7 +5,7 @@
 // parse + reconcile used at the localStorage boundary (no `any`). The live signal
 // and its mutators live in `state/sidebar.ts`.
 
-import { AlertTriangle, Bookmark, Dices, File, FolderClosed, RefreshCw, Send, Shield, Star, Trash2 } from 'lucide-solid';
+import { AlertTriangle, Bookmark, Dices, File, FolderClosed, RefreshCw, Send, Shield, Sparkles, Star, Trash2 } from 'lucide-solid';
 import type { IconComponent } from './icon.ts';
 import type { ItemType } from './types.ts';
 import type { VaultFilter } from './search.ts';
@@ -36,6 +36,7 @@ export type SidebarBuiltinId =
   | 'sends'
   | 'security'
   | 'atRisk'
+  | 'cleanup'
   | 'sync';
 
 /** Base filter a saved query carries. A subset of `VaultFilter` — excludes
@@ -125,6 +126,7 @@ export const DEFAULT_ORDER: SidebarBuiltinId[] = [
   'sends',
   'security',
   'atRisk',
+  'cleanup',
   'sync',
 ];
 
@@ -185,6 +187,8 @@ export function entryMeta(id: SidebarBuiltinId): { label: string; icon: IconComp
       return { label: t('sidebar.security'), icon: Shield };
     case 'atRisk':
       return { label: t('sidebar.atRisk'), icon: AlertTriangle };
+    case 'cleanup':
+      return { label: t('sidebar.cleanup'), icon: Sparkles };
     case 'sync':
       return { label: t('sidebar.sync'), icon: RefreshCw };
     default: {
@@ -251,6 +255,8 @@ export function builtinView(id: SidebarBuiltinId): VaultView | null {
       return 'sends';
     case 'security':
       return 'security';
+    case 'cleanup':
+      return 'cleanup';
     case 'sync':
       return 'sync';
     default:

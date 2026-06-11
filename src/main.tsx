@@ -4,6 +4,7 @@ import App from './App.tsx';
 import TrayApp from './tray/TrayApp.tsx';
 import { toastError } from './state/toast.ts';
 import { initSecurity } from './state/security.ts';
+import { initLinkHealth } from './state/linkHealth.ts';
 import { initTheme } from './state/theme.ts';
 import { maybeInitLanguageFromSystem } from './lib/i18n.ts';
 import './styles.css';
@@ -24,6 +25,10 @@ void maybeInitLanguageFromSystem();
 // until the vault is open with a check enabled. Main window only — the popup
 // must not run a second copy of the monitors (or the update check in App).
 if (!isTrayPopup) initSecurity();
+
+// Wire the link-health checker's lock→clear effect. On-demand only (never scans on
+// its own), so this just drops the in-memory report when the vault locks.
+if (!isTrayPopup) initLinkHealth();
 
 // Route uncaught errors + unhandled rejections into the toast pipeline so a
 // setup-time failure surfaces instead of dying silently in the webview console.

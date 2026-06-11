@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use zeroize::Zeroizing;
 
-use crate::dto::{AiAuditEntry, AiGrant, BreachRecord, ServerConfig};
+use crate::dto::{AiAuditEntry, AiGrant, AutofillMode, BreachRecord, ServerConfig};
 use crate::error::{AgateError, AgateResult, ErrorKind};
 
 /// Cap on the in-memory MCP access audit log (newest kept, oldest dropped).
@@ -76,6 +76,11 @@ pub struct PersistedConfig {
     /// (Settings → Appearance → Startup).
     #[serde(default)]
     pub close_to_tray: bool,
+    /// An autostart (login) launch shows only the tray icon — the main window
+    /// stays hidden until summoned from the tray. Manual launches always show
+    /// the window. Off by default.
+    #[serde(default)]
+    pub start_in_tray: bool,
     /// The local MCP (AI access) server is switched on. Off by default — the
     /// feature is opt-in and exposes vault items to an external AI client.
     #[serde(default)]
@@ -85,6 +90,11 @@ pub struct PersistedConfig {
     /// until the user explicitly grants an item.
     #[serde(default)]
     pub ai_grants: Vec<AiGrant>,
+    /// Whether — and how — Agate watches other apps' login fields to offer
+    /// autofill (Off / Hotkey / Watch). Off by default: an opt-in feature that
+    /// inspects other windows, so it stays disabled until the user chooses a mode.
+    #[serde(default)]
+    pub autofill_mode: AutofillMode,
 }
 
 impl PersistedConfig {
@@ -151,8 +161,10 @@ impl PersistedConfig {
             darkweb_scan_offset: 0,
             accounts: Vec::new(),
             close_to_tray: false,
+            start_in_tray: false,
             ai_server_enabled: false,
             ai_grants: Vec::new(),
+            autofill_mode: AutofillMode::Off,
         }
     }
 }
@@ -216,6 +228,10 @@ pub struct AppState {
     /// In-memory MCP access audit log (newest last, capped). Never persisted —
     /// access timing + item names are sensitive, so it lives only for the session.
     pub ai_audit: Mutex<Vec<AiAuditEntry>>,
+    /// Autofill runtime: the single pending detection awaiting the user's pick.
+    /// A std `Mutex` (not tokio) because the Windows focus-hook callback that sets
+    /// it is synchronous; locks are brief and never held across an await.
+    pub autofill: std::sync::Mutex<crate::autofill::AutofillShared>,
     config_path: PathBuf,
 }
 
@@ -229,6 +245,7 @@ impl AppState {
             session: Mutex::new(Session::default()),
             breach_directory: Mutex::new(None),
             ai_audit: Mutex::new(Vec::new()),
+            autofill: std::sync::Mutex::new(crate::autofill::AutofillShared::default()),
             config_path,
         }
     }
@@ -327,6 +344,27 @@ mod tests {
             serde_json::from_str(r#"{"device_id":"d"}"#).expect("minimal config parses");
         assert!(!old.close_to_tray);
         assert!(!cfg().close_to_tray);
+    }
+
+    #[test]
+    fn autofill_mode_defaults_off_for_old_and_fresh_configs() {
+        // A pre-feature config.json has no `autofill_mode` key — it must
+        // deserialize to Off (the feature watches other windows, so it stays
+        // disabled until the user opts in).
+        let old: PersistedConfig =
+            serde_json::from_str(r#"{"device_id":"d"}"#).expect("minimal config parses");
+        assert_eq!(old.autofill_mode, AutofillMode::Off);
+        assert_eq!(cfg().autofill_mode, AutofillMode::Off);
+    }
+
+    #[test]
+    fn start_in_tray_defaults_off_for_old_and_fresh_configs() {
+        // Same backward-compat contract: a login launch keeps showing the
+        // window until the user opts in to tray-only starts.
+        let old: PersistedConfig =
+            serde_json::from_str(r#"{"device_id":"d"}"#).expect("minimal config parses");
+        assert!(!old.start_in_tray);
+        assert!(!cfg().start_in_tray);
     }
 
     #[test]

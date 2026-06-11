@@ -91,6 +91,9 @@ export function sampleDetails(): Record<string, ItemDetail> {
         totp: 'otpauth://totp/GitHub:octocat?secret=JBSWY3DPEHPK3PXP',
         uris: [{ uri: 'https://github.com', matchType: null }],
         hasTotp: true,
+        passwordRevisionDate: null,
+        autofillOnPageLoad: null,
+        passwordHistory: [],
       },
     }),
     mail: loginDetail({
@@ -98,6 +101,7 @@ export function sampleDetails(): Record<string, ItemDetail> {
       login: {
         username: 'tester@fastmail.com', password: 'hunter2hunter2', totp: null,
         uris: [{ uri: 'https://fastmail.com', matchType: null }], hasTotp: false,
+        passwordRevisionDate: null, autofillOnPageLoad: null, passwordHistory: [],
       },
     }),
     card: loginDetail({ id: 'card', name: 'Visa ending 4242', itemType: 'card', login: null }),
@@ -106,7 +110,10 @@ export function sampleDetails(): Record<string, ItemDetail> {
     }),
     old: loginDetail({
       id: 'old', name: 'Old MySpace',
-      login: { username: 'tom', password: 'pw', totp: null, uris: [], hasTotp: false },
+      login: {
+        username: 'tom', password: 'pw', totp: null, uris: [], hasTotp: false,
+        passwordRevisionDate: null, autofillOnPageLoad: null, passwordHistory: [],
+      },
     }),
   };
 }

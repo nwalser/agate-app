@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { pushToast } from '../state/toast.ts';
+import { copyState } from '../state/copyFeedback.ts';
 import { copyWithAutoClear } from './clipboard.ts';
 
 vi.mock('@tauri-apps/plugin-clipboard-manager', () => ({
@@ -9,9 +10,6 @@ vi.mock('@tauri-apps/plugin-clipboard-manager', () => ({
 }));
 vi.mock('../state/clipboard.ts', () => ({ clipboardClearSeconds: () => 15 }));
 vi.mock('../state/toast.ts', () => ({ pushToast: vi.fn(), toastError: vi.fn() }));
-// Identity `t` so the toast message equals the i18n key — lets us assert which
-// branch (plain "copied" vs "copied + clears in Ns") ran.
-vi.mock('./i18n.ts', () => ({ t: (key: string) => key }));
 
 const writeMock = vi.mocked(writeText);
 const readMock = vi.mocked(readText);
@@ -23,28 +21,34 @@ describe('copyWithAutoClear', () => {
     vi.useRealTimers();
   });
 
-  it('auto-clears a copied secret after the configured delay', async () => {
+  it('records a secret copy in the feedback store and auto-clears after the delay', async () => {
     vi.useFakeTimers();
     readMock.mockResolvedValue('s3cret');
     await copyWithAutoClear('Password', 's3cret');
 
     expect(writeMock).toHaveBeenCalledWith('s3cret');
-    expect(toastMock).toHaveBeenCalledWith('success', 'clipboard.copiedClears');
+    // Feedback, not a toast: the countdown starts at the configured 15s.
+    expect(copyState().clearSeconds).toBe(15);
+    expect(copyState().remaining).toBe(15);
+    expect(toastMock).not.toHaveBeenCalled();
 
     await vi.runAllTimersAsync();
     expect(writeMock).toHaveBeenCalledWith(''); // wiped
+    expect(copyState().remaining).toBe(0); // countdown ended
   });
 
   it.each(['Username', 'Website', 'URL', 'Folder', 'Public key', 'Fingerprint', 'Cardholder'])(
-    'never auto-clears a copied %s',
+    'never auto-clears a copied %s (no countdown, no toast)',
     async (label) => {
       vi.useFakeTimers();
       readMock.mockResolvedValue('val');
       await copyWithAutoClear(label, 'val');
 
       expect(writeMock).toHaveBeenCalledWith('val');
-      // Plain "copied" toast — never the "clears in Ns" variant.
-      expect(toastMock).toHaveBeenCalledWith('success', 'clipboard.copied');
+      // Non-secret: recorded with a 0s window (no countdown), never toasted.
+      expect(copyState().clearSeconds).toBe(0);
+      expect(copyState().remaining).toBe(0);
+      expect(toastMock).not.toHaveBeenCalled();
 
       await vi.runAllTimersAsync();
       expect(writeMock).not.toHaveBeenCalledWith('');
@@ -53,8 +57,10 @@ describe('copyWithAutoClear', () => {
   );
 
   it('does nothing for an empty value', async () => {
+    const before = copyState().token;
     await copyWithAutoClear('Password', '');
     expect(writeMock).not.toHaveBeenCalled();
     expect(toastMock).not.toHaveBeenCalled();
+    expect(copyState().token).toBe(before); // no copy recorded
   });
 });

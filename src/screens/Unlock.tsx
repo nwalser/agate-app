@@ -1,9 +1,11 @@
 import { createEffect, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
+import { listen } from '@tauri-apps/api/event';
 import { Fingerprint, KeyRound, Lock, LockOpen } from 'lucide-solid';
 import { ipc } from '../lib/ipc.ts';
 import { t } from '../lib/i18n.ts';
 import type { TwoFactorKind, UnlockOutcome } from '../lib/types.ts';
 import { refreshSession, status } from '../state/session.ts';
+import { UNLOCK_BEAT_MS, UNLOCK_BEAT_REDUCED_MS } from '../lib/unlockBeat.ts';
 import { pushToast, toastError } from '../state/toast.ts';
 import './Unlock.css';
 
@@ -19,6 +21,38 @@ const workingMessages = () => [
 ];
 
 const TEXT_ROTATE_MS = 1400;
+
+/** Whether to START showing the unlocking animation for an unlock running
+ *  OUTSIDE this screen (the tray popup): only when fully idle — its own unlock
+ *  flow and any pending per-connection 2FA prompts always win. Pure, unit-tested. */
+export function shouldShowExternalUnlock(args: {
+  busy: boolean;
+  phase: 'idle' | 'working' | 'unlocked';
+  pendingCount: number;
+}): boolean {
+  return !args.busy && args.phase === 'idle' && args.pendingCount === 0;
+}
+
+/** How the screen reacts to a `session-changed` broadcast for an unlock that ran
+ *  OUTSIDE it (tray popup). `adopt` → play the success beat and open the vault;
+ *  `cancel` → the external unlock ended still locked (wrong password / all-2FA /
+ *  failed), so drop the borrowed animation; `ignore` → the screen's own flow owns
+ *  the UI, leave it alone. Pure, unit-tested. */
+export type ExternalUnlockAction = 'adopt' | 'cancel' | 'ignore';
+export function externalUnlockAction(args: {
+  busy: boolean;
+  phase: 'idle' | 'working' | 'unlocked';
+  pendingCount: number;
+  unlocked: boolean;
+  externalUnlock: boolean;
+}): ExternalUnlockAction {
+  // Own active flow (password / Hello / per-connection 2FA) always wins.
+  if (args.busy || args.pendingCount > 0 || args.phase === 'unlocked') return 'ignore';
+  // A 'working' phase we did NOT borrow for an external unlock is our own flow.
+  if (args.phase === 'working' && !args.externalUnlock) return 'ignore';
+  if (args.unlocked) return 'adopt';
+  return args.externalUnlock ? 'cancel' : 'ignore';
+}
 
 /** Returning, locked: one app secret (or Windows Hello) re-logs-in every
  *  connection. Connections that still enforce 2FA are completed one by one. */
@@ -45,6 +79,10 @@ export default function Unlock() {
   // password/2FA form is hidden behind the animation.
   const [phase, setPhase] = createSignal<'idle' | 'working' | 'unlocked'>('idle');
   const [msgIndex, setMsgIndex] = createSignal(0);
+  // True while the 'working' animation was borrowed for an unlock running in
+  // ANOTHER window (the tray popup). Lets the session-changed handler tell our
+  // own working flow apart from a mirrored one, and revert if it ends locked.
+  const [externalUnlock, setExternalUnlock] = createSignal(false);
 
   const prefersReducedMotion = () =>
     typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
@@ -73,10 +111,11 @@ export default function Unlock() {
       : t('unlock.connectionCountOther', { count: n });
   };
 
-  /** Play the unlock beat, then hand off to the vault. */
+  /** Play the unlock beat, then hand off to the vault. Duration shared with
+   *  the tray popup's flash so both windows finish together. */
   async function finishUnlocked() {
     setPhase('unlocked');
-    await delay(prefersReducedMotion() ? 120 : 720);
+    await delay(prefersReducedMotion() ? UNLOCK_BEAT_REDUCED_MS : UNLOCK_BEAT_MS);
     await refreshSession();
   }
 
@@ -103,6 +142,51 @@ export default function Unlock() {
       setTfProvider(providersFor(need[0])[0] ?? 'authenticator');
     }
   }
+
+  // The vault can be unlocked from OUTSIDE this screen — the tray popup's unlock
+  // form / Hello button. The backend fires `unlock-started` the instant such an
+  // unlock begins: mirror the same decrypt animation here so BOTH windows read as
+  // one surface while it runs (login + sync). Only when fully idle — our own flow
+  // and any pending 2FA always win.
+  onMount(() => {
+    const unlisten = listen('agate://unlock-started', () => {
+      if (
+        shouldShowExternalUnlock({ busy: busy(), phase: phase(), pendingCount: pending().length })
+      ) {
+        setExternalUnlock(true);
+        setPhase('working');
+      }
+    });
+    onCleanup(() => void unlisten.then((un) => un()));
+  });
+
+  // The matching completion: the backend broadcasts every session change. When one
+  // arrives, adopt the now-unlocked vault (own success beat + hand off), or — if we
+  // were mirroring an external unlock that ended still locked — drop the animation.
+  // The guard keeps an in-progress local flow (password, Hello, 2FA) untouched.
+  onMount(() => {
+    const unlisten = listen('agate://session-changed', () => {
+      void (async () => {
+        if (busy() || pending().length > 0) return;
+        const s = await ipc.getSessionStatus();
+        const action = externalUnlockAction({
+          busy: busy(),
+          phase: phase(),
+          pendingCount: pending().length,
+          unlocked: s.unlocked,
+          externalUnlock: externalUnlock(),
+        });
+        if (action === 'adopt') {
+          setExternalUnlock(false);
+          await finishUnlocked();
+        } else if (action === 'cancel') {
+          setExternalUnlock(false);
+          setPhase('idle');
+        }
+      })().catch(toastError);
+    });
+    onCleanup(() => void unlisten.then((un) => un()));
+  });
 
   async function unlock() {
     if (!appPassword()) return;

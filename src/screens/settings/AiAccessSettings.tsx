@@ -6,12 +6,12 @@
 // recorded in the session audit log below.
 
 import { createMemo, createSignal, For, onMount, Show } from 'solid-js';
-import { Bot, Copy, Eye, EyeOff, RefreshCw, ShieldAlert } from 'lucide-solid';
-import { writeText } from '@tauri-apps/plugin-clipboard-manager';
+import { Bot, Eye, EyeOff, RefreshCw, ShieldAlert } from 'lucide-solid';
 import { ipc } from '../../lib/ipc.ts';
 import { t } from '../../lib/i18n.ts';
 import type { AiAuditEntry, AiGrant, AiServerStatus, VaultItem } from '../../lib/types.ts';
 import { copyWithAutoClear } from '../../lib/clipboard.ts';
+import CopyButton from '../../components/CopyButton.tsx';
 import { pushToast, toastError } from '../../state/toast.ts';
 import { ResetButton, Switch, ToggleRow } from '../../components/settings/SettingsControls.tsx';
 import './AiAccessSettings.css';
@@ -116,16 +116,6 @@ export default function AiAccessSettings() {
     }
   }
 
-  async function copy(label: string, value: string | null | undefined) {
-    if (!value) return;
-    try {
-      await writeText(value);
-      pushToast('success', t('ai.copied', { label }));
-    } catch (e) {
-      toastError(e);
-    }
-  }
-
   const shownItems = createMemo(() => {
     const q = filter().trim().toLowerCase();
     const list = items();
@@ -190,13 +180,12 @@ export default function AiAccessSettings() {
             <label class="ai-conn-label">{t('ai.serverUrl')}</label>
             <div class="ai-code-row">
               <code class="ai-code">{status()?.url}</code>
-              <button
+              <CopyButton
                 class="ghost icon-btn"
-                title={t('ai.copyUrl')}
-                onClick={() => void copy('URL', status()?.url)}
-              >
-                <Copy size={14} />
-              </button>
+                size={14}
+                label={t('ai.copyUrl')}
+                onCopy={() => copyWithAutoClear('URL', status()?.url)}
+              />
             </div>
 
             <label class="ai-conn-label">{t('ai.bearerToken')}</label>
@@ -209,25 +198,23 @@ export default function AiAccessSettings() {
               >
                 {tokenShown() ? <EyeOff size={14} /> : <Eye size={14} />}
               </button>
-              <button
+              <CopyButton
                 class="ghost icon-btn"
-                title={t('ai.copyToken')}
-                onClick={() => void copyWithAutoClear('Token', status()?.token)}
-              >
-                <Copy size={14} />
-              </button>
+                size={14}
+                label={t('ai.copyToken')}
+                onCopy={() => copyWithAutoClear('Token', status()?.token)}
+              />
             </div>
 
             <label class="ai-conn-label">{t('ai.connectClaudeCode')}</label>
             <div class="ai-code-row">
               <code class="ai-code ai-cmd">{shownCommand()}</code>
-              <button
+              <CopyButton
                 class="ghost icon-btn"
-                title={t('ai.copyCommand')}
-                onClick={() => void copyWithAutoClear('Command', mcpCommand())}
-              >
-                <Copy size={14} />
-              </button>
+                size={14}
+                label={t('ai.copyCommand')}
+                onCopy={() => copyWithAutoClear('Command', mcpCommand())}
+              />
             </div>
             <p class="muted settings-help">{t('ai.connectHelp')}</p>
           </div>

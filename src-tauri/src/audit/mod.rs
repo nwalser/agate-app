@@ -42,6 +42,35 @@ pub(super) struct LoginAudit {
     pub(super) age_days: i64,
 }
 
+/// How many existing logins (across every unlocked vault) already use
+/// `password` — powers the tray add-form's "password already used" callout.
+/// Returns a count only; which logins match never leaves the backend. The
+/// candidate arrives and dies in-process (`Zeroizing`).
+pub async fn password_in_use(
+    state: &AppState,
+    password: Zeroizing<String>,
+) -> AgateResult<u32> {
+    if password.is_empty() {
+        return Ok(0);
+    }
+    let logins = collect_logins(state).await?;
+    Ok(logins.iter().filter(|l| *l.password == *password).count() as u32)
+}
+
+/// zxcvbn strength score (0–4) for a candidate password — powers the tray
+/// add-form's live strength meter. `context` carries the draft's username /
+/// website / name so a password equal to one of them scores low, exactly as the
+/// offline audit does. The plaintext arrives in a `Zeroizing` and never leaves
+/// the process; only the integer score is returned.
+pub fn password_strength(password: &Zeroizing<String>, context: &[String]) -> u8 {
+    let inputs: Vec<&str> = context
+        .iter()
+        .map(String::as_str)
+        .filter(|s| !s.is_empty())
+        .collect();
+    offline::password_score(password.as_str(), &inputs)
+}
+
 pub(super) fn uppercase_sha1_hex(input: &[u8]) -> String {
     let digest = Sha1::digest(input);
     let mut out = String::with_capacity(40);

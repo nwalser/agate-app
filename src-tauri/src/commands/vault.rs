@@ -6,7 +6,8 @@ use tauri_plugin_dialog::DialogExt;
 use super::State;
 use crate::dto::{
     Collection, ExportFormat, Folder, ItemDetail, PassphraseGenOptions, PasswordGenOptions,
-    SendCreateInput, SendCreated, SendSummary, TotpCode, UsernameGenOptions, VaultItem,
+    SendCreateInput, SendCreated, SendFileCreateInput, SendSummary, TotpCode, UsernameGenOptions,
+    VaultItem,
 };
 use crate::error::{AgateError, AgateResult};
 use crate::{qrscan, vault};
@@ -46,6 +47,17 @@ pub async fn list_sends(state: State<'_>) -> AgateResult<Vec<SendSummary>> {
 #[tauri::command]
 pub async fn create_send(state: State<'_>, input: SendCreateInput) -> AgateResult<SendCreated> {
     vault::create_send(&state, input).await
+}
+
+/// Create a file Send: opens a native file picker, then encrypts + uploads the
+/// chosen file. Returns null if the user cancels the picker.
+#[tauri::command]
+pub async fn create_file_send(
+    app: tauri::AppHandle,
+    state: State<'_>,
+    input: SendFileCreateInput,
+) -> AgateResult<Option<SendCreated>> {
+    vault::create_file_send(&state, &app, input).await
 }
 
 #[tauri::command]

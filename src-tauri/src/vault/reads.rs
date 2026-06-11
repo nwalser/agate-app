@@ -19,7 +19,8 @@ use bitwarden_core::UserId;
 use bitwarden_pm::PasswordManagerClient;
 use bitwarden_sync::SyncRequest;
 use bitwarden_vault::{
-    generate_totp, Cipher, CipherView, Fido2CredentialView, Folder as VaultFolder, FolderView,
+    generate_totp, Cipher, CipherRepromptType, CipherView, Fido2CredentialView,
+    Folder as VaultFolder, FolderView,
 };
 use chrono::Utc;
 
@@ -238,6 +239,56 @@ pub async fn list_items(state: &AppState) -> AgateResult<Vec<VaultItem>> {
         }
     }
     Ok(items)
+}
+
+/// Per-login match index for autofill: each unlocked login with ALL of its URIs
+/// (so a synthetic `app://` association in any slot matches, not just the first),
+/// plus the display fields the candidate list needs. URIs are metadata, not secrets
+/// (the editor shows them) — passwords are never read here. Logins only; deleted
+/// items skipped. Reuses the same decrypt path as `list_items`.
+pub async fn autofill_index(state: &AppState) -> AgateResult<Vec<crate::autofill::MatchItem>> {
+    let labels = label_map(state).await;
+    let snapshot: Vec<(String, PasswordManagerClient, Vec<Cipher>)> = {
+        let session = state.session.lock().await;
+        session
+            .connections
+            .iter()
+            .map(|(email, c)| (email.clone(), PasswordManagerClient(c.client.0.clone()), c.ciphers.clone()))
+            .collect()
+    };
+
+    let mut out = Vec::new();
+    for (email, client, ciphers) in snapshot {
+        let label = label_for(&labels, &email);
+        let key_store = client.0.internal.get_key_store();
+        for cipher in &ciphers {
+            let decrypted: Result<CipherView, _> = key_store.decrypt(cipher);
+            match decrypted {
+                Ok(view) => {
+                    if view.deleted_date.is_some() {
+                        continue;
+                    }
+                    let Some(login) = view.login.as_ref() else { continue };
+                    let uris = login
+                        .uris
+                        .as_ref()
+                        .map(|us| us.iter().filter_map(|u| u.uri.clone()).collect())
+                        .unwrap_or_default();
+                    out.push(crate::autofill::MatchItem {
+                        id: view.id.map(|i| i.to_string()).unwrap_or_default(),
+                        account_email: email.clone(),
+                        account_label: label.clone(),
+                        name: view.name.clone(),
+                        username: login.username.clone(),
+                        uris,
+                        reprompt: matches!(view.reprompt, CipherRepromptType::Password),
+                    });
+                }
+                Err(e) => log::warn!("autofill index: skipping item that failed to decrypt: {e}"),
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// Collapse raw field names into the distinct, display-ordered set the column

@@ -946,6 +946,46 @@ button.vault-head-cell.sorted {
   border-color: var(--success);
 }
 
+/* Password-history viewer in the detail pane: a collapsible toggle over a list of
+   past passwords (secrets — masked behind the reprompt gate until expanded). */
+.detail-pwhist-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  font-size: 12.5px;
+  color: var(--muted-foreground);
+}
+.detail-pwhist-toggle:hover {
+  color: var(--primary);
+}
+.detail-pwhist-list {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.detail-pwhist-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.detail-pwhist-row .detail-value {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 5px 10px;
+}
+.detail-pwhist-date {
+  font-size: 11px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 /* Right-click context menu on an item row. Positioned at the cursor (fixed). */
 .vault-ctx {
   position: fixed;

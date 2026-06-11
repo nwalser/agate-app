@@ -119,6 +119,21 @@
   gap: 12px;
 }
 
+/* File-Send note: the picker opens on Create (file chosen in the backend). */
+.send-file-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+}
+.send-file-note svg {
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+
 /* A toggle row: the shared Switch beside its label + optional description. */
 .send-toggle {
   display: flex;

@@ -8,6 +8,7 @@ import {
   itemEmails,
 } from './breachAggregation.ts';
 import type { AccountBreaches, BreachRecord, ItemDetail } from './types.ts';
+import { makeLoginDetail } from '../testing/factories.ts';
 
 function breach(p: Partial<BreachRecord> & { name: string }): BreachRecord {
   return {
@@ -112,12 +113,12 @@ describe('breachesForEmails', () => {
 
 describe('itemEmails', () => {
   it('takes a login username that is an email', () => {
-    const d = detail({ login: { username: 'me@site.com', password: null, totp: null, uris: [], hasTotp: false } });
+    const d = detail({ login: makeLoginDetail({ username: 'me@site.com' }) });
     expect(itemEmails(d)).to.deep.equal(['me@site.com']);
   });
 
   it('ignores a non-email username', () => {
-    const d = detail({ login: { username: 'octocat', password: null, totp: null, uris: [], hasTotp: false } });
+    const d = detail({ login: makeLoginDetail({ username: 'octocat' }) });
     expect(itemEmails(d)).to.deep.equal([]);
   });
 

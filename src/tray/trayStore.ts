@@ -10,11 +10,20 @@
 // - The popup deliberately KEEPS its state (query, items, scroll, selection)
 //   across hide/show — a user choice; the retained data is list metadata only
 //   (names/usernames/uris, never passwords). It still fails closed: refresh()
-//   runs on every show and drops the items the moment the session is locked.
+//   runs on every show AND on the backend's `agate://session-changed`
+//   broadcast (the pinned popup can be visible during a lock), dropping the
+//   items the moment the session is locked.
 
 import { createSignal } from 'solid-js';
 import type { ipc as realIpc } from '../lib/ipc.ts';
-import type { VaultItem } from '../lib/types.ts';
+import { hostOf } from '../state/favicons.ts';
+import type {
+  AutofillContext,
+  AutofillPending,
+  ItemInput,
+  UnlockOutcome,
+  VaultItem,
+} from '../lib/types.ts';
 
 /** Hard cap on rendered rows — the popup is a quick-access list, not a browser. */
 export const TRAY_MAX_RESULTS = 50;
@@ -22,21 +31,85 @@ export const TRAY_MAX_RESULTS = 50;
 /** Exactly the IPC surface the popup touches — what tests fake. */
 export type TrayIpc = Pick<
   typeof realIpc,
-  'getSessionStatus' | 'listItems' | 'itemDetail' | 'itemTotp'
+  | 'getSessionStatus'
+  | 'listItems'
+  | 'itemDetail'
+  | 'itemTotp'
+  | 'unlockAll'
+  | 'helloUnlock'
+  | 'autofillPending'
+  | 'autofillFill'
+  | 'autofillDismiss'
+  | 'listConnections'
+  | 'generatePassword'
+  | 'saveItem'
+  | 'passwordInUse'
+  | 'passwordStrength'
 >;
+
+/** A login the popup can fill into the detected target — the common shape of a
+ *  ranked candidate and a search-fallback vault row. */
+export interface FillTarget {
+  accountEmail: string;
+  itemId: string;
+  reprompt: boolean;
+}
+
+/** A fill-mode row: a target plus the label fields the popup renders. */
+export interface FillRow extends FillTarget {
+  name: string;
+  username: string | null;
+}
+
+// ── Fill-mode popup sizing (logical px) ─────────────────────────────────────
+// The autofill picker is a compact chooser, not the full popup: it sizes to its
+// candidates but never past FILL_MAX_ROWS — longer lists scroll.
+const FILL_ROW_H = 42; // ~ one candidate row (name + username)
+const FILL_CHROME_H = 48; // header + list padding + window borders
+const FILL_NOT_FOUND_H = 120; // note + the "add login for this app" action
+const FILL_MAX_ROWS = 3;
+
+/** Window height for the autofill fill view given the candidate count. Pure. */
+export function fillPopupHeight(count: number): number {
+  if (count === 0) return FILL_NOT_FOUND_H;
+  return FILL_CHROME_H + Math.min(count, FILL_MAX_ROWS) * FILL_ROW_H;
+}
 
 export interface TrayStoreDeps {
   ipc: TrayIpc;
   /** Secret-copy path (production: lib/clipboard.copyWithAutoClear). */
   copy: (label: string, value: string | null | undefined) => Promise<void>;
+  /** A copy succeeded — the item counts as recently used. Feeds the main
+   *  window's titlebar recents; the popup's own list order stays stable. */
+  onUsed: (item: VaultItem) => void;
   onError: (err: unknown) => void;
-  /** A copy was blocked because the item requires a master-password reprompt. */
-  onRepromptBlocked: (item: VaultItem) => void;
+  /** A copy / fill was blocked because the item requires a master-password
+   *  reprompt. The item is passed for the copy path; the fill path omits it (a
+   *  candidate isn't a full VaultItem) — production just shows a toast either way. */
+  onRepromptBlocked: (item?: VaultItem) => void;
+  /** Connections that still need 2FA after an unlock. The popup never runs the
+   *  2FA flow itself (same deferral as reprompt) — the user finishes these in
+   *  the main window. */
+  onTwoFactorPending: (emails: string[]) => void;
+}
+
+/** Map a key event to the copy action it requests (the popup's Enter chords):
+ *  Enter = password, Shift+Enter = username, Ctrl/Cmd+Enter = TOTP. */
+export type TrayCopyAction = 'password' | 'username' | 'totp';
+export function copyActionForKey(
+  e: Pick<KeyboardEvent, 'key' | 'shiftKey' | 'ctrlKey' | 'metaKey'>,
+): TrayCopyAction | null {
+  if (e.key !== 'Enter') return null;
+  if (e.ctrlKey || e.metaKey) return 'totp';
+  if (e.shiftKey) return 'username';
+  return 'password';
 }
 
 /** Filter + rank the unified list for the popup: drop trashed items, match the
  *  query against name/username/uri, and order by match quality (name prefix >
- *  name substring > username/uri), favorites and name breaking ties. */
+ *  name substring > username/uri), favorites and name breaking ties. The order
+ *  is deliberately STABLE — no recency ranking, because rows that jump right
+ *  after a copy made the list unusable (user feedback). */
 export function filterTrayItems(items: VaultItem[], query: string): VaultItem[] {
   const q = query.trim().toLowerCase();
 
@@ -64,6 +137,92 @@ export function filterTrayItems(items: VaultItem[], query: string): VaultItem[] 
     .map((e) => e.it);
 }
 
+/** The add-form's draft login. */
+export interface AddDraft {
+  name: string;
+  username: string;
+  password: string;
+  uri: string;
+}
+
+const EMPTY_DRAFT: AddDraft = { name: '', username: '', password: '', uri: '' };
+
+/** Generator options for the add-form's one-click password (same defaults as
+ *  the main Generator page). */
+const ADD_GEN_OPTIONS = {
+  length: 16,
+  uppercase: true,
+  lowercase: true,
+  numbers: true,
+  special: true,
+  avoidAmbiguous: false,
+};
+
+/** Existing logins that look like the draft — same website host (strongest),
+ *  exact name, or a name containing/contained by the draft's (fragments under
+ *  3 chars are ignored as noise). Top 3, host matches first. Powers the
+ *  add-form's "you may already have this" callout. Pure, unit-tested. */
+export function findSimilarLogins(
+  items: VaultItem[],
+  draft: { name: string; uri: string },
+): VaultItem[] {
+  const host = hostOf(draft.uri);
+  const name = draft.name.trim().toLowerCase();
+
+  const score = (it: VaultItem): number | null => {
+    if (it.deleted || it.itemType !== 'login') return null;
+    let s = 0;
+    if (host && hostOf(it.uri) === host) s += 4;
+    const n = it.name.trim().toLowerCase();
+    if (name && n === name) s += 2;
+    else if (name.length >= 3 && n.length >= 3 && (n.includes(name) || name.includes(n))) s += 1;
+    return s > 0 ? s : null;
+  };
+
+  return items
+    .map((it) => ({ it, s: score(it) }))
+    .filter((e): e is { it: VaultItem; s: number } => e.s !== null)
+    .sort((a, b) => b.s - a.s || a.it.name.localeCompare(b.it.name))
+    .slice(0, 3)
+    .map((e) => e.it);
+}
+
+/** A human login name guessed from a website/URI for the add-form: the
+ *  registrable label, capitalized — `https://login.github.com/x` → "Github",
+ *  `app://outlook` (an autofill app-association URI) → "Outlook". Empty string
+ *  when nothing usable. Pure. */
+export function loginNameFromUri(uri: string): string {
+  const raw = uri.trim();
+  if (!raw) return '';
+  // Drop the scheme, then keep only the authority up to the first path/query.
+  const host = raw
+    .replace(/^[a-z][a-z0-9+.-]*:\/\//i, '')
+    .split(/[/?#]/)[0]
+    .toLowerCase();
+  if (!host) return '';
+  const labels = host.split('.').filter(Boolean);
+  if (labels[0] === 'www') labels.shift();
+  // The registrable label: second-to-last when there's a TLD, else the only one.
+  const label = labels.length >= 2 ? labels[labels.length - 2] : labels[0];
+  if (!label) return '';
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+/** Seed an add-login draft from a detected autofill target: the website is the
+ *  real URL when the field exposed one, else the synthetic `app://<process>`
+ *  association so the saved login matches this app next time (per the
+ *  AutofillContext docs). The name is guessed from that URI, falling back to the
+ *  process name. Only the fields we can fill are returned. Pure. */
+export function draftFromContext(ctx: AutofillContext | null | undefined): Partial<AddDraft> {
+  if (!ctx) return {};
+  const uri = (ctx.url || ctx.associateUri || '').trim();
+  const name = loginNameFromUri(uri) || (ctx.processName ?? '').trim();
+  const patch: Partial<AddDraft> = {};
+  if (name) patch.name = name;
+  if (uri) patch.uri = uri;
+  return patch;
+}
+
 /** Whether two list entries are field-for-field identical (VaultItem is a flat
  *  all-primitive shape, so shallow comparison is exact). */
 function sameItem(a: VaultItem, b: VaultItem): boolean {
@@ -88,8 +247,16 @@ function reconcileById(prev: VaultItem[], next: VaultItem[]): VaultItem[] {
 export function createTrayStore(deps: TrayStoreDeps) {
   const [ready, setReady] = createSignal(false);
   const [unlocked, setUnlocked] = createSignal(false);
+  const [appUnlockConfigured, setAppUnlockConfigured] = createSignal(false);
+  const [helloConfigured, setHelloConfigured] = createSignal(false);
+  const [unlocking, setUnlocking] = createSignal(false);
   const [items, setItems] = createSignal<VaultItem[]>([]);
   const [query, setQuery] = createSignal('');
+  // Autofill fill-mode: a detection in another app is awaiting a pick. `pending`
+  // carries the one-shot token + the detected context + ranked candidates.
+  const [fillMode, setFillMode] = createSignal(false);
+  const [pending, setPending] = createSignal<AutofillPending | null>(null);
+  const [filling, setFilling] = createSignal(false);
 
   /** Re-read session + items. Called on mount and every time the popup shows,
    *  so a lock/sync in the main window is reflected on the next open. The query
@@ -98,10 +265,14 @@ export function createTrayStore(deps: TrayStoreDeps) {
     try {
       const status = await deps.ipc.getSessionStatus();
       setUnlocked(status.unlocked);
+      setAppUnlockConfigured(status.appUnlockConfigured);
+      setHelloConfigured(status.helloConfigured);
       const fresh = status.unlocked ? await deps.ipc.listItems() : [];
       setItems((prev) => reconcileById(prev, fresh));
     } catch (err) {
       // Treat an unreadable session as locked — the popup must fail closed.
+      // The configured flags keep their last value: they only pick which
+      // locked view renders, and an unlock attempt would surface the error.
       setUnlocked(false);
       setItems([]);
       deps.onError(err);
@@ -110,7 +281,50 @@ export function createTrayStore(deps: TrayStoreDeps) {
     }
   }
 
+  /** Shared tail of both unlock paths: surface per-connection failures, flag
+   *  2FA-pending connections, then re-read session + items. */
+  async function applyOutcomes(outcomes: UnlockOutcome[]): Promise<void> {
+    for (const o of outcomes) {
+      if (o.status === 'failed') deps.onError(new Error(`${o.email}: ${o.message}`));
+    }
+    const pending = outcomes.filter((o) => o.status === 'twoFactorRequired').map((o) => o.email);
+    if (pending.length > 0) deps.onTwoFactorPending(pending);
+    await refresh();
+  }
+
+  /** Unlock every connection with the app password. Resolves true when the
+   *  call went through (so the form can clear the field) — a wrong password
+   *  rejects the whole call (failed GCM tag) and resolves false. */
+  async function unlock(appPassword: string): Promise<boolean> {
+    if (!appPassword) return false;
+    setUnlocking(true);
+    try {
+      await applyOutcomes(await deps.ipc.unlockAll(appPassword));
+      return true;
+    } catch (err) {
+      deps.onError(err);
+      return false;
+    } finally {
+      setUnlocking(false);
+    }
+  }
+
+  /** Unlock every connection via the platform consent gate (Windows Hello). */
+  async function unlockHello(): Promise<void> {
+    setUnlocking(true);
+    try {
+      await applyOutcomes(await deps.ipc.helloUnlock());
+    } catch (err) {
+      deps.onError(err);
+    } finally {
+      setUnlocking(false);
+    }
+  }
+
   const filtered = () => filterTrayItems(items(), query());
+
+  /** More than one connection in the list — rows then show an account dot. */
+  const multiAccount = () => new Set(items().map((i) => i.accountEmail)).size > 1;
 
   /** False (and defers to the full app) when the item is reprompt-protected. */
   function passReprompt(item: VaultItem): boolean {
@@ -121,6 +335,7 @@ export function createTrayStore(deps: TrayStoreDeps) {
 
   async function copyUsername(item: VaultItem): Promise<void> {
     await deps.copy('Username', item.username);
+    if (item.username) deps.onUsed(item);
   }
 
   async function copyPassword(item: VaultItem): Promise<void> {
@@ -128,6 +343,7 @@ export function createTrayStore(deps: TrayStoreDeps) {
     try {
       const detail = await deps.ipc.itemDetail(item.accountEmail, item.id);
       await deps.copy('Password', detail.login?.password);
+      deps.onUsed(item);
     } catch (err) {
       deps.onError(err);
     }
@@ -138,21 +354,242 @@ export function createTrayStore(deps: TrayStoreDeps) {
     try {
       const totp = await deps.ipc.itemTotp(item.accountEmail, item.id);
       await deps.copy('TOTP code', totp.code);
+      deps.onUsed(item);
     } catch (err) {
       deps.onError(err);
     }
   }
 
+  // ── Autofill fill-mode ──────────────────────────────────────────────────────
+
+  /** Reconcile fill mode with the backend, which is the single source of truth
+   *  for "is a detection awaiting a pick". Called on every show/focus and on the
+   *  `autofill://detected` event (and after an unlock, so candidates are computed
+   *  against the now-unlocked vault). The tray-icon open path clears the backend
+   *  pending, so a normal open reconciles to off here. A fresh detection resets the
+   *  query so the candidate list — not a stale search — shows first. */
+  async function syncFill(): Promise<void> {
+    try {
+      const p = await deps.ipc.autofillPending();
+      const wasOff = !fillMode();
+      setPending(p);
+      setFillMode(p !== null);
+      if (p && wasOff) setQuery('');
+    } catch (err) {
+      deps.onError(err);
+      setFillMode(false);
+      setPending(null);
+    }
+  }
+
+  /** Leave fill mode and tell the backend to drop the detection (popup dismissed
+   *  or Escape). */
+  function exitFill(): void {
+    setFillMode(false);
+    setPending(null);
+    void deps.ipc.autofillDismiss().catch(deps.onError);
+  }
+
+  /** Fill the chosen login into the detected target. Reprompt-protected items are
+   *  deferred to the main window (never filled here), mirroring the copy path. */
+  async function fill(target: FillTarget): Promise<void> {
+    const p = pending();
+    if (!p) return;
+    if (target.reprompt) {
+      deps.onRepromptBlocked();
+      return;
+    }
+    setFilling(true);
+    try {
+      await deps.ipc.autofillFill(p.token, target.accountEmail, target.itemId);
+      // The backend hides the popup on success; just leave fill mode locally.
+      setFillMode(false);
+      setPending(null);
+    } catch (err) {
+      deps.onError(err);
+    } finally {
+      setFilling(false);
+    }
+  }
+
+  // ── Add-login form ──────────────────────────────────────────────────────────
+
+  const [addMode, setAddMode] = createSignal(false);
+  const [draft, setDraftSignal] = createSignal<AddDraft>(EMPTY_DRAFT);
+  const [account, setAccount] = createSignal('');
+  const [accounts, setAccounts] = createSignal<string[]>([]);
+  const [saving, setSaving] = createSignal(false);
+  const [reuseCount, setReuseCount] = createSignal(0);
+  // zxcvbn strength of the draft password (0–4), null when the field is empty.
+  const [strength, setStrength] = createSignal<number | null>(null);
+
+  function setDraft(patch: Partial<AddDraft>): void {
+    setDraftSignal((d) => ({ ...d, ...patch }));
+  }
+
+  /** Open the add form. Default prefill is the name from the current query (the
+   *  user was probably searching for the thing that doesn't exist yet); callers
+   *  can override with a richer `prefill` — e.g. `draftFromContext` when the
+   *  form is opened from a detected-but-unmatched autofill target. */
+  async function enterAdd(prefill?: Partial<AddDraft>): Promise<void> {
+    setDraftSignal({ ...EMPTY_DRAFT, name: query().trim(), ...prefill });
+    setReuseCount(0);
+    setStrength(null);
+    setAddMode(true);
+    try {
+      const cons = await deps.ipc.listConnections();
+      const emails = cons.filter((c) => c.unlocked).map((c) => c.email);
+      setAccounts(emails);
+      setAccount(emails[0] ?? '');
+    } catch (err) {
+      deps.onError(err);
+      setAccounts([]);
+      setAccount('');
+    }
+  }
+
+  function exitAdd(): void {
+    setAddMode(false);
+    setDraftSignal(EMPTY_DRAFT);
+    setReuseCount(0);
+    setStrength(null);
+  }
+
+  /** One-click password from the generator into the draft. */
+  async function generateDraftPassword(): Promise<void> {
+    try {
+      setDraft({ password: await deps.ipc.generatePassword(ADD_GEN_OPTIONS) });
+    } catch (err) {
+      deps.onError(err);
+    }
+  }
+
+  /** Existing logins resembling the draft (host / name) — the dedupe callout. */
+  const similar = () => findSimilarLogins(items(), draft());
+
+  /** Ask the backend for the draft password's hygiene: how many logins already
+   *  use it (count only — plaintext never comes back) and its zxcvbn strength.
+   *  Both are advisory and computed independently, so one failing doesn't void
+   *  the other. The caller debounces. */
+  async function checkReuse(): Promise<void> {
+    const d = draft();
+    const pw = d.password;
+    if (!pw) {
+      setReuseCount(0);
+      setStrength(null);
+      return;
+    }
+    try {
+      setReuseCount(await deps.ipc.passwordInUse(pw));
+    } catch (err) {
+      // Reuse info is advisory — never block the form on it.
+      setReuseCount(0);
+      deps.onError(err);
+    }
+    try {
+      // The non-secret draft fields seed zxcvbn so e.g. password==username
+      // scores at the floor, matching the offline audit.
+      const context = [d.username, d.uri, d.name].filter((s) => s.trim().length > 0);
+      setStrength(await deps.ipc.passwordStrength(pw, context));
+    } catch (err) {
+      setStrength(null);
+      deps.onError(err);
+    }
+  }
+
+  /** Create the login on the selected account, refresh, close the form. */
+  async function saveNew(): Promise<boolean> {
+    const d = draft();
+    const name = d.name.trim();
+    if (!name || !account()) return false;
+    const input: ItemInput = {
+      id: null,
+      itemType: 'login',
+      name,
+      folderId: null,
+      organizationId: null,
+      favorite: false,
+      reprompt: false,
+      notes: null,
+      login: {
+        username: d.username.trim() || null,
+        password: d.password || null,
+        totp: null,
+        uris: d.uri.trim() ? [{ uri: d.uri.trim(), matchType: null }] : [],
+        autofillOnPageLoad: null,
+      },
+      card: null,
+      identity: null,
+      sshKey: null,
+      fields: [],
+    };
+    setSaving(true);
+    try {
+      await deps.ipc.saveItem(account(), input);
+      await refresh();
+      exitAdd();
+      return true;
+    } catch (err) {
+      deps.onError(err);
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  /** The fill-mode rows: the ranked candidates for the detected target. Empty when
+   *  nothing matched — the popup then shows a brief "no password found" message
+   *  rather than the full vault. */
+  function fillRows(): FillRow[] {
+    return (pending()?.candidates ?? []).map((c) => ({
+      accountEmail: c.accountEmail,
+      itemId: c.itemId,
+      reprompt: c.reprompt,
+      name: c.name,
+      username: c.username,
+    }));
+  }
+
   return {
     ready,
     unlocked,
+    appUnlockConfigured,
+    helloConfigured,
+    unlocking,
     query,
     setQuery,
     filtered,
+    multiAccount,
     refresh,
+    unlock,
+    unlockHello,
     copyUsername,
     copyPassword,
     copyTotp,
+    // autofill fill-mode
+    fillMode,
+    pending,
+    filling,
+    syncFill,
+    exitFill,
+    fill,
+    fillRows,
+    // add-login form
+    addMode,
+    draft,
+    setDraft,
+    account,
+    setAccount,
+    accounts,
+    saving,
+    reuseCount,
+    strength,
+    enterAdd,
+    exitAdd,
+    generateDraftPassword,
+    similar,
+    checkReuse,
+    saveNew,
   };
 }
 

@@ -25,18 +25,25 @@ function read(): string[] {
 const [recentIds, setRecentIds] = createSignal<string[]>(read());
 export { recentIds };
 
-/** Record an item as just-opened (de-duplicated, most-recent-first, capped). */
+/** Record an item as just-opened (de-duplicated, most-recent-first, capped).
+ *  Merges over the PERSISTED list, not the in-memory one: the main window and
+ *  the tray popup share localStorage but not signals, so the other webview may
+ *  have recorded entries since this one loaded. */
 export function recordRecent(id: string): void {
   if (!id) return;
-  setRecentIds((prev) => {
-    const next = [id, ...prev.filter((x) => x !== id)].slice(0, MAX);
-    try {
-      localStorage.setItem(KEY, JSON.stringify(next));
-    } catch {
-      // ignore: persistence is best-effort; the in-memory signal still applies
-    }
-    return next;
-  });
+  const next = [id, ...read().filter((x) => x !== id)].slice(0, MAX);
+  setRecentIds(next);
+  try {
+    localStorage.setItem(KEY, JSON.stringify(next));
+  } catch {
+    // ignore: persistence is best-effort; the in-memory signal still applies
+  }
+}
+
+/** Re-read the persisted list — lets the tray popup pick up recents the main
+ *  window recorded since the popup's webview booted (called on every show). */
+export function reloadRecent(): void {
+  setRecentIds(read());
 }
 
 /** Forget all recents (e.g. on logout, if a caller wants a clean slate). */

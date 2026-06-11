@@ -14,6 +14,7 @@ pub async fn list_connections(state: State<'_>) -> AgateResult<Vec<ConnectionSum
 
 #[tauri::command]
 pub async fn add_connection(
+    app: tauri::AppHandle,
     state: State<'_>,
     server: ServerConfig,
     email: String,
@@ -21,7 +22,7 @@ pub async fn add_connection(
     store_credentials: bool,
     two_factor: Option<TwoFactorInput>,
 ) -> AgateResult<LoginResult> {
-    connections::add_connection(
+    let res = connections::add_connection(
         &state,
         server,
         email,
@@ -29,11 +30,16 @@ pub async fn add_connection(
         store_credentials,
         two_factor,
     )
-    .await
+    .await;
+    if res.is_ok() {
+        super::emit_session_changed(&app);
+    }
+    res
 }
 
 #[tauri::command]
 pub async fn update_connection(
+    app: tauri::AppHandle,
     state: State<'_>,
     email: String,
     server: ServerConfig,
@@ -41,7 +47,7 @@ pub async fn update_connection(
     password: Option<String>,
     two_factor: Option<TwoFactorInput>,
 ) -> AgateResult<LoginResult> {
-    connections::update_connection(
+    let res = connections::update_connection(
         &state,
         email,
         server,
@@ -49,17 +55,27 @@ pub async fn update_connection(
         password.map(Zeroizing::new),
         two_factor,
     )
-    .await
+    .await;
+    if res.is_ok() {
+        super::emit_session_changed(&app);
+    }
+    res
 }
 
 #[tauri::command]
 pub async fn unlock_connection(
+    app: tauri::AppHandle,
     state: State<'_>,
     email: String,
     password: String,
     two_factor: Option<TwoFactorInput>,
 ) -> AgateResult<LoginResult> {
-    connections::unlock_connection(&state, email, Zeroizing::new(password), two_factor).await
+    let res =
+        connections::unlock_connection(&state, email, Zeroizing::new(password), two_factor).await;
+    if res.is_ok() {
+        super::emit_session_changed(&app);
+    }
+    res
 }
 
 #[tauri::command]
@@ -73,8 +89,16 @@ pub async fn send_email_code(
 }
 
 #[tauri::command]
-pub async fn remove_connection(state: State<'_>, email: String) -> AgateResult<()> {
-    connections::remove_connection(&state, email).await
+pub async fn remove_connection(
+    app: tauri::AppHandle,
+    state: State<'_>,
+    email: String,
+) -> AgateResult<()> {
+    let res = connections::remove_connection(&state, email).await;
+    if res.is_ok() {
+        super::emit_session_changed(&app);
+    }
+    res
 }
 
 #[tauri::command]
@@ -83,11 +107,19 @@ pub async fn set_active_connection(state: State<'_>, email: String) -> AgateResu
 }
 
 #[tauri::command]
-pub async fn lock(state: State<'_>) -> AgateResult<()> {
-    connections::lock(&state).await
+pub async fn lock(app: tauri::AppHandle, state: State<'_>) -> AgateResult<()> {
+    let res = connections::lock(&state).await;
+    if res.is_ok() {
+        super::emit_session_changed(&app);
+    }
+    res
 }
 
 #[tauri::command]
-pub async fn logout(state: State<'_>) -> AgateResult<()> {
-    connections::logout(&state).await
+pub async fn logout(app: tauri::AppHandle, state: State<'_>) -> AgateResult<()> {
+    let res = connections::logout(&state).await;
+    if res.is_ok() {
+        super::emit_session_changed(&app);
+    }
+    res
 }

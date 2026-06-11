@@ -48,6 +48,7 @@ export const de: PartialMessages = {
     sidebar: 'Seitenleiste',
     templates: 'Vorlagen',
     aiAccess: 'KI-Zugriff',
+    autofill: 'Autofill',
     updates: 'Updates',
     about: 'Über',
   },
@@ -85,6 +86,9 @@ export const de: PartialMessages = {
     closeToTray: 'Beim Schließen des Fensters im Infobereich weiterlaufen',
     closeToTrayDesc:
       'Das Schließen des Fensters blendet Agate aus statt zu beenden; nutze das Symbol im Infobereich zum Wiederöffnen oder Beenden.',
+    startInTray: 'Versteckt im Infobereich starten',
+    startInTrayDesc:
+      'Beim Start nach der Anmeldung erscheint nur das Symbol im Infobereich — öffne das Fenster bei Bedarf von dort.',
   },
 
   offline: {
@@ -174,6 +178,7 @@ export const de: PartialMessages = {
     sends: 'Sends',
     security: 'Sicherheit',
     atRisk: 'Gefährdet',
+    cleanup: 'Aufräumen',
     sync: 'Synchronisierung',
   },
 
@@ -353,7 +358,6 @@ export const de: PartialMessages = {
     serverEnabled: 'KI-Zugriffsserver aktiviert.',
     serverDisabled: 'KI-Zugriffsserver deaktiviert.',
     revokedAll: 'KI-Zugriff auf alle Einträge widerrufen.',
-    copied: '{label} kopiert.',
     title: 'KI-Zugriff',
     help: 'Betreibe einen lokalen Server, der einer KI-Assistenz (z. B. Claude) erlaubt, die unten ausgewählten Tresoreinträge zu lesen — und sonst nichts. Der Server lauscht nur auf deinem Gerät (127.0.0.1) und erfordert ein geheimes Token.',
     warning:
@@ -656,6 +660,9 @@ export const de: PartialMessages = {
     collections: 'Sammlungen',
     created: 'Erstellt {date}',
     updated: 'Aktualisiert {date}',
+    passwordUpdated: 'Passwort geändert',
+    passwordHistory: 'Passwortverlauf',
+    autofillOnPageLoad: 'Automatisch beim Laden ausfüllen',
     copyField: '{label} kopieren',
     openWebsite: 'Website öffnen',
     cardBrandFallback: 'Karte',
@@ -701,6 +708,10 @@ export const de: PartialMessages = {
     // ── Erstellen-Formular ──
     new: 'Neuer Send',
     account: 'Konto',
+    typeLabel: 'Typ',
+    typeText: 'Text',
+    typeFile: 'Datei',
+    fileNote: 'Beim Erstellen des Sends öffnet sich eine Dateiauswahl.',
     nameLabel: 'Name',
     namePlaceholder: 'Eine Bezeichnung für diese Freigabe',
     textLabel: 'Zu teilender Text',
@@ -748,6 +759,7 @@ export const de: PartialMessages = {
     totpCaptured: 'TOTP-Schlüssel vom Bildschirm erfasst.',
     uris: 'URIs',
     addUri: 'URI hinzufügen',
+    autofillOnPageLoad: 'Automatisch beim Laden ausfüllen',
     ocrNothingRecognized: 'In diesem Bild wurde nichts Brauchbares erkannt.',
     filledFromImage: '{count} Feld(er) aus dem Bild ausgefüllt.',
     strength: {
@@ -937,6 +949,26 @@ export const de: PartialMessages = {
     disabledNotice: '{what} ist ausgeschaltet. Aktiviere es unter Einstellungen → Sicherheitsüberwachung.',
   },
 
+  cleanup: {
+    title: 'Aufräumen',
+    linkHealth: 'Link-Zustand',
+    scanNow: 'Jetzt prüfen',
+    scanning: 'Prüfe alle gespeicherten Links…',
+    privacyNote:
+      'Prüft jede im Tresor gespeicherte Website auf tote Links. Dabei wird eine Anfrage an jede Seite gesendet, wodurch deine gespeicherten Domains offengelegt werden – läuft daher nur, wenn du auf „Jetzt prüfen“ klickst.',
+    scannedCount: '{count} geprüft',
+    brokenCount: '{count} defekt',
+    uncertainCount: '{count} unsicher',
+    allReachable: 'Alle Links sind erreichbar.',
+    needsUpdate: 'Aktualisierung nötig',
+    couldNotReach: 'Nicht erreicht',
+    couldNotReachHint:
+      'Diese haben das Zeitlimit überschritten oder einen Serverfehler zurückgegeben – sie sind möglicherweise nur vorübergehend nicht verfügbar.',
+    openItem: 'Eintrag öffnen',
+    statusUnreachable: 'Nicht erreichbar',
+    statusTimeout: 'Keine Antwort',
+  },
+
   // ── Tray, command palette, menus, chrome ───────────────────────────────────
   tray: {
     repromptBlocked: 'Master-Passwort-geschützt — öffne Agate zum Kopieren.',
@@ -947,7 +979,52 @@ export const de: PartialMessages = {
     openAgate: 'Agate öffnen',
     searchPlaceholder: 'Tresor durchsuchen…',
     noMatches: 'Keine Treffer.',
-    footerHint: '↵ Passwort kopieren · Esc schließen',
+    footerHint: '↵ Passwort · ⇧↵ Benutzer · ⌃↵ TOTP · Esc',
+    appPasswordPlaceholder: 'App-Passwort…',
+    unlock: 'Entsperren',
+    unlocking: 'Entsperren…',
+    unlockWithHello: 'Mit Windows Hello entsperren',
+    twoFactorPending: '2FA nötig für {emails} — öffne Agate zum Abschließen.',
+    addLogin: 'Login hinzufügen',
+    newLogin: 'Neuer Login',
+    generatePassword: 'Passwort generieren',
+    saveLogin: 'Login speichern',
+    saving: 'Wird gespeichert…',
+    loginSaved: 'Login gespeichert.',
+    passwordReused: 'Dieses Passwort wird bereits von {count} deiner Logins verwendet.',
+    similarExisting: 'Ähnliche Logins sind bereits im Tresor:',
+    noUnlockedAccount: 'Entsperre ein Konto, um ein Login hinzuzufügen.',
+    strength: {
+      veryWeak: 'Sehr schwach',
+      weak: 'Schwach',
+      fair: 'Mittel',
+      strong: 'Stark',
+      veryStrong: 'Sehr stark',
+    },
+  },
+
+  autofill: {
+    title: 'Autofill',
+    help: 'Agate kann Login-Felder in anderen Apps erkennen — Webview-Anmeldefenster (Microsoft, OAuth) und native Apps — und das passende Login ohne Kopieren ausfüllen.',
+    modeLabel: 'Erkennung',
+    mode: {
+      off: 'Aus',
+      hotkey: 'Per Tastenkürzel',
+      watch: 'Immer beobachten',
+    },
+    offHint: 'Agate untersucht keine anderen Fenster.',
+    hotkeyHint: 'Drücke {hotkey}, während ein Anmeldefeld fokussiert ist, um auszufüllen.',
+    watchHint: 'Bietet das Ausfüllen an, sobald ein Anmeldefeld — Benutzername, Passwort oder Einmalcode — in einer App fokussiert wird.',
+    unsupported: 'Autofill ist vorerst nur unter Windows verfügbar.',
+    securityNote:
+      'Du wählst das Login immer erst im Popup, bevor etwas ausgefüllt wird; mit Master-Passwort geschützte Einträge werden hier nie ausgefüllt. Das Ausfüllen in einer als Administrator laufenden App kann von Windows blockiert werden.',
+    fillInto: 'In {target} ausfüllen',
+    noneFound: 'Keine Anmeldung für {target} gefunden',
+    unknownTarget: 'das fokussierte Fenster',
+    searchPlaceholder: 'Tresor durchsuchen zum Ausfüllen…',
+    noMatches: 'Keine passenden Logins — tippe, um den Tresor zu durchsuchen.',
+    hint: '↵ ausfüllen · Esc abbrechen',
+    fill: 'Ausfüllen',
   },
 
   commandPalette: {
@@ -1133,24 +1210,6 @@ export const de: PartialMessages = {
   },
 
   clipboard: {
-    copied: '{label} kopiert.',
-    copiedClears: '{label} kopiert — wird in {seconds}s gelöscht.',
-    labels: {
-      username: 'Benutzername',
-      password: 'Passwort',
-      totpCode: 'TOTP-Code',
-      website: 'Website',
-      folder: 'Ordner',
-      token: 'Token',
-      command: 'Befehl',
-      code: 'Code',
-      url: 'URL',
-      publicKey: 'Öffentlicher Schlüssel',
-      fingerprint: 'Fingerabdruck',
-      privateKey: 'Privater Schlüssel',
-      number: 'Nummer',
-      cardholder: 'Karteninhaber',
-      securityCode: 'Sicherheitscode',
-    },
+    clearsIn: 'Wird in {seconds}s gelöscht',
   },
 };

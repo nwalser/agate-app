@@ -3,12 +3,89 @@
    floats edge-to-edge against whatever is behind it). */
 
 .tray-app {
+  position: relative; /* anchors the unlock flash overlay */
   display: flex;
   flex-direction: column;
   height: 100vh;
   background: var(--background);
   border: 1px solid var(--border-strong);
   overflow: hidden;
+}
+
+/* ── Autofill fill-mode target header ───────────────────────────────────── */
+
+/* Shown above the search in fill mode: which app a fill would land in, plus a
+   cancel button. Tinted with the accent so fill mode reads as a distinct state. */
+.tray-fill-target {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--primary-subtle, var(--card-hover));
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+
+.tray-fill-target-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--foreground);
+}
+
+.tray-fill-cancel {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--muted-foreground);
+  padding: 2px;
+  border-radius: var(--radius);
+}
+
+.tray-fill-cancel:hover {
+  color: var(--foreground);
+  background: var(--card-hover);
+}
+
+/* No-match note: a brief, compact message (the window is sized down to it) shown
+   when autofill found no login for the detected app, then auto-dismissed. */
+.tray-fill-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 14px;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--muted-foreground);
+}
+
+/* "Add login" offered when a detected app has no matching login. */
+.tray-add-from-app {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  background: var(--card);
+  color: var(--foreground);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 12px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.tray-add-from-app:hover {
+  background: var(--card-hover);
+  border-color: var(--primary);
 }
 
 /* ── Search ─────────────────────────────────────────────────────────────── */
@@ -64,6 +141,21 @@
   color: var(--muted-foreground);
 }
 
+/* Site favicon replacing the type icon when one loads (see Favicon.tsx; the
+   .favicon-img rules in VaultList.css aren't loaded in this webview). */
+.tray-type-icon .favicon-img {
+  border-radius: 3px;
+  object-fit: contain;
+}
+
+/* Per-connection identity dot — only rendered when items span >1 account. */
+.tray-account-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
 .tray-text {
   flex: 1;
   min-width: 0;
@@ -113,6 +205,248 @@
   color: var(--foreground);
 }
 
+/* ── Add-login form ─────────────────────────────────────────────────────── */
+
+/* "+" in the search row. */
+.tray-add-btn {
+  display: flex;
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  color: var(--muted-foreground);
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.tray-add-btn:hover {
+  background: var(--card-hover);
+  color: var(--foreground);
+}
+
+/* Header mirrors the fill-mode target bar (same dismiss button class). */
+.tray-add-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+
+.tray-add-title {
+  flex: 1;
+  font-size: 12px;
+  color: var(--foreground);
+}
+
+.tray-add-form {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+}
+
+.tray-add-form input,
+.tray-add-account {
+  width: 100%;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--foreground);
+  outline: none;
+}
+
+.tray-add-form input:focus,
+.tray-add-account:focus {
+  border-color: var(--primary);
+}
+
+.tray-add-form input::placeholder {
+  color: var(--subtle-foreground);
+}
+
+/* Password row: field + reveal + generate. */
+.tray-add-password {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tray-add-password input {
+  flex: 1;
+  min-width: 0;
+}
+
+.tray-add-password button {
+  display: flex;
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  color: var(--muted-foreground);
+  padding: 6px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.tray-add-password button:hover {
+  background: var(--card-hover);
+  color: var(--foreground);
+}
+
+/* Strength meter: a track that fills to a width + color per zxcvbn score. */
+.tray-strength {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: -2px;
+}
+
+.tray-strength-track {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--card-hover);
+  overflow: hidden;
+}
+
+.tray-strength-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition:
+    width 0.18s ease,
+    background-color 0.18s ease;
+}
+
+.tray-strength-label {
+  font-size: 11px;
+  min-width: 64px;
+  text-align: right;
+}
+
+.tray-strength.s0 .tray-strength-fill,
+.tray-strength.s1 .tray-strength-fill {
+  width: 25%;
+  background: var(--destructive);
+}
+
+.tray-strength.s0 .tray-strength-label,
+.tray-strength.s1 .tray-strength-label {
+  color: var(--destructive);
+}
+
+.tray-strength.s2 .tray-strength-fill {
+  width: 55%;
+  background: var(--warning);
+}
+
+.tray-strength.s2 .tray-strength-label {
+  color: var(--warning);
+}
+
+.tray-strength.s3 .tray-strength-fill {
+  width: 80%;
+  background: var(--success);
+}
+
+.tray-strength.s4 .tray-strength-fill {
+  width: 100%;
+  background: var(--success);
+}
+
+.tray-strength.s3 .tray-strength-label,
+.tray-strength.s4 .tray-strength-label {
+  color: var(--success);
+}
+
+/* Website field: a leading favicon/globe + the URL input. */
+.tray-add-website {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0 10px;
+}
+
+.tray-add-website:focus-within {
+  border-color: var(--primary);
+}
+
+.tray-add-website-icon {
+  display: flex;
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+}
+
+.tray-add-website input {
+  flex: 1;
+  min-width: 0;
+  /* The wrapper draws the border/background now. */
+  border: none;
+  background: transparent;
+  padding: 8px 0;
+}
+
+.tray-add-website input:focus {
+  border: none;
+}
+
+/* Callouts: reused password (warn) + similar logins (info). */
+.tray-add-callout {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font-size: 11.5px;
+}
+
+.tray-add-callout.warn {
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  color: var(--warning);
+}
+
+.tray-add-callout.warn span {
+  color: var(--foreground);
+}
+
+.tray-add-callout.warn,
+.tray-add-callout-head {
+  flex-direction: row;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tray-add-callout.info {
+  background: var(--card-hover);
+  color: var(--muted-foreground);
+}
+
+.tray-add-similar {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tray-add-similar li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
 /* ── Footer ─────────────────────────────────────────────────────────────── */
 
 .tray-footer {
@@ -158,6 +492,10 @@
 }
 
 .tray-locked {
+  position: relative;
+  /* New stacking context so the aurora (z-index -1) sits behind the locked-view
+     content without needing to position every child. */
+  isolation: isolate;
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -168,9 +506,82 @@
   font-size: 13px;
 }
 
+/* ── Unlock aurora backdrop (mirrors the main Unlock screen) ──────────────────
+   The same faint, multi-color account-palette glow the main app weaves behind
+   its unlocking screen, popup-scaled (smaller blur for the 380px window). Two
+   blurred radial-gradient fields drift at different speeds so their overlap
+   reads as slow weaving. Shown only while an unlock runs (store.unlocking()),
+   behind the locked-view content. Colors are palette tokens — no literals. */
+.tray-unlock-aurora {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0;
+  filter: blur(40px) saturate(125%);
+  animation: tray-aurora-fade-in 1.1s ease forwards;
+}
+
+.tray-unlock-aurora::before,
+.tray-unlock-aurora::after {
+  content: '';
+  position: absolute;
+  /* bleed past the edges so rotation never reveals a hard corner */
+  inset: -45%;
+  transform-origin: center;
+  will-change: transform;
+}
+
+.tray-unlock-aurora::before {
+  background:
+    radial-gradient(42% 48% at 30% 34%, color-mix(in srgb, var(--account-0) 70%, transparent), transparent 70%),
+    radial-gradient(40% 46% at 72% 66%, color-mix(in srgb, var(--account-2) 62%, transparent), transparent 72%);
+  animation: tray-aurora-drift-a 22s ease-in-out infinite alternate;
+}
+
+.tray-unlock-aurora::after {
+  background:
+    radial-gradient(46% 50% at 70% 28%, color-mix(in srgb, var(--account-1) 62%, transparent), transparent 70%),
+    radial-gradient(42% 48% at 26% 74%, color-mix(in srgb, var(--account-7) 66%, transparent), transparent 72%);
+  mix-blend-mode: screen;
+  animation: tray-aurora-drift-b 29s ease-in-out infinite alternate;
+}
+
+@keyframes tray-aurora-fade-in {
+  to {
+    opacity: 0.18;
+  }
+}
+
+@keyframes tray-aurora-drift-a {
+  0% {
+    transform: translate3d(-6%, -4%, 0) rotate(0deg) scale(1.2);
+  }
+  50% {
+    transform: translate3d(5%, 4%, 0) rotate(9deg) scale(1.34);
+  }
+  100% {
+    transform: translate3d(-3%, 6%, 0) rotate(-6deg) scale(1.24);
+  }
+}
+
+@keyframes tray-aurora-drift-b {
+  0% {
+    transform: translate3d(5%, 5%, 0) rotate(0deg) scale(1.26);
+  }
+  50% {
+    transform: translate3d(-5%, -4%, 0) rotate(-11deg) scale(1.4);
+  }
+  100% {
+    transform: translate3d(6%, -2%, 0) rotate(8deg) scale(1.3);
+  }
+}
+
 .tray-unlock-btn {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   background: var(--primary);
   color: var(--primary-foreground);
@@ -183,4 +594,230 @@
 
 .tray-unlock-btn:hover {
   background: var(--primary-hover);
+}
+
+.tray-unlock-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* In-popup unlock: app-password field + unlock button, stacked. */
+
+.tray-unlock-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(240px, 80%);
+}
+
+.tray-unlock-form input {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--foreground);
+  outline: none;
+}
+
+.tray-unlock-form input:focus {
+  border-color: var(--primary);
+}
+
+.tray-unlock-form input::placeholder {
+  color: var(--subtle-foreground);
+}
+
+.tray-hello-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: min(240px, 80%);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--foreground);
+  padding: 8px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.tray-hello-btn:hover {
+  background: var(--card-hover);
+}
+
+.tray-hello-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* ── Unlock animation (popup-scale mirror of the Unlock screen's beats) ──── */
+
+/* The lock badge in the locked view; breathes while an unlock is running. */
+.tray-lock-badge {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--card-hover);
+  color: var(--muted-foreground);
+}
+
+.tray-lock-badge.working {
+  color: var(--primary);
+  animation: tray-unlock-pulse 1.3s ease-in-out infinite;
+}
+
+/* Success beat: a green open-lock pop over the view, fading out while the
+   freshly unlocked list animates in underneath. Duration tracks
+   UNLOCK_BEAT_MS (lib/unlockBeat.ts) so the beat ends together with the main
+   Unlock screen's. */
+.tray-unlock-flash {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  background: var(--background);
+  pointer-events: none;
+  animation: tray-flash-out 0.72s ease forwards;
+}
+
+.tray-unlock-flash-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--success) 18%, transparent);
+  color: var(--success);
+  animation: tray-unlock-pop 0.5s ease;
+}
+
+/* Same role as the main screen's "Vault unlocked" status line. */
+.tray-unlock-flash-text {
+  font-size: 12.5px;
+  color: var(--muted-foreground);
+  animation: tray-text-in 0.4s ease;
+}
+
+/* The main Unlock screen's indeterminate working sweep, popup-sized. */
+.tray-unlock-progress {
+  width: 200px;
+  max-width: 80%;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--card-hover);
+  overflow: hidden;
+}
+
+.tray-unlock-progress-bar {
+  height: 100%;
+  width: 40%;
+  border-radius: inherit;
+  background: var(--primary);
+  animation: tray-unlock-sweep 1.15s ease-in-out infinite;
+}
+
+.tray-app.just-unlocked .tray-search,
+.tray-app.just-unlocked .tray-list,
+.tray-app.just-unlocked .tray-footer {
+  animation: tray-view-in 0.45s ease both;
+}
+
+@keyframes tray-unlock-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 35%, transparent);
+  }
+  50% {
+    transform: scale(1.05);
+    box-shadow: 0 0 0 10px color-mix(in srgb, var(--primary) 0%, transparent);
+  }
+}
+
+@keyframes tray-unlock-pop {
+  0% {
+    transform: scale(0.7);
+  }
+  55% {
+    transform: scale(1.14);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes tray-flash-out {
+  0%,
+  55% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes tray-text-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes tray-unlock-sweep {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+
+@keyframes tray-view-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tray-lock-badge.working,
+  .tray-unlock-progress-bar,
+  .tray-app.just-unlocked .tray-search,
+  .tray-app.just-unlocked .tray-list,
+  .tray-app.just-unlocked .tray-footer {
+    animation: none;
+  }
+
+  .tray-unlock-flash {
+    display: none;
+  }
+
+  /* Keep the aurora as a still, faint wash — no drifting motion. */
+  .tray-unlock-aurora {
+    animation: none;
+    opacity: 0.14;
+  }
+
+  .tray-unlock-aurora::before,
+  .tray-unlock-aurora::after {
+    animation: none;
+  }
 }

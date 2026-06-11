@@ -54,6 +54,23 @@ describe('recentItems', () => {
     expect(mixed.recentIds()).toEqual(['ok', 'fine']); // non-strings dropped
   });
 
+  it('recordRecent merges over what another webview persisted since load', async () => {
+    const m = await fresh(['a']);
+    // The other webview (main window vs tray popup) records behind our back —
+    // shared localStorage, separate in-memory signals.
+    localStorage.setItem('agate.recentItems', JSON.stringify(['b', 'a']));
+    m.recordRecent('c');
+    expect(m.recentIds()).toEqual(['c', 'b', 'a']);
+    expect(JSON.parse(localStorage.getItem('agate.recentItems') ?? '[]')).toEqual(['c', 'b', 'a']);
+  });
+
+  it('reloadRecent re-reads the persisted list', async () => {
+    const m = await fresh(['a']);
+    localStorage.setItem('agate.recentItems', JSON.stringify(['b', 'a']));
+    m.reloadRecent();
+    expect(m.recentIds()).toEqual(['b', 'a']);
+  });
+
   it('tolerates a corrupt stored value', async () => {
     vi.resetModules();
     localStorage.clear();

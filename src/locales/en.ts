@@ -57,6 +57,7 @@ export const en = {
     sidebar: 'Sidebar',
     templates: 'Templates',
     aiAccess: 'AI Access',
+    autofill: 'Autofill',
     updates: 'Updates',
     about: 'About',
   },
@@ -94,6 +95,9 @@ export const en = {
     closeToTray: 'Keep running in the tray when the window is closed',
     closeToTrayDesc:
       'Closing the window hides Agate instead of quitting; use the tray icon to reopen or quit.',
+    startInTray: 'Start hidden in the tray',
+    startInTrayDesc:
+      'When launched at login, only the tray icon appears — open the window from the tray when you need it.',
   },
 
   offline: {
@@ -184,6 +188,7 @@ export const en = {
     sends: 'Sends',
     security: 'Security',
     atRisk: 'At risk',
+    cleanup: 'Cleanup',
     sync: 'Sync',
   },
 
@@ -363,7 +368,6 @@ export const en = {
     serverEnabled: 'AI access server enabled.',
     serverDisabled: 'AI access server disabled.',
     revokedAll: 'Revoked AI access to every item.',
-    copied: '{label} copied.',
     title: 'AI access',
     help: 'Run a local server that lets an AI assistant (e.g. Claude) read the vault items you pick below — and nothing else. The server listens on your machine only (127.0.0.1) and requires a secret token.',
     warning:
@@ -666,6 +670,9 @@ export const en = {
     collections: 'Collections',
     created: 'Created {date}',
     updated: 'Updated {date}',
+    passwordUpdated: 'Password updated',
+    passwordHistory: 'Password history',
+    autofillOnPageLoad: 'Autofill on page load',
     copyField: 'Copy {label}',
     openWebsite: 'Open website',
     cardBrandFallback: 'Card',
@@ -711,6 +718,10 @@ export const en = {
     // ── Create form ──
     new: 'New Send',
     account: 'Account',
+    typeLabel: 'Type',
+    typeText: 'Text',
+    typeFile: 'File',
+    fileNote: 'A file picker opens when you create the Send.',
     nameLabel: 'Name',
     namePlaceholder: 'A label for this share',
     textLabel: 'Text to share',
@@ -758,6 +769,7 @@ export const en = {
     totpCaptured: 'TOTP key captured from screen.',
     uris: 'URIs',
     addUri: 'Add URI',
+    autofillOnPageLoad: 'Autofill on page load',
     ocrNothingRecognized: 'Nothing usable recognized in that image.',
     filledFromImage: 'Filled {count} field(s) from the image.',
     strength: {
@@ -947,6 +959,26 @@ export const en = {
     disabledNotice: '{what} is turned off. Enable it in Settings → Security monitoring.',
   },
 
+  cleanup: {
+    title: 'Cleanup',
+    linkHealth: 'Link health',
+    scanNow: 'Scan now',
+    scanning: 'Checking every saved link…',
+    privacyNote:
+      'Checks every website saved in your vault for dead links. This sends a request to each site, revealing your saved domains — so it runs only when you click Scan now.',
+    scannedCount: '{count} checked',
+    brokenCount: '{count} broken',
+    uncertainCount: '{count} uncertain',
+    allReachable: 'Every link is reachable.',
+    needsUpdate: 'Needs update',
+    couldNotReach: "Couldn't reach",
+    couldNotReachHint:
+      'These timed out or returned a server error — they may just be temporarily down.',
+    openItem: 'Open item',
+    statusUnreachable: 'Unreachable',
+    statusTimeout: 'No response',
+  },
+
   // ── Tray, command palette, menus, chrome ───────────────────────────────────
   tray: {
     repromptBlocked: 'Master-password protected — open Agate to copy.',
@@ -957,7 +989,52 @@ export const en = {
     openAgate: 'Open Agate',
     searchPlaceholder: 'Search vault…',
     noMatches: 'No matches.',
-    footerHint: '↵ copy password · Esc close',
+    footerHint: '↵ password · ⇧↵ username · ⌃↵ TOTP · Esc',
+    appPasswordPlaceholder: 'App password…',
+    unlock: 'Unlock',
+    unlocking: 'Unlocking…',
+    unlockWithHello: 'Unlock with Windows Hello',
+    twoFactorPending: '2FA needed for {emails} — open Agate to finish.',
+    addLogin: 'Add login',
+    newLogin: 'New login',
+    generatePassword: 'Generate password',
+    saveLogin: 'Save login',
+    saving: 'Saving…',
+    loginSaved: 'Login saved.',
+    passwordReused: 'This password is already used by {count} of your logins.',
+    similarExisting: 'Similar logins already in your vault:',
+    noUnlockedAccount: 'Unlock an account to add a login.',
+    strength: {
+      veryWeak: 'Very weak',
+      weak: 'Weak',
+      fair: 'Fair',
+      strong: 'Strong',
+      veryStrong: 'Very strong',
+    },
+  },
+
+  autofill: {
+    title: 'Autofill',
+    help: 'Let Agate watch for login fields in other apps — webview sign-in popups (Microsoft, OAuth) and native apps — and fill the matching login with no copy-paste.',
+    modeLabel: 'Detection',
+    mode: {
+      off: 'Off',
+      hotkey: 'On hotkey',
+      watch: 'Always watch',
+    },
+    offHint: 'Agate never inspects other windows.',
+    hotkeyHint: 'Press {hotkey} while a login field is focused to offer a fill.',
+    watchHint: 'Offers a fill whenever a login field — username, password, or one-time code — in any app gains focus.',
+    unsupported: 'Autofill is only available on Windows for now.',
+    securityNote:
+      'You always pick the login in the popup before anything is filled, and master-password-protected items are never filled here. Filling into an app running as administrator may be blocked by Windows.',
+    fillInto: 'Fill into {target}',
+    noneFound: 'No login found for {target}',
+    unknownTarget: 'the focused window',
+    searchPlaceholder: 'Search vault to fill…',
+    noMatches: 'No matching logins — type to search your vault.',
+    hint: '↵ fill · Esc cancel',
+    fill: 'Fill',
   },
 
   commandPalette: {
@@ -1142,28 +1219,11 @@ export const en = {
     resize: 'Resize',
   },
 
-  // Copy-to-clipboard confirmation toast (lib/clipboard.ts). `labels.*` localize
-  // the known copy targets; the secret value itself is never in a translation.
+  // Copy feedback (lib/clipboard.ts + components/CopyButton.tsx). Success is shown
+  // by animation, not a toast; this is the aria/title for the live countdown a copy
+  // button morphs into while the secret is still on the clipboard.
   clipboard: {
-    copied: '{label} copied.',
-    copiedClears: '{label} copied — clears in {seconds}s.',
-    labels: {
-      username: 'Username',
-      password: 'Password',
-      totpCode: 'TOTP code',
-      website: 'Website',
-      folder: 'Folder',
-      token: 'Token',
-      command: 'Command',
-      code: 'Code',
-      url: 'URL',
-      publicKey: 'Public key',
-      fingerprint: 'Fingerprint',
-      privateKey: 'Private key',
-      number: 'Number',
-      cardholder: 'Cardholder',
-      securityCode: 'Security code',
-    },
+    clearsIn: 'Clears in {seconds}s',
   },
 };
 

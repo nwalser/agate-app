@@ -1,0 +1,79 @@
+/* CopyButton motion. The button keeps whatever skin the host passes (e.g.
+   `ghost icon-btn`); this only adds the copy → check → countdown choreography.
+   Design tokens only. */
+
+.copy-btn {
+  position: relative;
+}
+
+.copy-btn-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* The check that confirms the copy landed: a quick pop in the success color. */
+.copy-btn.is-copied .copy-btn-ico {
+  color: var(--success);
+  animation: copy-check-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* The live "clipboard wipes in Ns" countdown the button morphs into for a
+   secret. tabular-nums so the width doesn't jitter as digits change; a faint
+   1s pulse echoes each tick. */
+.copy-btn-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.5em;
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--primary);
+  animation:
+    copy-count-in 0.22s ease,
+    copy-count-pulse 1s ease-in-out infinite;
+}
+
+@keyframes copy-check-pop {
+  0% {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+  45% {
+    transform: scale(1.25);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes copy-count-in {
+  from {
+    transform: scale(0.55);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes copy-count-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .copy-btn.is-copied .copy-btn-ico,
+  .copy-btn-count {
+    animation: none;
+  }
+}

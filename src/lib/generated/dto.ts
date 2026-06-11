@@ -95,6 +95,125 @@ export type Attachment = { id: string; fileName: string | null;
 sizeName: string | null }
 
 /**
+ * A vault login ranked as a possible fill for the detected target. No password —
+ * the secret is fetched only at the moment of fill, in the backend.
+ */
+export type AutofillCandidate = { accountEmail: string; accountLabel: string; itemId: string; name: string; username: string | null; uri: string | null; 
+/**
+ * "Require master password to view" (reprompt) is set — the popup gates these
+ * (defers to the main window) instead of filling, mirroring the copy path.
+ */
+reprompt: boolean; 
+/**
+ * Higher = better match. Purely for ordering the candidates in the popup.
+ */
+score: number }
+
+/**
+ * What was detected at the focused / foreground login field — shown in the popup
+ * header so the user sees WHERE a fill would land before confirming. Carries no
+ * secrets: a process name, a window title, and a best-effort URL are not secret.
+ */
+export type AutofillContext = { 
+/**
+ * Which kind of field was focused — the popup labels the fill and the
+ * injector types the matching value (username vs password).
+ */
+field: AutofillField; 
+/**
+ * Owning process file stem, e.g. "outlook" / "msedgewebview2". None when it
+ * couldn't be resolved.
+ */
+processName: string | null; 
+/**
+ * Foreground window title, e.g. "Sign in to your account".
+ */
+windowTitle: string | null; 
+/**
+ * Best-effort URL when the field lives in a webview that exposes one
+ * (browser-like). Usually None for embedded OAuth popups, which is exactly
+ * why matching also falls back to the process name + window title.
+ */
+url: string | null; 
+/**
+ * The URI to add to a login's autofill URIs when the user picks a
+ * non-matching login and opts to "remember it for this app". The real URL
+ * when present, else a synthetic `app://<process>` association (no local
+ * store — it rides Bitwarden sync and the matcher recognizes it). None when
+ * neither is known.
+ */
+associateUri: string | null }
+
+/**
+ * Which kind of login field was detected — so the popup knows what a fill would
+ * land, and the injector types the right value (the username vs the password).
+ * A closed set per CLAUDE.md (no bare strings across IPC).
+ */
+export type AutofillField = 
+/**
+ * A masked secret field (`IsPassword`) — fill the login's password. The
+ * default: it's the original, narrowest detection surface.
+ */
+"password" | 
+/**
+ * A username / email field (an editable control whose accessible label
+ * names a user/email/login) — fill the login's username, then tab to and
+ * fill the password too.
+ */
+"username" | 
+/**
+ * A one-time-code / TOTP / 2FA field (an editable control whose label names a
+ * verification / authenticator code) — fill the login's current TOTP code.
+ */
+"totp"
+
+/**
+ * How — and whether — Agate watches other apps' login fields to offer autofill.
+ * A closed set so neither the picker nor the persisted config ever carries a
+ * bare string (per CLAUDE.md).
+ */
+export type AutofillMode = 
+/**
+ * Disabled — Agate never inspects other windows. The default.
+ */
+"off" | 
+/**
+ * On-demand only: a global hotkey inspects the foreground window when the
+ * user explicitly asks. Smallest surface — nothing is watched continuously.
+ */
+"hotkey" | 
+/**
+ * Always-watch: a focus hook offers autofill whenever a login field in
+ * any application gains focus. Most convenient, largest surface.
+ */
+"watch"
+
+/**
+ * The detected target plus its ranked candidates — the popup's fill-mode payload.
+ */
+export type AutofillPending = { 
+/**
+ * Opaque token tying a later `autofill_fill` back to THIS detection, so a
+ * stale popup can't fill into a window that has since changed underneath it.
+ */
+token: string; context: AutofillContext; candidates: AutofillCandidate[] }
+
+/**
+ * Feature status for the Settings page + the popup's gating.
+ */
+export type AutofillStatus = { mode: AutofillMode; 
+/**
+ * Whether this platform / build can actually watch + inject (Windows only).
+ * When false the Settings page shows the feature as unavailable rather than
+ * letting the user arm a mode that does nothing.
+ */
+supported: boolean; 
+/**
+ * Human label for the on-demand hotkey, e.g. "Ctrl+Alt+\".
+ */
+hotkey: string }
+
+/**
  * One breach. `data_classes` is the headline: *what personal data leaked*.
  */
 export type BreachRecord = { 
@@ -356,15 +475,74 @@ id: string | null; itemType: ItemType; name: string; folderId: string | null; or
 export type ItemType = "login" | "secureNote" | "card" | "identity" | "sshKey" | "unknown"
 
 /**
+ * Aggregate link-health report across every unlocked vault. The counts are over
+ * the UNIQUE URLs found (a URL shared by several items is checked once);
+ * `scanned == ok + broken + unreachable + uncertain`. `items` holds only the
+ * entries needing attention (≥ 1 non-ok link).
+ */
+export type LinkCheckReport = { 
+/**
+ * Unique web URLs actually checked over the network (excludes skipped).
+ */
+scanned: number; ok: number; broken: number; unreachable: number; uncertain: number; 
+/**
+ * Unique non-web / unparseable URIs that were skipped (e.g. `androidapp://`).
+ */
+skipped: number; items: LinkHealthItem[] }
+
+/**
+ * A vault item that owns at least one problematic link. `links` lists only the
+ * item's URLs that need attention (broken / unreachable / uncertain), each with
+ * its verdict, so the user can see exactly which to fix.
+ */
+export type LinkHealthItem = { id: string; name: string; accountEmail: string; links: LinkStatus[] }
+
+/**
+ * One checked URL and its verdict. `http_status` is the final response code when
+ * the host answered (after following redirects); absent for unreachable URLs.
+ */
+export type LinkStatus = { url: string; kind: LinkStatusKind; httpStatus: number | null }
+
+/**
+ * Reachability verdict for one checked URL. Skipped URIs (non-web schemes like
+ * `androidapp://`, unparseable junk) are never assigned a kind — they only feed
+ * the report's aggregate `skipped` count — so there is no `Skipped` variant.
+ * - `Ok`: the host answered with a live status (2xx/3xx, or an auth/blocked code
+ * like 401/403/405/429 — the site exists, it just didn't serve the page anonymously).
+ * - `Broken`: the page is gone (404/410) — needs update.
+ * - `Unreachable`: DNS / connection / TLS failure — the host itself is dead — needs update.
+ * - `Uncertain`: timeout or 5xx — possibly a transient outage, shown apart from broken.
+ */
+export type LinkStatusKind = "ok" | "broken" | "unreachable" | "uncertain"
+
+/**
  * Login-type detail.
  */
 export type LoginDetail = { username: string | null; password: string | null; 
 /**
  * The TOTP secret/URI itself (so an edit can preserve it).
  */
-totp: string | null; uris: LoginUri[]; hasTotp: boolean }
+totp: string | null; uris: LoginUri[]; hasTotp: boolean; 
+/**
+ * When the password was last changed (RFC 3339). None if never recorded.
+ */
+passwordRevisionDate: string | null; 
+/**
+ * Whether autofill-on-page-load is enabled (None = inherit the global default).
+ */
+autofillOnPageLoad: boolean | null; 
+/**
+ * Past passwords (cipher-level in Bitwarden; surfaced here under the login for
+ * the history viewer). Empty when none stored.
+ */
+passwordHistory: PasswordHistoryEntry[] }
 
-export type LoginInput = { username: string | null; password: string | null; totp: string | null; uris: UriInput[] }
+export type LoginInput = { username: string | null; password: string | null; totp: string | null; uris: UriInput[]; 
+/**
+ * Autofill-on-page-load toggle (None = inherit the global default). Optional
+ * so an older payload that omits it round-trips to None.
+ */
+autofillOnPageLoad: boolean | null }
 
 /**
  * Result of a login attempt.
@@ -408,6 +586,17 @@ export type PassphraseGenOptions = { numWords: number; wordSeparator: string; ca
  * Password-generator options from the UI.
  */
 export type PasswordGenOptions = { length: number; uppercase: boolean; lowercase: boolean; numbers: boolean; special: boolean; avoidAmbiguous?: boolean; minNumber?: number | null; minSpecial?: number | null }
+
+/**
+ * One past password (with when it was replaced) for the login's history viewer.
+ * The password VALUE is a secret — the pane masks/reprompt-gates it like any
+ * password before revealing.
+ */
+export type PasswordHistoryEntry = { password: string; 
+/**
+ * When this password was replaced (RFC 3339).
+ */
+lastUsedDate: string }
 
 /**
  * Create-a-Send input (frontend → backend). Text Sends only for now; file Sends
@@ -456,6 +645,29 @@ url: string }
  * rather than accepting an arbitrary date from the UI.
  */
 export type SendExpiry = "oneHour" | "oneDay" | "twoDays" | "threeDays" | "sevenDays" | "thirtyDays"
+
+/**
+ * Create-a-file-Send input (frontend → backend). The file itself is chosen via a
+ * native picker in the backend (no path crosses IPC), so this carries only the
+ * Send's settings — the same options as a text Send minus the text body.
+ */
+export type SendFileCreateInput = { 
+/**
+ * Which unlocked connection owns the new Send.
+ */
+accountEmail: string; name: string; expiry: SendExpiry; 
+/**
+ * Cap on how many times the Send can be opened (None = unlimited).
+ */
+maxAccessCount: number | null; 
+/**
+ * Optional access password. SECRET — never logged.
+ */
+password: string | null; 
+/**
+ * Hide the sender's email from recipients.
+ */
+hideEmail: boolean }
 
 /**
  * A Bitwarden Send (ephemeral share) summary for the Sends manager. Named

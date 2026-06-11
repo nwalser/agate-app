@@ -223,6 +223,10 @@
   align-items: center;
   gap: 4px;
   min-width: 0;
+  /* Fill the header row's full height (it's set by the taller gear icon-buttons),
+     so the sort label below can be a full-height click target instead of a thin
+     text-high band centred in the row. */
+  align-self: stretch;
 }
 .vault-col-resize {
   position: absolute;
@@ -255,6 +259,9 @@
 .vault-head-labelbtn {
   flex: 1 1 auto;
   min-width: 0;
+  /* Stretch to the cell's full height so the whole header band sorts on click,
+     not just the text line. */
+  align-self: stretch;
   display: inline-flex;
   align-items: center;
   gap: 4px;

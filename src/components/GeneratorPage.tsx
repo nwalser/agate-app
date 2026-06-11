@@ -5,8 +5,7 @@
 // two primary actions.
 
 import { createEffect, createSignal, For, Match, Show, Switch } from 'solid-js';
-import { Copy, RefreshCw } from 'lucide-solid';
-import { writeText } from '@tauri-apps/plugin-clipboard-manager';
+import { RefreshCw } from 'lucide-solid';
 import { ipc } from '../lib/ipc.ts';
 import type {
   PassphraseGenOptions,
@@ -14,8 +13,10 @@ import type {
   UsernameGenOptions,
   UsernameMode,
 } from '../lib/types.ts';
-import { pushToast, toastError } from '../state/toast.ts';
+import { toastError } from '../state/toast.ts';
 import { pushGeneratorHistory } from '../state/generatorHistory.ts';
+import { copyWithAutoClear } from '../lib/clipboard.ts';
+import CopyButton from './CopyButton.tsx';
 import { t } from '../lib/i18n.ts';
 import './GeneratorPage.css';
 
@@ -109,15 +110,12 @@ export default function GeneratorPage() {
 
   async function copy() {
     if (!output()) return;
-    try {
-      await writeText(output());
-      // Copying is an intentional "I want this value" — record it (unlike the
-      // auto-regenerate effect, which would flood history on every slider tick).
-      pushGeneratorHistory(output());
-      pushToast('success', t('common.copied'));
-    } catch (err) {
-      toastError(err);
-    }
+    // Copying is an intentional "I want this value" — record it (unlike the
+    // auto-regenerate effect, which would flood history on every slider tick).
+    pushGeneratorHistory(output());
+    // The single copy path: feedback + (for a generated password) auto-clear.
+    // A generated username is non-secret, so it never clears.
+    await copyWithAutoClear(mode() === 'username' ? 'Username' : 'Password', output());
   }
 
   // Explicit "make me a new one" — generate, then record the result.
@@ -175,9 +173,7 @@ export default function GeneratorPage() {
           <button class="ghost icon-btn" title={t('generator.regenerate')} onClick={() => void regenerate()}>
             <RefreshCw size={15} strokeWidth={1.75} />
           </button>
-          <button class="ghost icon-btn" title={t('common.copy')} disabled={!output()} onClick={() => void copy()}>
-            <Copy size={15} strokeWidth={1.75} />
-          </button>
+          <CopyButton class="ghost icon-btn" disabled={!output()} onCopy={() => copy()} />
         </div>
 
         <Switch>
