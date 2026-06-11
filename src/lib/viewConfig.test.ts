@@ -33,6 +33,23 @@ describe('sameViewConfig', () => {
     expect(sameViewConfig(base(), base({ columns: DEFAULT }))).toBe(false);
     expect(sameViewConfig(base({ columns: DEFAULT }), base({ columns: { ...DEFAULT } }))).toBe(true);
   });
+  it('detects a custom column rename / re-icon as a change', () => {
+    const cols = (over: Partial<{ label: string; icon: string }> = {}) => ({
+      ...DEFAULT,
+      columns: [{ kind: 'custom' as const, field: 'env', ...over }],
+    });
+    // Same field, different label → dirty.
+    expect(sameViewConfig(base({ columns: cols() }), base({ columns: cols({ label: 'Env' }) }))).toBe(false);
+    // Same field, different icon → dirty.
+    expect(
+      sameViewConfig(base({ columns: cols({ icon: 'tag' }) }), base({ columns: cols({ icon: 'key' }) })),
+    ).toBe(false);
+    // Identical label + icon → clean.
+    expect(
+      sameViewConfig(base({ columns: cols({ label: 'Env', icon: 'tag' }) }), base({ columns: cols({ label: 'Env', icon: 'tag' }) })),
+    ).toBe(true);
+  });
+
   it('detects a display-mode (table vs list) change', () => {
     expect(
       sameViewConfig(

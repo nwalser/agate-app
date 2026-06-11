@@ -12,6 +12,7 @@
 // so "Work" never matches "Workshop" and stray whitespace can't fool a prefix.
 
 import type { Folder, VaultItem } from './types.ts';
+import { t } from './i18n.ts';
 
 /** A folder that actually exists on the server (has an id), not a tree group. */
 export type RealFolder = Folder & { id: string };
@@ -113,7 +114,7 @@ function rebase(folders: Folder[], folder: RealFolder, newBase: string[]): Renam
   for (const f of subtree) {
     const newName = rewrite(oldBase, newBase, segments(f.name));
     if (pathTaken(folders, folder.accountEmail, newName, subtreeIds)) {
-      return { error: 'A folder with that name already exists there.' };
+      return { error: t('folder.errorExistsThere') };
     }
     if (newName !== f.name) renames.push({ id: f.id, newName });
   }
@@ -128,11 +129,11 @@ export function planCreate(
   rawName: string,
 ): CreatePlan | FolderPlanError {
   const name = rawName.trim();
-  if (!name) return { error: 'Folder name is required.' };
-  if (name.includes('/')) return { error: 'Folder names can’t contain “/”.' };
+  if (!name) return { error: t('folder.errorNameRequired') };
+  if (name.includes('/')) return { error: t('folder.errorNoSlash') };
   const path = [...(parent ? segments(parent.name) : []), name].join('/');
   if (pathTaken(folders, account, path, new Set())) {
-    return { error: 'A folder with that name already exists here.' };
+    return { error: t('folder.errorExistsHere') };
   }
   return { name: path };
 }
@@ -144,8 +145,8 @@ export function planRename(
   rawLeaf: string,
 ): RenamePlan | FolderPlanError {
   const leaf = rawLeaf.trim();
-  if (!leaf) return { error: 'Folder name is required.' };
-  if (leaf.includes('/')) return { error: 'Folder names can’t contain “/”.' };
+  if (!leaf) return { error: t('folder.errorNameRequired') };
+  if (leaf.includes('/')) return { error: t('folder.errorNoSlash') };
   const newBase = [...segments(parentPath(folder.name)), leaf];
   return rebase(folders, folder, newBase);
 }
@@ -157,10 +158,10 @@ export function planReparent(
   target: Folder | null,
 ): RenamePlan | FolderPlanError {
   if (target && target.accountEmail !== folder.accountEmail) {
-    return { error: 'Move folders within the same account.' };
+    return { error: t('folder.errorSameAccount') };
   }
   if (isSelfOrDescendant(target, folder)) {
-    return { error: 'Can’t move a folder into itself or its own subfolder.' };
+    return { error: t('folder.errorIntoSelf') };
   }
   const newBase = [...(target ? segments(target.name) : []), leafName(folder.name)];
   return rebase(folders, folder, newBase);

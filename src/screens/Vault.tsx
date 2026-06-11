@@ -71,6 +71,7 @@ import Resizer from '../components/Resizer.tsx';
 import VaultContextMenu, { type CtxMenuTarget } from '../components/VaultContextMenu.tsx';
 import { typeIcon } from '../lib/vaultIcons.ts';
 import { ipc } from '../lib/ipc.ts';
+import { t } from '../lib/i18n.ts';
 import './Vault.css';
 
 export default function Vault(props: { onLock: () => void; onOpenSettings: () => void }) {
@@ -189,11 +190,11 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
   // live filter/search/columns/sort, name it after the current page (or the active
   // search), and make it the active view so it highlights in the rail immediately.
   function saveAsNewView() {
-    const base = (query().trim() || pageHeader().label || 'New view').slice(0, 60);
+    const base = (query().trim() || pageHeader().label || t('vault.newView')).slice(0, 60);
     const id = addQuery({ name: base, icon: DEFAULT_VIEW_ICON, config: captureView() });
     if (!id) return;
     setActiveViewId(id);
-    pushToast('success', `Saved view “${base}”. Rename or re-icon it from its right-click menu.`);
+    pushToast('success', t('vault.savedViewToast', { name: base }));
   }
 
   // Switch a rail filter and return to the vault view in one step (leaves any view).
@@ -388,12 +389,12 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
 
   // Hover text for the header cloud icon — state plus last-success clock time.
   const syncTooltip = createMemo(() => {
-    if (syncState() === 'syncing') return 'Syncing…';
+    if (syncState() === 'syncing') return t('vault.syncing');
     const ts = lastSync();
-    const when = ts === null ? '' : ` (synced ${new Date(ts).toLocaleTimeString()})`;
-    if (syncState() === 'error') return `Sync failed — click to retry${when}`;
-    if (ts === null) return 'Not synced yet — click to sync';
-    return `Live — click to sync now${when}`;
+    const when = ts === null ? '' : t('vault.syncedAt', { time: new Date(ts).toLocaleTimeString() });
+    if (syncState() === 'error') return t('vault.syncFailed', { when });
+    if (ts === null) return t('vault.syncNever');
+    return t('vault.syncLive', { when });
   });
 
   // ---- row context-menu open/close (positioning owned here) ----
@@ -527,7 +528,7 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
         <Show when={!sidebarCollapsed()}>
           <Resizer
             variant="sidebar-resizer"
-            label="Resize sidebar"
+            label={t('vault.resizeSidebar')}
             onResize={setSidebarWidth}
             onReset={resetSidebarWidth}
           />
@@ -561,14 +562,14 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
                   {(v) => (
                     <div class="vault-view-bar">
                       <span class="vault-view-bar-text">
-                        Unsaved changes to <strong>{v().name}</strong>
+                        {t('vault.unsavedChanges')} <strong>{v().name}</strong>
                       </span>
                       <span class="spacer" />
                       <button class="ghost vault-view-bar-btn" onClick={() => discardViewChanges()}>
-                        Discard
+                        {t('vault.discard')}
                       </button>
                       <button class="vault-view-bar-btn primary" onClick={() => saveActiveView()}>
-                        Save changes
+                        {t('vault.saveChanges')}
                       </button>
                     </div>
                   )}
@@ -582,13 +583,15 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
                   />
                   <h2 class="vault-list-title">{pageHeader().label}</h2>
                   <span class="vault-list-count">
-                    {filtering.displayed().length} {filtering.displayed().length === 1 ? 'item' : 'items'}
+                    {filtering.displayed().length === 1
+                      ? t('vault.itemCountOne', { count: filtering.displayed().length })
+                      : t('vault.itemCountOther', { count: filtering.displayed().length })}
                   </span>
                   <div class="vault-list-actions">
                     <button
                       class="ghost icon-btn"
                       aria-expanded={!previewCollapsed()}
-                      title={previewCollapsed() ? 'Show details' : 'Hide details'}
+                      title={previewCollapsed() ? t('vault.showDetails') : t('vault.hideDetails')}
                       onClick={() => togglePreview()}
                     >
                       <Show when={previewCollapsed()} fallback={<PanelRightClose size={16} strokeWidth={1.6} />}>
@@ -597,7 +600,7 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
                     </button>
                     <button
                       class="ghost icon-btn"
-                      title="Save current filters &amp; columns as a new view"
+                      title={t('vault.saveAsView')}
                       onClick={() => saveAsNewView()}
                     >
                       <BookmarkPlus size={16} strokeWidth={1.6} />
@@ -607,8 +610,8 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
                         when={addType()}
                         fallback={
                           <div class="vault-add-anchor">
-                            <button class="vault-add" title="Add item" onClick={() => setAddMenuOpen((v) => !v)}>
-                              <Plus size={15} strokeWidth={1.75} /> Add
+                            <button class="vault-add" title={t('vault.addItem')} onClick={() => setAddMenuOpen((v) => !v)}>
+                              <Plus size={15} strokeWidth={1.75} /> {t('common.add')}
                             </button>
                             <Show when={addMenuOpen()}>
                               <>
@@ -634,7 +637,7 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
                                   </For>
                                   <Show when={templates().length > 0}>
                                     <div class="vault-menu-sep" />
-                                    <div class="vault-menu-label">Templates</div>
+                                    <div class="vault-menu-label">{t('vault.templates')}</div>
                                     <For each={templates()}>
                                       {(tpl) => {
                                         const Icon = typeIcon(tpl.itemType);
@@ -642,7 +645,10 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
                                           <button
                                             class="vault-menu-item"
                                             role="menuitem"
-                                            title={`New ${createLabel(tpl.itemType).toLowerCase()} from “${tpl.name}”`}
+                                            title={t('vault.newFromTemplate', {
+                                              type: createLabel(tpl.itemType).toLowerCase(),
+                                              name: tpl.name,
+                                            })}
                                             onClick={() => {
                                               setAddMenuOpen(false);
                                               openTemplate(tpl);
@@ -661,13 +667,14 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
                           </div>
                         }
                       >
-                        {(t) => (
+                        {(addItemType) => (
                           <button
                             class="vault-add"
-                            title={`Add ${createLabel(t()).toLowerCase()}`}
-                            onClick={() => actions.openCreate(t())}
+                            title={t('vault.addType', { type: createLabel(addItemType()).toLowerCase() })}
+                            onClick={() => actions.openCreate(addItemType())}
                           >
-                            <Plus size={15} strokeWidth={1.75} /> Add {createLabel(t()).toLowerCase()}
+                            <Plus size={15} strokeWidth={1.75} />{' '}
+                            {t('vault.addType', { type: createLabel(addItemType()).toLowerCase() })}
                           </button>
                         )}
                       </Show>
@@ -689,51 +696,51 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
                   class="vault-bulk"
                   classList={{ 'is-hidden': selection.selectedCount() === 0 }}
                   role="toolbar"
-                  aria-label="Selection actions"
+                  aria-label={t('vault.selectionActions')}
                 >
                   <button
                     class="ghost icon-btn vault-bulk-clear"
-                    title="Clear selection"
+                    title={t('vault.clearSelection')}
                     onClick={() => selection.clearSelection()}
                   >
                     <X size={15} strokeWidth={1.75} />
                   </button>
-                  <span class="vault-bulk-count">{selection.selectedCount()} selected</span>
+                  <span class="vault-bulk-count">{t('vault.selectedCount', { count: selection.selectedCount() })}</span>
                   <span class="vault-bulk-sep" />
                   <Show
                     when={!filtering.inTrash()}
                     fallback={
                       <>
-                        <button class="ghost vault-bulk-btn" title="Restore" onClick={() => void actions.bulkRestore()}>
-                          <RotateCcw size={14} strokeWidth={1.6} /> Restore
+                        <button class="ghost vault-bulk-btn" title={t('vault.restore')} onClick={() => void actions.bulkRestore()}>
+                          <RotateCcw size={14} strokeWidth={1.6} /> {t('vault.restore')}
                         </button>
                         <button
                           class="danger vault-bulk-btn"
-                          title="Delete permanently"
+                          title={t('vault.deletePermanently')}
                           onClick={() => void actions.bulkDelete(true)}
                         >
-                          <Trash2 size={14} strokeWidth={1.6} /> Delete
+                          <Trash2 size={14} strokeWidth={1.6} /> {t('common.delete')}
                         </button>
                       </>
                     }
                   >
-                    <button class="ghost vault-bulk-btn" title="Favorite" onClick={() => void actions.bulkFavorite()}>
-                      <Star size={14} strokeWidth={1.6} /> Favorite
+                    <button class="ghost vault-bulk-btn" title={t('vault.favorite')} onClick={() => void actions.bulkFavorite()}>
+                      <Star size={14} strokeWidth={1.6} /> {t('vault.favorite')}
                     </button>
                     <div class="vault-add-anchor">
                       <button
                         class="ghost vault-bulk-btn"
-                        title="Move to folder"
+                        title={t('vault.moveToFolder')}
                         onClick={() => setMoveMenuOpen((v) => !v)}
                       >
-                        <FolderInput size={14} strokeWidth={1.6} /> Move
+                        <FolderInput size={14} strokeWidth={1.6} /> {t('vault.move')}
                       </button>
                       <Show when={moveMenuOpen()}>
                         <>
                           <div class="vault-menu-backdrop" onClick={() => setMoveMenuOpen(false)} />
                           <div class="vault-menu vault-menu-up" role="menu">
                             <button class="vault-menu-item" onClick={() => void actions.bulkMove(null)}>
-                              No folder
+                              {t('vault.noFolder')}
                             </button>
                             <For each={filtering.realFolders()}>
                               {(f) => (
@@ -748,10 +755,10 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
                     </div>
                     <button
                       class="danger vault-bulk-btn"
-                      title="Move to trash"
+                      title={t('vault.moveToTrash')}
                       onClick={() => void actions.bulkDelete(false)}
                     >
-                      <Trash2 size={14} strokeWidth={1.6} /> Delete
+                      <Trash2 size={14} strokeWidth={1.6} /> {t('common.delete')}
                     </button>
                   </Show>
                 </div>
@@ -762,7 +769,7 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
                 <Show when={!previewCollapsed()}>
                   <Resizer
                     variant="list-resizer"
-                    label="Resize item list"
+                    label={t('vault.resizeList')}
                     onResize={setListWidth}
                     onReset={resetListWidth}
                   />
@@ -794,7 +801,7 @@ export default function Vault(props: { onLock: () => void; onOpenSettings: () =>
                     when={editor().mode === 'closed' && detailState.detail()}
                     fallback={
                       editor().mode === 'closed' ? (
-                        <div class="vault-detail-empty muted">Select an item to view its details.</div>
+                        <div class="vault-detail-empty muted">{t('vault.selectItem')}</div>
                       ) : null
                     }
                   >

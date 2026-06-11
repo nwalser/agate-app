@@ -14,6 +14,7 @@ import {
   X,
 } from 'lucide-solid';
 import type { Node, TreeCtx } from '../../lib/folderTree.ts';
+import { t } from '../../lib/i18n.ts';
 
 // An inline name input used for create + rename. Submits on Enter, cancels on
 // Escape or blur.
@@ -42,7 +43,7 @@ export function EditRow(props: { ctx: TreeCtx; depth: number; placeholder: strin
       />
       <button
         class="folder-edit-confirm"
-        title="Save"
+        title={t('common.save')}
         // mousedown (not click) so it fires before the input's blur cancels.
         onMouseDown={(e) => {
           e.preventDefault();
@@ -53,7 +54,7 @@ export function EditRow(props: { ctx: TreeCtx; depth: number; placeholder: strin
       </button>
       <button
         class="folder-edit-cancel"
-        title="Cancel"
+        title={t('common.cancel')}
         onMouseDown={(e) => {
           e.preventDefault();
           props.ctx.cancelEdit();
@@ -89,7 +90,7 @@ export function FolderNode(props: { node: Node; depth: number; ctx: TreeCtx }) {
     <>
       <Show
         when={!renaming()}
-        fallback={<EditRow ctx={ctx} depth={props.depth} placeholder="Folder name" />}
+        fallback={<EditRow ctx={ctx} depth={props.depth} placeholder={t('folderUi.folderNamePlaceholder')} />}
       >
         <button
           class="folder-row"
@@ -142,7 +143,7 @@ export function FolderNode(props: { node: Node; depth: number; ctx: TreeCtx }) {
       </Show>
       <Show when={open() || creatingChild()}>
         <Show when={creatingChild()}>
-          <EditRow ctx={ctx} depth={props.depth + 1} placeholder="Subfolder name" />
+          <EditRow ctx={ctx} depth={props.depth + 1} placeholder={t('folderUi.subfolderNamePlaceholder')} />
         </Show>
         <For each={props.node.children}>
           {(child) => <FolderNode node={child} depth={props.depth + 1} ctx={ctx} />}

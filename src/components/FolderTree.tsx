@@ -31,6 +31,7 @@ import {
   Trash2,
 } from 'lucide-solid';
 import { leafName, segments } from '../lib/folders.ts';
+import { t } from '../lib/i18n.ts';
 import { EditRow, FolderNode } from './folders/FolderNode.tsx';
 import { buildTree } from '../lib/folderTree.ts';
 import { type FolderTreeProps, useFolderTree } from '../hooks/useFolderTree.ts';
@@ -72,11 +73,11 @@ export default function FolderTree(props: FolderTreeProps) {
           classList={{ 'drop-target': dropKey() === topDropKey(createAccountFor()) }}
           {...topZoneHandlers(createAccountFor())}
         >
-          <span class="folder-tree-label">Folders</span>
+          <span class="folder-tree-label">{t('folderUi.folders')}</span>
           <Show when={createAccountFor()}>
             <button
               class="folder-add-btn"
-              title="New folder"
+              title={t('folderUi.newFolder')}
               onClick={() => beginCreateTop(createAccountFor())}
             >
               <FolderPlus size={13} strokeWidth={1.7} />
@@ -84,7 +85,7 @@ export default function FolderTree(props: FolderTreeProps) {
           </Show>
         </div>
         <Show when={editing()?.kind === 'create-top'}>
-          <EditRow ctx={ctx} depth={0} placeholder="Folder name" />
+          <EditRow ctx={ctx} depth={0} placeholder={t('folderUi.folderNamePlaceholder')} />
         </Show>
         <For each={buildTree(real(), createAccountFor())}>
           {(node) => <FolderNode node={node} depth={0} ctx={ctx} />}
@@ -92,7 +93,7 @@ export default function FolderTree(props: FolderTreeProps) {
       </Show>
 
       <Show when={multi()}>
-        <div class="folder-tree-label">Folders</div>
+        <div class="folder-tree-label">{t('folderUi.folders')}</div>
         <For each={accounts()}>
           {(acct) => (
             <>
@@ -105,14 +106,14 @@ export default function FolderTree(props: FolderTreeProps) {
                 <span class="folder-conn-name">{acct.email}</span>
                 <button
                   class="folder-add-btn"
-                  title="New folder"
+                  title={t('folderUi.newFolder')}
                   onClick={() => beginCreateTop(acct.email)}
                 >
                   <FolderPlus size={13} strokeWidth={1.7} />
                 </button>
               </div>
               <Show when={editing()?.kind === 'create-top' && (editing() as { account: string }).account === acct.email}>
-                <EditRow ctx={ctx} depth={1} placeholder="Folder name" />
+                <EditRow ctx={ctx} depth={1} placeholder={t('folderUi.folderNamePlaceholder')} />
               </Show>
               <For each={buildTree(real().filter((f) => f.accountEmail === acct.email), acct.email, acct.email)}>
                 {(node) => <FolderNode node={node} depth={1} ctx={ctx} />}
@@ -147,7 +148,7 @@ export default function FolderTree(props: FolderTreeProps) {
                       {(f) => (
                         <>
                           <button class="vault-ctx-item" onClick={() => doMove(f(), null)}>
-                            <ArrowUpToLine size={14} /> Top level
+                            <ArrowUpToLine size={14} /> {t('folderUi.topLevel')}
                           </button>
                           <div class="vault-ctx-sep" />
                           <div class="folder-move-list">
@@ -172,7 +173,7 @@ export default function FolderTree(props: FolderTreeProps) {
                       beginCreateChild(n);
                     }}
                   >
-                    <FolderPlus size={14} /> New subfolder
+                    <FolderPlus size={14} /> {t('folderUi.newSubfolder')}
                   </button>
                   <Show when={folder()}>
                     {(f) => (
@@ -185,16 +186,16 @@ export default function FolderTree(props: FolderTreeProps) {
                             beginRename(n);
                           }}
                         >
-                          <Pencil size={14} /> Rename
+                          <Pencil size={14} /> {t('folderUi.rename')}
                         </button>
                         <Show when={moveTargets(f()).length > 0 || segments(f().name).length > 1}>
                           <button class="vault-ctx-item" onClick={() => setMenuMode('move')}>
-                            <FolderInput size={14} /> Move to…
+                            <FolderInput size={14} /> {t('folderUi.moveTo')}
                           </button>
                         </Show>
                         <div class="vault-ctx-sep" />
                         <button class="vault-ctx-item danger" onClick={() => askDelete(node())}>
-                          <Trash2 size={14} /> Delete
+                          <Trash2 size={14} /> {t('common.delete')}
                         </button>
                       </>
                     )}
@@ -217,31 +218,35 @@ export default function FolderTree(props: FolderTreeProps) {
                 aria-modal="true"
                 onClick={(e) => e.stopPropagation()}
               >
-                <h3 class="folder-confirm-title">Delete “{leafName(c().folder.name)}”?</h3>
+                <h3 class="folder-confirm-title">
+                  {t('folderUi.deleteConfirmTitle', { name: leafName(c().folder.name) })}
+                </h3>
                 <div class="folder-confirm-body">
                   <Show when={c().plan.subfolderCount > 0}>
                     <p>
-                      This also deletes {c().plan.subfolderCount} subfolder
-                      {c().plan.subfolderCount === 1 ? '' : 's'}.
+                      {c().plan.subfolderCount === 1
+                        ? t('folderUi.alsoDeletesSubfolderOne', { count: c().plan.subfolderCount })
+                        : t('folderUi.alsoDeletesSubfolderOther', { count: c().plan.subfolderCount })}
                     </p>
                   </Show>
                   <Show
                     when={c().plan.itemIds.length > 0}
-                    fallback={<p>No items are in this folder.</p>}
+                    fallback={<p>{t('folderUi.noItemsInFolder')}</p>}
                   >
                     <p>
-                      {c().plan.itemIds.length} item{c().plan.itemIds.length === 1 ? '' : 's'} will
-                      move to <strong>No folder</strong> (items are not deleted).
+                      {c().plan.itemIds.length === 1
+                        ? t('folderUi.itemsMoveToNoFolderOne', { count: c().plan.itemIds.length })
+                        : t('folderUi.itemsMoveToNoFolderOther', { count: c().plan.itemIds.length })}
                     </p>
                   </Show>
-                  <p class="folder-confirm-warn">This can’t be undone.</p>
+                  <p class="folder-confirm-warn">{t('folderUi.cannotBeUndone')}</p>
                 </div>
                 <div class="folder-confirm-actions">
                   <button class="ghost" onClick={() => setConfirm(null)}>
-                    Cancel
+                    {t('common.cancel')}
                   </button>
                   <button class="danger" onClick={confirmDelete}>
-                    <Trash2 size={14} strokeWidth={1.7} /> Delete folder
+                    <Trash2 size={14} strokeWidth={1.7} /> {t('folderUi.deleteFolder')}
                   </button>
                 </div>
               </div>

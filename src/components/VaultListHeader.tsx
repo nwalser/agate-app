@@ -7,6 +7,7 @@
 // prefs (layout, density, favicons) live in Settings › Appearance. Reuses VaultList.css.
 
 import { createSignal, For, Show } from 'solid-js';
+import { Dynamic } from 'solid-js/web';
 import {
   ArrowDown,
   ArrowLeft,
@@ -20,8 +21,10 @@ import {
   Group,
   Plus,
   RotateCcw,
+  Settings2,
   Ungroup,
 } from 'lucide-solid';
+import { columnIcon } from '../lib/columnIcons.ts';
 import {
   builtinMeta,
   columnKey,
@@ -55,6 +58,15 @@ import {
 import { ContextMenu, CtxItem, CtxSep } from './ContextMenu.tsx';
 import { headerMenuItems, type HeaderMenuItemId, type HeaderTarget } from '../lib/headerMenu.ts';
 import AddColumnMenu from './AddColumnMenu.tsx';
+import ColumnConfigPopover from './ColumnConfigPopover.tsx';
+import { customFields } from '../state/customFields.ts';
+import { t } from '../lib/i18n.ts';
+
+// The custom-field column config popover: create (from the add menu) or edit (from
+// a column header's "Configure…" menu). One owner so both flows share the popover.
+type ColumnCfg =
+  | { mode: 'create'; at: { x: number; y: number } }
+  | { mode: 'edit'; field: string; label?: string; icon?: string; at: { x: number; y: number } };
 
 // A clicked header's identity: the column spec (null = the always-on Name column)
 // and its position among the data columns, plus the cursor anchor for the menu.
@@ -73,6 +85,7 @@ export default function VaultListHeader(props: {
 }) {
   const [menu, setMenu] = createSignal<MenuState | null>(null);
   const [addOpen, setAddOpen] = createSignal(false);
+  const [cfg, setCfg] = createSignal<ColumnCfg | null>(null);
   let addBtn: HTMLButtonElement | undefined;
 
   // ---- per-column helpers (null col = the Name column) ----
@@ -110,6 +123,7 @@ export default function VaultListHeader(props: {
       groupable: true,
       grouped: groupSpecKey(columns().groupBy) === groupSpecKey(gs),
       hasWidth: wKey in columns().widths,
+      custom: col !== null && col.kind === 'custom',
     };
   }
 
@@ -124,6 +138,7 @@ export default function VaultListHeader(props: {
   function runItem(id: HeaderMenuItemId, col: ColumnSpec | null, index: number) {
     const sk = sortKeyFor(col);
     const gk = groupSpecFor(col);
+    const m = menu(); // capture the menu's position before it closes (for 'configure')
     switch (id) {
       case 'sort-asc':
         if (sk) props.onSetSort(sk, 'asc');
@@ -150,6 +165,17 @@ export default function VaultListHeader(props: {
         break;
       case 'move-right':
         moveColumn(index, 1);
+        break;
+      case 'configure':
+        if (col && col.kind === 'custom') {
+          setCfg({
+            mode: 'edit',
+            field: col.field,
+            label: col.label,
+            icon: col.icon,
+            at: m ? { x: m.x, y: m.y } : { x: 120, y: 120 },
+          });
+        }
         break;
       case 'reset-width':
         resetColumnWidth(widthKeyFor(col));
@@ -187,7 +213,7 @@ export default function VaultListHeader(props: {
         <button
           class="ghost icon-btn vault-gear-btn"
           classList={{ 'filter-on': filtersVisible() || hasActiveFilters() }}
-          title="Toggle column filters"
+          title={t('vault.toggleColumnFilters')}
           onClick={() => toggleFiltersVisible()}
         >
           <Filter size={14} strokeWidth={1.75} />
@@ -196,16 +222,39 @@ export default function VaultListHeader(props: {
           <button
             ref={addBtn}
             class="ghost icon-btn vault-gear-btn"
-            title="Add column"
+            title={t('vault.addColumn')}
             onClick={() => setAddOpen((v) => !v)}
           >
             <Plus size={15} strokeWidth={1.9} />
           </button>
           <Show when={addOpen()}>
-            <AddColumnMenu anchor={addBtn} onClose={() => setAddOpen(false)} />
+            <AddColumnMenu
+              anchor={addBtn}
+              onClose={() => setAddOpen(false)}
+              onNewCustom={(at) => setCfg({ mode: 'create', at })}
+            />
           </Show>
         </div>
       </div>
+
+      <Show when={cfg()}>
+        {(c) => {
+          const s = c();
+          const close = () => setCfg(null);
+          return s.mode === 'create' ? (
+            <ColumnConfigPopover mode="create" suggestions={customFields()} at={s.at} onClose={close} />
+          ) : (
+            <ColumnConfigPopover
+              mode="edit"
+              field={s.field}
+              label={s.label}
+              icon={s.icon}
+              at={s.at}
+              onClose={close}
+            />
+          );
+        }}
+      </Show>
 
       <Show when={menu()}>
         {(m) => (
@@ -236,7 +285,7 @@ export default function VaultListHeader(props: {
   // a right-click menu. The Name column (col === null) renders the same way minus
   // the move/hide items (handled by the menu model).
   function HeaderCell(cp: { col: ColumnSpec | null; index: number }) {
-    const label = () => (isNameCol(cp.col) ? 'Name' : columnLabel(cp.col as ColumnSpec));
+    const label = () => (isNameCol(cp.col) ? t('common.name') : columnLabel(cp.col as ColumnSpec));
     const sk = () => sortKeyFor(cp.col);
     const sorted = () => sk() !== null && props.sortKey === sk();
     const isSecurity = () => {
@@ -249,6 +298,11 @@ export default function VaultListHeader(props: {
       const c = cp.col;
       return c !== null && c.kind === 'builtin' && c.id === 'totp';
     };
+    // A custom column's chosen icon, rendered before its label.
+    const colIcon = () => {
+      const c = cp.col;
+      return c !== null && c.kind === 'custom' ? columnIcon(c.icon) : null;
+    };
     return (
       <div
         class="vault-head-cell vault-head-resizable"
@@ -257,7 +311,7 @@ export default function VaultListHeader(props: {
       >
         <button
           class="vault-head-labelbtn"
-          title={isSecurity() ? 'Sort by security status' : `Sort by ${label()}`}
+          title={isSecurity() ? t('vault.sortBySecurity') : t('vault.sortBy', { column: label() })}
           disabled={sk() === null}
           onClick={() => {
             const k = sk();
@@ -265,6 +319,9 @@ export default function VaultListHeader(props: {
           }}
         >
           <Show when={!isSecurity()}>
+            <Show when={colIcon()}>
+              {(Icon) => <Dynamic component={Icon()} size={12} class="vault-head-colicon" />}
+            </Show>
             <span class="vault-head-label">{label()}</span>
           </Show>
           <Show when={sorted()}>
@@ -275,7 +332,7 @@ export default function VaultListHeader(props: {
         </button>
         <button
           class="vault-head-caret"
-          title="Column options"
+          title={t('vault.columnOptions')}
           aria-haspopup="menu"
           onClick={(e) => onCaret(e, cp.col, cp.index)}
         >
@@ -308,6 +365,8 @@ function ItemIcon(props: { id: HeaderMenuItemId }) {
       return <ArrowLeft size={14} />;
     case 'move-right':
       return <ArrowRight size={14} />;
+    case 'configure':
+      return <Settings2 size={14} />;
     case 'reset-width':
       return <RotateCcw size={14} />;
     case 'hide':

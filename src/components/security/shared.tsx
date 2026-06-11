@@ -8,6 +8,7 @@
 import { For, Show } from 'solid-js';
 import { Settings as SettingsIcon } from 'lucide-solid';
 import type { BreachRecord } from '../../lib/types.ts';
+import { t } from '../../lib/i18n.ts';
 
 // Data classes worth flagging in red — leaking these is materially worse.
 const SEVERE_CLASSES = [
@@ -42,13 +43,13 @@ export function DataClassChips(props: { classes: string[] }) {
 function passwordRiskLabel(risk: string): string {
   switch (risk.toLowerCase()) {
     case 'plaintext':
-      return 'Stored in plaintext';
+      return t('security.passwordRiskPlaintext');
     case 'easytocrack':
-      return 'Weakly hashed (easy to crack)';
+      return t('security.passwordRiskEasyToCrack');
     case 'hardtocrack':
-      return 'Strongly hashed (hard to crack)';
+      return t('security.passwordRiskHardToCrack');
     case 'unknown':
-      return 'Unknown';
+      return t('security.passwordRiskUnknown');
     default:
       return risk;
   }
@@ -72,14 +73,14 @@ export function BreachDetails(props: { breach: BreachRecord }) {
         <dl class="sec-breach-facts">
           <Show when={pwn() !== null}>
             <div class="sec-fact">
-              <dt class="muted">Accounts affected</dt>
+              <dt class="muted">{t('security.accountsAffected')}</dt>
               <dd>{pwn()?.toLocaleString()}</dd>
             </div>
           </Show>
           <Show when={b().passwordRisk}>
             {(r) => (
               <div class="sec-fact">
-                <dt class="muted">Password storage</dt>
+                <dt class="muted">{t('security.passwordStorage')}</dt>
                 <dd classList={{ severe: r().toLowerCase() !== 'hardtocrack' }}>
                   {passwordRiskLabel(r())}
                 </dd>
@@ -90,12 +91,12 @@ export function BreachDetails(props: { breach: BreachRecord }) {
       </Show>
       <Show when={b().dataClasses.length > 0}>
         <div class="sec-breach-leaked">
-          <span class="muted">What leaked:</span>
+          <span class="muted">{t('security.whatLeaked')}</span>
           <DataClassChips classes={b().dataClasses} />
         </div>
       </Show>
       <Show when={isBare()}>
-        <p class="muted sec-breach-desc">No further details were provided for this breach.</p>
+        <p class="muted sec-breach-desc">{t('security.noFurtherDetails')}</p>
       </Show>
     </div>
   );
@@ -106,7 +107,7 @@ export function DisabledNotice(props: { what: string }) {
   return (
     <p class="sec-disabled muted">
       <SettingsIcon size={13} strokeWidth={1.75} />
-      {props.what} is turned off. Enable it in Settings → Security monitoring.
+      {t('security.disabledNotice', { what: props.what })}
     </p>
   );
 }

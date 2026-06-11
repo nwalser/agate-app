@@ -17,16 +17,17 @@ import {
   updateConfig,
 } from '../../state/update.ts';
 import { toastError } from '../../state/toast.ts';
+import { t } from '../../lib/i18n.ts';
 import { ToggleRow } from '../../components/settings/SettingsControls.tsx';
 import './UpdatesSettings.css';
 
 function formatChecked(ts: number | null): string {
-  if (!ts) return 'Never';
+  if (!ts) return t('updates.never');
   try {
     return new Date(ts).toLocaleString();
   } catch {
     // ignore: a bad timestamp is only cosmetic
-    return 'Unknown';
+    return t('updates.unknown');
   }
 }
 
@@ -63,12 +64,12 @@ export default function UpdatesSettings() {
       {/* Current application information. */}
       <section class="settings-section">
         <h3>
-          <Info size={14} strokeWidth={1.75} /> Application
+          <Info size={14} strokeWidth={1.75} /> {t('updates.application')}
         </h3>
         <dl class="update-info">
-          <InfoRow label="Name" value={appName()} />
+          <InfoRow label={t('common.name')} value={appName()} />
           <Show when={version()}>
-            <InfoRow label="Version" value={version()} />
+            <InfoRow label={t('updates.version')} value={version()} />
           </Show>
           <Show when={tauriVersion()}>
             <InfoRow label="Tauri" value={tauriVersion()} />
@@ -79,23 +80,23 @@ export default function UpdatesSettings() {
       {/* Manual check + install. */}
       <section class="settings-section">
         <h3>
-          <DownloadCloud size={14} strokeWidth={1.75} /> Updates
+          <DownloadCloud size={14} strokeWidth={1.75} /> {t('updates.title')}
         </h3>
         <Show
           when={availableVersion()}
           fallback={
             <>
-              <p class="muted settings-help">Check whether a newer version of Agate is available.</p>
+              <p class="muted settings-help">{t('updates.checkHelp')}</p>
               {/* '' means a check ran and found nothing newer (null = not checked yet). */}
               <Show when={availableVersion() === ''}>
                 <p class="update-uptodate">
-                  <CheckCircle2 size={13} strokeWidth={2} /> You're on the latest version.
+                  <CheckCircle2 size={13} strokeWidth={2} /> {t('updates.upToDate')}
                 </p>
               </Show>
               <div class="settings-actions">
                 <button class="primary gen-btn" disabled={checking()} onClick={() => void check()}>
                   <RefreshCw size={14} strokeWidth={1.75} class={checking() ? 'spin' : ''} />
-                  {checking() ? 'Checking…' : 'Check for updates'}
+                  {checking() ? t('updates.checking') : t('updates.checkForUpdates')}
                 </button>
               </div>
             </>
@@ -103,33 +104,33 @@ export default function UpdatesSettings() {
         >
           {(v) => (
             <>
-              <p class="settings-update-available">Version {v()} is available.</p>
+              <p class="settings-update-available">{t('updates.versionAvailable', { version: v() })}</p>
               <div class="settings-actions">
                 <button class="primary gen-btn" disabled={installing()} onClick={() => void install()}>
                   <DownloadCloud size={14} strokeWidth={1.75} />
-                  {installing() ? 'Installing…' : 'Install & restart'}
+                  {installing() ? t('updates.installing') : t('updates.installAndRestart')}
                 </button>
               </div>
             </>
           )}
         </Show>
-        <p class="muted update-last-checked">Last checked: {formatChecked(lastCheckedAt())}</p>
+        <p class="muted update-last-checked">{t('updates.lastChecked', { time: formatChecked(lastCheckedAt()) })}</p>
       </section>
 
       {/* Automatic-update preferences. */}
       <section class="settings-section">
         <h3>
-          <RefreshCw size={14} strokeWidth={1.75} /> Automatic updates
+          <RefreshCw size={14} strokeWidth={1.75} /> {t('updates.automaticUpdates')}
         </h3>
         <ToggleRow
-          label="Check for updates on launch"
-          desc="Look for a newer release each time Agate starts."
+          label={t('updates.checkOnLaunch')}
+          desc={t('updates.checkOnLaunchDesc')}
           checked={updateConfig().autoCheck}
           onChange={(v) => setUpdateOption('autoCheck', v)}
         />
         <ToggleRow
-          label="Download and install automatically"
-          desc="When a launch check finds an update, install it and restart without asking."
+          label={t('updates.autoInstall')}
+          desc={t('updates.autoInstallDesc')}
           checked={updateConfig().autoInstall}
           disabled={!updateConfig().autoCheck}
           onChange={(v) => setUpdateOption('autoInstall', v)}
@@ -139,23 +140,19 @@ export default function UpdatesSettings() {
       {/* About — brand + the unofficial-client disclaimer. */}
       <section class="settings-section settings-about">
         <h3>
-          <ShieldCheck size={14} strokeWidth={1.75} /> About
+          <ShieldCheck size={14} strokeWidth={1.75} /> {t('updates.about')}
         </h3>
         <div class="settings-about-brand">
           <ShieldCheck size={22} strokeWidth={1.75} />
           <div>
             <div class="settings-about-name">Agate</div>
             <Show when={version()}>
-              <div class="muted settings-about-version">Version {version()}</div>
+              <div class="muted settings-about-version">{t('updates.versionLabel', { version: version() })}</div>
             </Show>
           </div>
         </div>
-        <p class="muted settings-help">
-          An unofficial, open-source desktop client for Bitwarden, built on Bitwarden's official Rust
-          SDK. Not affiliated with or endorsed by Bitwarden, Inc. "Bitwarden" is a trademark of
-          Bitwarden, Inc.
-        </p>
-        <p class="muted settings-foot">Agate · unofficial Bitwarden client · GPL-3.0</p>
+        <p class="muted settings-help">{t('updates.disclaimer')}</p>
+        <p class="muted settings-foot">{t('updates.footer')}</p>
       </section>
     </div>
   );

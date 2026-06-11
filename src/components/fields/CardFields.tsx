@@ -10,27 +10,32 @@ import { CARD_BRANDS, detectCardBrand, formatCardNumber } from '../../lib/cardBr
 import { parseCardFromOcr } from '../../lib/cardOcr.ts';
 import { ipc } from '../../lib/ipc.ts';
 import { pushToast, toastError } from '../../state/toast.ts';
+import { t } from '../../lib/i18n.ts';
 import { orNull } from './index.ts';
 
 // Month dropdown for card expiry. Values are the bare month number (Bitwarden
-// stores expMonth as "1".."12"); the labels stay human.
-const MONTHS = [
-  'January',
-  'February',
-  'March',
-  'April',
-  'May',
-  'June',
-  'July',
-  'August',
-  'September',
-  'October',
-  'November',
-  'December',
-].map((label, idx) => ({
-  value: String(idx + 1),
-  label: `${String(idx + 1).padStart(2, '0')} — ${label}`,
-}));
+// stores expMonth as "1".."12"); the labels stay human. Built in render (not at
+// module scope) so the month names stay reactive to a language flip.
+const MONTH_KEYS = [
+  'january',
+  'february',
+  'march',
+  'april',
+  'may',
+  'june',
+  'july',
+  'august',
+  'september',
+  'october',
+  'november',
+  'december',
+];
+function months() {
+  return MONTH_KEYS.map((key, idx) => ({
+    value: String(idx + 1),
+    label: `${String(idx + 1).padStart(2, '0')} — ${t('fields.month.' + key)}`,
+  }));
+}
 
 export default function CardFields(props: {
   item?: ItemDetail | null;
@@ -87,7 +92,7 @@ export default function CardFields(props: {
   function applyParsed(lines: string[]) {
     const parsed = parseCardFromOcr(lines);
     if (parsed.confidence === 'none') {
-      pushToast('error', 'No card details recognized. Make the card large and sharp, then retry.');
+      pushToast('error', t('fields.cardNothingRecognized'));
       return;
     }
     let filled = 0;
@@ -108,7 +113,7 @@ export default function CardFields(props: {
       filled++;
     }
     // Never echo the parsed number itself — count only.
-    pushToast('success', `Filled ${filled} field${filled === 1 ? '' : 's'} from the scan.`);
+    pushToast('success', t('fields.filledFromScan', { count: filled }));
   }
 
   async function scanCard(source: 'screen' | 'file') {
@@ -133,17 +138,17 @@ export default function CardFields(props: {
             class="ghost ie-add ie-scan-qr"
             disabled={scanning()}
             onClick={() => void scanCard('screen')}
-            title="Capture the screen and read the card details off it"
+            title={t('fields.scanCardTooltip')}
           >
-            <ScanLine size={13} strokeWidth={1.75} /> Scan card
+            <ScanLine size={13} strokeWidth={1.75} /> {t('fields.scanCard')}
           </button>
           <button
             class="ghost ie-add ie-scan-qr"
             disabled={scanning()}
             onClick={() => void scanCard('file')}
-            title="Read the card details from an image file"
+            title={t('fields.fromImageCardTooltip')}
           >
-            <ImageUp size={13} strokeWidth={1.75} /> From image
+            <ImageUp size={13} strokeWidth={1.75} /> {t('fields.fromImage')}
           </button>
         </div>
       </Show>
@@ -152,18 +157,18 @@ export default function CardFields(props: {
       <div class="ie-card-preview">
         <div class="ie-card-row-top">
           <CreditCard size={22} strokeWidth={1.5} />
-          <span class="ie-card-brand">{previewBrand() || 'Card'}</span>
+          <span class="ie-card-brand">{previewBrand() || t('fields.card')}</span>
         </div>
         <div class="ie-card-number mono">
           {formatCardNumber(cardNumber(), previewBrand()) || '•••• •••• •••• ••••'}
         </div>
         <div class="ie-card-row-bottom">
           <div class="ie-card-meta">
-            <span class="ie-card-cap">Cardholder</span>
+            <span class="ie-card-cap">{t('fields.cardholder')}</span>
             <span class="ie-card-val">{cardholderName() || '—'}</span>
           </div>
           <div class="ie-card-meta">
-            <span class="ie-card-cap">Expires</span>
+            <span class="ie-card-cap">{t('fields.expires')}</span>
             <span class="ie-card-val">
               {expMonth() ? String(expMonth()).padStart(2, '0') : 'MM'}/
               {expYear() ? String(expYear()).slice(-2) : 'YY'}
@@ -173,15 +178,15 @@ export default function CardFields(props: {
       </div>
 
       <div class="field">
-        <label>Cardholder name</label>
+        <label>{t('fields.cardholderName')}</label>
         <input
           value={cardholderName()}
           onInput={(e) => setCardholderName(e.currentTarget.value)}
-          placeholder="Name on card"
+          placeholder={t('fields.nameOnCard')}
         />
       </div>
       <div class="field">
-        <label>Card number</label>
+        <label>{t('fields.cardNumber')}</label>
         <input
           class="ie-mono"
           value={cardNumber()}
@@ -193,14 +198,14 @@ export default function CardFields(props: {
       </div>
       <div class="ie-grid-2">
         <div class="field">
-          <label>Brand</label>
+          <label>{t('fields.brand')}</label>
           <select value={cardBrand()} onChange={(e) => setCardBrand(e.currentTarget.value)}>
-            <option value="">Auto-detect</option>
+            <option value="">{t('fields.autoDetect')}</option>
             <For each={CARD_BRANDS}>{(b) => <option value={b}>{b}</option>}</For>
           </select>
         </div>
         <div class="field">
-          <label>Security code (CVV)</label>
+          <label>{t('fields.securityCode')}</label>
           <div class="row ie-pw-row">
             <input
               class="ie-grow ie-mono"
@@ -213,7 +218,7 @@ export default function CardFields(props: {
             />
             <button
               class="ghost icon-btn"
-              title={revealCode() ? 'Hide' : 'Reveal'}
+              title={revealCode() ? t('common.hide') : t('fields.reveal')}
               onClick={() => setRevealCode(!revealCode())}
             >
               {revealCode() ? <EyeOff size={14} /> : <Eye size={14} />}
@@ -223,17 +228,17 @@ export default function CardFields(props: {
       </div>
       <div class="ie-grid-2">
         <div class="field">
-          <label>Expiration month</label>
+          <label>{t('fields.expirationMonth')}</label>
           <select
             value={expMonth() ? String(Number(expMonth())) : ''}
             onChange={(e) => setExpMonth(e.currentTarget.value)}
           >
             <option value="">—</option>
-            <For each={MONTHS}>{(m) => <option value={m.value}>{m.label}</option>}</For>
+            <For each={months()}>{(m) => <option value={m.value}>{m.label}</option>}</For>
           </select>
         </div>
         <div class="field">
-          <label>Expiration year</label>
+          <label>{t('fields.expirationYear')}</label>
           <input
             value={expYear()}
             onInput={(e) => setExpYear(e.currentTarget.value)}

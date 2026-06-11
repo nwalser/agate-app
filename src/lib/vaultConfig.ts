@@ -7,27 +7,29 @@
 import type { ItemDetail, ItemType } from './types.ts';
 import type { VaultFilter } from './search.ts';
 import type { ItemTemplate } from './templates.ts';
+import { t } from './i18n.ts';
 
 // Item types offered in the "Add" menu and command palette (excludes 'unknown').
+// Each `label` is a getter so it tracks the active locale when read in JSX.
 export const CREATE_TYPES: { type: ItemType; label: string }[] = [
-  { type: 'login', label: 'Login' },
-  { type: 'card', label: 'Card' },
-  { type: 'identity', label: 'Identity' },
-  { type: 'secureNote', label: 'Secure note' },
-  { type: 'sshKey', label: 'SSH key' },
+  { type: 'login', get label() { return t('itemType.login'); } },
+  { type: 'card', get label() { return t('itemType.card'); } },
+  { type: 'identity', get label() { return t('itemType.identity'); } },
+  { type: 'secureNote', get label() { return t('itemType.secureNote'); } },
+  { type: 'sshKey', get label() { return t('itemType.sshKey'); } },
 ];
 
 // Singular create label for a type (e.g. the per-page "Add login" button).
-export const createLabel = (t: ItemType): string =>
-  CREATE_TYPES.find((c) => c.type === t)?.label ?? 'item';
+export const createLabel = (type: ItemType): string =>
+  CREATE_TYPES.find((c) => c.type === type)?.label ?? t('itemType.itemFallback');
 
 // Left-rail filters. `unknown` items only appear under "All items".
 export const TYPE_FILTERS: { type: ItemType; label: string }[] = [
-  { type: 'login', label: 'Logins' },
-  { type: 'card', label: 'Cards' },
-  { type: 'identity', label: 'Identities' },
-  { type: 'secureNote', label: 'Secure notes' },
-  { type: 'sshKey', label: 'SSH keys' },
+  { type: 'login', get label() { return t('itemType.loginsPlural'); } },
+  { type: 'card', get label() { return t('itemType.cardsPlural'); } },
+  { type: 'identity', get label() { return t('itemType.identitiesPlural'); } },
+  { type: 'secureNote', get label() { return t('itemType.secureNotesPlural'); } },
+  { type: 'sshKey', get label() { return t('itemType.sshKeysPlural'); } },
 ];
 
 export function filterEq(a: VaultFilter, b: VaultFilter): boolean {

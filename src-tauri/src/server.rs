@@ -18,6 +18,22 @@ pub fn server_label(server: &ServerConfig) -> String {
     }
 }
 
+/// Public access URL for a Send, given its server-issued access id and the
+/// base64url decryption key. The key lives in the URL fragment (`#`), so it is
+/// never sent to the server when the recipient opens the link — same as the
+/// official clients. US cloud uses the short `send.bitwarden.com` host; EU and
+/// self-hosted use the web vault's `/#/send/` route.
+pub fn send_link(server: &ServerConfig, access_id: &str, key: &str) -> String {
+    match server {
+        ServerConfig::Us => format!("https://send.bitwarden.com/#{access_id}/{key}"),
+        ServerConfig::Eu => format!("https://vault.bitwarden.eu/#/send/{access_id}/{key}"),
+        ServerConfig::SelfHosted { base_url } => {
+            let base = base_url.trim().trim_end_matches('/');
+            format!("{base}/#/send/{access_id}/{key}")
+        }
+    }
+}
+
 const US_IDENTITY: &str = "https://identity.bitwarden.com";
 const US_API: &str = "https://api.bitwarden.com";
 const EU_IDENTITY: &str = "https://identity.bitwarden.eu";
@@ -87,6 +103,30 @@ mod tests {
     fn cloud_regions_resolve() {
         assert!(client_settings(&ServerConfig::Us, "d".into()).unwrap().api_url.contains("api.bitwarden.com"));
         assert!(client_settings(&ServerConfig::Eu, "d".into()).unwrap().identity_url.contains("identity.bitwarden.eu"));
+    }
+
+    #[test]
+    fn send_link_uses_short_host_for_us_and_web_route_elsewhere() {
+        assert_eq!(
+            send_link(&ServerConfig::Us, "abc", "k3y"),
+            "https://send.bitwarden.com/#abc/k3y",
+        );
+        assert_eq!(
+            send_link(&ServerConfig::Eu, "abc", "k3y"),
+            "https://vault.bitwarden.eu/#/send/abc/k3y",
+        );
+    }
+
+    #[test]
+    fn send_link_self_hosted_trims_trailing_slash() {
+        assert_eq!(
+            send_link(
+                &ServerConfig::SelfHosted { base_url: "https://vault.example.com/".into() },
+                "abc",
+                "k3y",
+            ),
+            "https://vault.example.com/#/send/abc/k3y",
+        );
     }
 
     #[test]

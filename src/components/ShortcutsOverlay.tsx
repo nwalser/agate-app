@@ -7,6 +7,7 @@
 
 import { createSignal, For, onCleanup, onMount, Show } from 'solid-js';
 import { Keyboard, X } from 'lucide-solid';
+import { t } from '../lib/i18n.ts';
 import './ShortcutsOverlay.css';
 
 // macOS shows ⌘ for the palette modifier; everything else shows Ctrl.
@@ -20,32 +21,37 @@ interface Shortcut {
   label: string;
 }
 
-const GROUPS: { title: string; shortcuts: Shortcut[] }[] = [
-  {
-    title: 'Navigation',
-    shortcuts: [
-      { keys: [MOD, 'K'], label: 'Command palette' },
-      { keys: ['↑', '↓'], label: 'Move selection' },
-      { keys: ['Home', 'End'], label: 'First / last item' },
-      { keys: ['Alt', '←'], label: 'Back' },
-      { keys: ['Alt', '→'], label: 'Forward' },
-    ],
-  },
-  {
-    title: 'Search',
-    shortcuts: [
-      { keys: ['Type'], label: 'Filter the vault list' },
-      { keys: ['/'], label: 'Run a command from search' },
-    ],
-  },
-  {
-    title: 'General',
-    shortcuts: [
-      { keys: ['?'], label: 'This shortcut help' },
-      { keys: ['Esc'], label: 'Close menu / overlay' },
-    ],
-  },
-];
+// Built inside the reactive render (via groups()) so the labels re-read from t()
+// when the language flips. Key caps (⌘, ↑, Esc, "Type", …) stay literal — they
+// are keyboard symbols, not translatable prose.
+function groups(): { title: string; shortcuts: Shortcut[] }[] {
+  return [
+    {
+      title: t('shortcuts.navigation'),
+      shortcuts: [
+        { keys: [MOD, 'K'], label: t('shortcuts.commandPalette') },
+        { keys: ['↑', '↓'], label: t('shortcuts.moveSelection') },
+        { keys: ['Home', 'End'], label: t('shortcuts.firstLast') },
+        { keys: ['Alt', '←'], label: t('shortcuts.back') },
+        { keys: ['Alt', '→'], label: t('shortcuts.forward') },
+      ],
+    },
+    {
+      title: t('shortcuts.search'),
+      shortcuts: [
+        { keys: ['Type'], label: t('shortcuts.typeToFilter') },
+        { keys: ['/'], label: t('shortcuts.runCommand') },
+      ],
+    },
+    {
+      title: t('shortcuts.general'),
+      shortcuts: [
+        { keys: ['?'], label: t('shortcuts.thisHelp') },
+        { keys: ['Esc'], label: t('shortcuts.closeMenu') },
+      ],
+    },
+  ];
+}
 
 function isTypingTarget(e: KeyboardEvent): boolean {
   const t = e.target as HTMLElement | null;
@@ -79,17 +85,17 @@ export default function ShortcutsOverlay() {
   return (
     <Show when={open()}>
       <div class="shortcuts-backdrop" onClick={() => setOpen(false)}>
-        <div class="shortcuts-card" role="dialog" aria-label="Keyboard shortcuts" onClick={(e) => e.stopPropagation()}>
+        <div class="shortcuts-card" role="dialog" aria-label={t('shortcuts.title')} onClick={(e) => e.stopPropagation()}>
           <div class="shortcuts-head">
             <span class="shortcuts-title">
-              <Keyboard size={15} strokeWidth={1.75} /> Keyboard shortcuts
+              <Keyboard size={15} strokeWidth={1.75} /> {t('shortcuts.title')}
             </span>
-            <button class="ghost icon-btn" title="Close" onClick={() => setOpen(false)}>
+            <button class="ghost icon-btn" title={t('common.close')} onClick={() => setOpen(false)}>
               <X size={15} strokeWidth={1.75} />
             </button>
           </div>
           <div class="shortcuts-groups">
-            <For each={GROUPS}>
+            <For each={groups()}>
               {(group) => (
                 <div class="shortcuts-group">
                   <div class="shortcuts-group-title">{group.title}</div>

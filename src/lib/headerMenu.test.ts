@@ -16,6 +16,7 @@ function target(over: Partial<HeaderTarget> = {}): HeaderTarget {
     groupable: false,
     grouped: false,
     hasWidth: false,
+    custom: false,
     ...over,
   };
 }
@@ -69,6 +70,13 @@ describe('headerMenuItems', () => {
     expect(first.find((i) => i.id === 'move-right')?.disabled).toBe(false);
     const last = headerMenuItems(target({ index: 2, count: 3 }));
     expect(last.find((i) => i.id === 'move-right')?.disabled).toBe(true);
+  });
+
+  it('offers Configure only for a custom-field column', () => {
+    expect(ids(target())).not.toContain('configure');
+    expect(ids(target({ custom: true }))).toContain('configure');
+    // Name column is never custom, so never configurable.
+    expect(ids(target({ isName: true, custom: false }))).not.toContain('configure');
   });
 
   it('offers reset-width only when a custom width is set', () => {

@@ -1,5 +1,6 @@
 import { Cloud, CloudOff, RefreshCw } from 'lucide-solid';
 import { Match, Switch } from 'solid-js';
+import { t } from '../lib/i18n.ts';
 import './SyncStatus.css';
 
 // Background-sync status, shared by the header icon, the rail entry, and this page.
@@ -34,17 +35,17 @@ export default function SyncStatus(props: {
   onSync: () => void;
 }) {
   const heading = () => {
-    if (props.state === 'syncing') return 'Syncing…';
-    if (props.state === 'error') return 'Sync failed';
-    return props.lastSync === null ? 'Not synced yet' : 'Vault is live';
+    if (props.state === 'syncing') return t('sync.syncing');
+    if (props.state === 'error') return t('sync.failed');
+    return props.lastSync === null ? t('sync.notSyncedYet') : t('sync.live');
   };
   const detail = () => {
-    if (props.state === 'syncing') return 'Fetching the latest vault data…';
+    if (props.state === 'syncing') return t('sync.detailSyncing');
     if (props.state === 'error') {
-      return 'Could not reach the server. Check your connection, then try again.';
+      return t('sync.detailError');
     }
-    if (props.lastSync === null) return 'No sync has completed yet this session.';
-    return `Last synced at ${new Date(props.lastSync).toLocaleTimeString()}.`;
+    if (props.lastSync === null) return t('sync.detailNotSynced');
+    return t('sync.detailLastSynced', { time: new Date(props.lastSync).toLocaleTimeString() });
   };
   const everyMinutes = () => Math.max(1, Math.round(props.autoSyncMs / 60_000));
 
@@ -55,7 +56,9 @@ export default function SyncStatus(props: {
         <h2 class="sync-page-title">{heading()}</h2>
         <p class="sync-page-detail muted">{detail()}</p>
         <p class="sync-page-auto muted">
-          Automatically syncs every {everyMinutes()} minute{everyMinutes() === 1 ? '' : 's'}.
+          {everyMinutes() === 1
+            ? t('sync.autoEveryOne', { count: everyMinutes() })
+            : t('sync.autoEveryOther', { count: everyMinutes() })}
         </p>
         <button
           class="sync-page-btn"
@@ -67,7 +70,7 @@ export default function SyncStatus(props: {
             strokeWidth={1.75}
             class={props.state === 'syncing' ? 'spin' : ''}
           />
-          {props.state === 'syncing' ? 'Syncing…' : 'Sync now'}
+          {props.state === 'syncing' ? t('sync.syncing') : t('sync.syncNow')}
         </button>
       </div>
     </section>

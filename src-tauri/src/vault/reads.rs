@@ -240,6 +240,61 @@ pub async fn list_items(state: &AppState) -> AgateResult<Vec<VaultItem>> {
     Ok(items)
 }
 
+/// Collapse raw field names into the distinct, display-ordered set the column
+/// picker offers: trimmed, empties dropped, de-duplicated case-insensitively
+/// (first-seen casing wins), then sorted case-insensitively. Pure so the dedupe
+/// rule is unit-tested without a vault.
+pub(crate) fn distinct_field_names(names: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut out: Vec<String> = Vec::new();
+    for raw in names {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if seen.insert(trimmed.to_lowercase()) {
+            out.push(trimmed.to_string());
+        }
+    }
+    out.sort_by_key(|a| a.to_lowercase());
+    out
+}
+
+/// Distinct custom-field names across every unlocked connection's ciphers — feeds
+/// the column picker so the user picks an existing field instead of typing its
+/// exact name. Field NAMES are metadata, not secrets (the editor shows them), so
+/// we decrypt to read them exactly like `list_items`; field VALUES are never
+/// collected here.
+pub async fn list_custom_field_names(state: &AppState) -> AgateResult<Vec<String>> {
+    let snapshot: Vec<(PasswordManagerClient, Vec<Cipher>)> = {
+        let session = state.session.lock().await;
+        session
+            .connections
+            .values()
+            .map(|c| (PasswordManagerClient(c.client.0.clone()), c.ciphers.clone()))
+            .collect()
+    };
+
+    let mut names: Vec<String> = Vec::new();
+    for (client, ciphers) in snapshot {
+        let key_store = client.0.internal.get_key_store();
+        for cipher in &ciphers {
+            let decrypted: Result<CipherView, _> = key_store.decrypt(cipher);
+            match decrypted {
+                Ok(view) => {
+                    for f in view.fields.into_iter().flatten() {
+                        if let Some(name) = f.name {
+                            names.push(name);
+                        }
+                    }
+                }
+                Err(e) => log::warn!("skipping item that failed to decrypt: {e}"),
+            }
+        }
+    }
+    Ok(distinct_field_names(names))
+}
+
 /// Find and decrypt one cipher (in `account_email`'s vault) into full detail,
 /// including its stored passkeys (FIDO2 credential metadata).
 pub async fn item_detail(state: &AppState, account_email: &str, id: &str) -> AgateResult<ItemDetail> {
@@ -451,5 +506,20 @@ mod tests {
         let client = PasswordManagerClient::new(None);
         adopt_user_id(&client, None).await;
         assert!(client.0.internal.get_user_id().is_none());
+    }
+
+    /// The column picker's field list: blanks dropped, case/space duplicates
+    /// collapsed (first-seen casing kept), sorted case-insensitively.
+    #[test]
+    fn distinct_field_names_trims_dedupes_ci_and_sorts() {
+        let got = distinct_field_names(vec![
+            "  Environment ".to_string(),
+            "environment".to_string(), // dup (case + surrounding space) → dropped
+            "PIN".to_string(),
+            String::new(),    // empty → dropped
+            "   ".to_string(), // blank → dropped
+            "API Key".to_string(),
+        ]);
+        assert_eq!(got, vec!["API Key".to_string(), "Environment".to_string(), "PIN".to_string()]);
     }
 }

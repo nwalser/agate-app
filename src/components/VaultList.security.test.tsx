@@ -53,6 +53,7 @@ function renderList(items: VaultItem[], security: VaultHealthReport | null) {
       onRowContextMenu={() => undefined}
       onCheckboxToggle={() => undefined}
       onCopyCell={() => undefined}
+      onOpenWebsite={() => undefined}
       onListKeyDown={() => undefined}
       onMarqueeSelect={() => undefined}
       enableItemDrag={false}
@@ -131,6 +132,7 @@ describe('VaultList — Security column badge', () => {
         onRowContextMenu={() => undefined}
         onCheckboxToggle={() => undefined}
         onCopyCell={() => undefined}
+        onOpenWebsite={() => undefined}
         onListKeyDown={() => undefined}
         onMarqueeSelect={() => undefined}
         enableItemDrag={false}

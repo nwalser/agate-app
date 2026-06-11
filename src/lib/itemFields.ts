@@ -4,6 +4,7 @@
 // detection/formatting lives in ./cardBrands.ts and is re-exported here so the
 // existing detail-pane / test import sites keep one stable entry point.
 import type { CardInput, IdentityInput, ItemDetail, ItemType } from './types.ts';
+import { t } from './i18n.ts';
 
 export {
   CARD_BRANDS,
@@ -25,18 +26,20 @@ export function identityFields(i: IdentityInput): { label: string; value: string
   const name = [i.title, i.firstName, i.middleName, i.lastName].filter(Boolean).join(' ') || null;
   const address = [i.address1, i.address2, i.address3].filter(Boolean).join('\n') || null;
   const cityLine = [i.city, i.state, i.postalCode].filter(Boolean).join(', ') || null;
+  // Labels resolve via t() at call time (the detail pane calls identityFields in
+  // its render), so they track the active language.
   return [
-    { label: 'Name', value: name },
-    { label: 'Username', value: i.username },
-    { label: 'Company', value: i.company },
-    { label: 'Email', value: i.email },
-    { label: 'Phone', value: i.phone },
-    { label: 'SSN', value: i.ssn },
-    { label: 'Passport number', value: i.passportNumber },
-    { label: 'License number', value: i.licenseNumber },
-    { label: 'Address', value: address },
-    { label: 'City / State / ZIP', value: cityLine },
-    { label: 'Country', value: i.country },
+    { label: t('identityField.name'), value: name },
+    { label: t('identityField.username'), value: i.username },
+    { label: t('identityField.company'), value: i.company },
+    { label: t('identityField.email'), value: i.email },
+    { label: t('identityField.phone'), value: i.phone },
+    { label: t('identityField.ssn'), value: i.ssn },
+    { label: t('identityField.passportNumber'), value: i.passportNumber },
+    { label: t('identityField.licenseNumber'), value: i.licenseNumber },
+    { label: t('identityField.address'), value: address },
+    { label: t('identityField.cityStateZip'), value: cityLine },
+    { label: t('identityField.country'), value: i.country },
   ];
 }
 
@@ -49,40 +52,43 @@ export interface LinkedOption {
   label: string;
 }
 
+// `label` is a getter so it resolves through t() each time it's read (in the
+// editor's "Linked" dropdown and linkedLabel), tracking the active language; the
+// numeric `id` stays the stable identifier.
 const LOGIN_LINKED: LinkedOption[] = [
-  { id: 100, label: 'Username' },
-  { id: 101, label: 'Password' },
+  { id: 100, get label() { return t('linkedField.username'); } },
+  { id: 101, get label() { return t('linkedField.password'); } },
 ];
 
 const CARD_LINKED: LinkedOption[] = [
-  { id: 304, label: 'Brand' },
-  { id: 305, label: 'Number' },
-  { id: 300, label: 'Cardholder name' },
-  { id: 303, label: 'Security code' },
-  { id: 301, label: 'Expiration month' },
-  { id: 302, label: 'Expiration year' },
+  { id: 304, get label() { return t('linkedField.brand'); } },
+  { id: 305, get label() { return t('linkedField.number'); } },
+  { id: 300, get label() { return t('linkedField.cardholderName'); } },
+  { id: 303, get label() { return t('linkedField.securityCode'); } },
+  { id: 301, get label() { return t('linkedField.expirationMonth'); } },
+  { id: 302, get label() { return t('linkedField.expirationYear'); } },
 ];
 
 const IDENTITY_LINKED: LinkedOption[] = [
-  { id: 418, label: 'Full name' },
-  { id: 400, label: 'Title' },
-  { id: 416, label: 'First name' },
-  { id: 401, label: 'Middle name' },
-  { id: 417, label: 'Last name' },
-  { id: 413, label: 'Username' },
-  { id: 409, label: 'Company' },
-  { id: 412, label: 'SSN' },
-  { id: 414, label: 'Passport number' },
-  { id: 415, label: 'License number' },
-  { id: 410, label: 'Email' },
-  { id: 411, label: 'Phone' },
-  { id: 402, label: 'Address 1' },
-  { id: 403, label: 'Address 2' },
-  { id: 404, label: 'Address 3' },
-  { id: 405, label: 'City' },
-  { id: 406, label: 'State' },
-  { id: 407, label: 'Postal code' },
-  { id: 408, label: 'Country' },
+  { id: 418, get label() { return t('linkedField.fullName'); } },
+  { id: 400, get label() { return t('linkedField.title'); } },
+  { id: 416, get label() { return t('linkedField.firstName'); } },
+  { id: 401, get label() { return t('linkedField.middleName'); } },
+  { id: 417, get label() { return t('linkedField.lastName'); } },
+  { id: 413, get label() { return t('linkedField.username'); } },
+  { id: 409, get label() { return t('linkedField.company'); } },
+  { id: 412, get label() { return t('linkedField.ssn'); } },
+  { id: 414, get label() { return t('linkedField.passportNumber'); } },
+  { id: 415, get label() { return t('linkedField.licenseNumber'); } },
+  { id: 410, get label() { return t('linkedField.email'); } },
+  { id: 411, get label() { return t('linkedField.phone'); } },
+  { id: 402, get label() { return t('linkedField.address1'); } },
+  { id: 403, get label() { return t('linkedField.address2'); } },
+  { id: 404, get label() { return t('linkedField.address3'); } },
+  { id: 405, get label() { return t('linkedField.city'); } },
+  { id: 406, get label() { return t('linkedField.state'); } },
+  { id: 407, get label() { return t('linkedField.postalCode'); } },
+  { id: 408, get label() { return t('linkedField.country'); } },
 ];
 
 // The linkable properties for an item type. Empty for types with no linkable
@@ -102,12 +108,12 @@ export function linkedOptionsFor(itemType: ItemType): LinkedOption[] {
 
 // Human label for a linked-field target id (across every item type).
 export function linkedLabel(linkedId: number | null): string {
-  if (linkedId == null) return 'Linked';
+  if (linkedId == null) return t('linkedField.fallback');
   for (const list of [LOGIN_LINKED, CARD_LINKED, IDENTITY_LINKED]) {
     const m = list.find((o) => o.id === linkedId);
     if (m) return m.label;
   }
-  return 'Linked';
+  return t('linkedField.fallback');
 }
 
 // Linked targets whose resolved value is a secret (mask in the detail pane).

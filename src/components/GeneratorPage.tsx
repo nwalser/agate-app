@@ -16,17 +16,19 @@ import type {
 } from '../lib/types.ts';
 import { pushToast, toastError } from '../state/toast.ts';
 import { pushGeneratorHistory } from '../state/generatorHistory.ts';
+import { t } from '../lib/i18n.ts';
 import './GeneratorPage.css';
 
 type Mode = 'password' | 'passphrase' | 'username';
 
-const USERNAME_MODES: { id: UsernameMode; label: string }[] = [
-  { id: 'plusAddressed', label: 'Plus-addressed' },
-  { id: 'catchAll', label: 'Catch-all' },
-  { id: 'random', label: 'Random' },
-];
-
 export default function GeneratorPage() {
+  // Built inside render (called via the For below) so the labels re-translate
+  // when the language flips; the ids stay stable English union values.
+  const usernameModes = (): { id: UsernameMode; label: string }[] => [
+    { id: 'plusAddressed', label: t('generator.usernameModePlusAddressed') },
+    { id: 'catchAll', label: t('generator.usernameModeCatchAll') },
+    { id: 'random', label: t('generator.usernameModeRandom') },
+  ];
   const [mode, setMode] = createSignal<Mode>('password');
   const [output, setOutput] = createSignal('');
 
@@ -112,7 +114,7 @@ export default function GeneratorPage() {
       // Copying is an intentional "I want this value" — record it (unlike the
       // auto-regenerate effect, which would flood history on every slider tick).
       pushGeneratorHistory(output());
-      pushToast('success', 'Copied.');
+      pushToast('success', t('common.copied'));
     } catch (err) {
       toastError(err);
     }
@@ -127,7 +129,7 @@ export default function GeneratorPage() {
   return (
     <div class="generator">
       <header class="generator-header">
-        <h2>Generator</h2>
+        <h2>{t('generator.title')}</h2>
       </header>
 
       <div class="generator-body">
@@ -137,21 +139,21 @@ export default function GeneratorPage() {
             classList={{ active: mode() === 'password' }}
             onClick={() => setMode('password')}
           >
-            Password
+            {t('generator.password')}
           </button>
           <button
             class="generator-mode-btn"
             classList={{ active: mode() === 'passphrase' }}
             onClick={() => setMode('passphrase')}
           >
-            Passphrase
+            {t('generator.passphrase')}
           </button>
           <button
             class="generator-mode-btn"
             classList={{ active: mode() === 'username' }}
             onClick={() => setMode('username')}
           >
-            Username
+            {t('generator.username')}
           </button>
         </div>
 
@@ -162,18 +164,18 @@ export default function GeneratorPage() {
               fallback={
                 <span class="muted">
                   {mode() === 'username'
-                    ? 'Enter a base email or domain.'
-                    : 'Pick at least one character set.'}
+                    ? t('generator.emptyUsername')
+                    : t('generator.emptyCharset')}
                 </span>
               }
             >
               {output()}
             </Show>
           </code>
-          <button class="ghost icon-btn" title="Regenerate" onClick={() => void regenerate()}>
+          <button class="ghost icon-btn" title={t('generator.regenerate')} onClick={() => void regenerate()}>
             <RefreshCw size={15} strokeWidth={1.75} />
           </button>
-          <button class="ghost icon-btn" title="Copy" disabled={!output()} onClick={() => void copy()}>
+          <button class="ghost icon-btn" title={t('common.copy')} disabled={!output()} onClick={() => void copy()}>
             <Copy size={15} strokeWidth={1.75} />
           </button>
         </div>
@@ -182,7 +184,7 @@ export default function GeneratorPage() {
           <Match when={mode() === 'password'}>
             <section class="generator-options">
               <div class="field">
-                <label>Length: {pwOpts().length}</label>
+                <label>{t('generator.lengthLabel', { count: pwOpts().length })}</label>
                 <input
                   type="range"
                   min="5"
@@ -193,23 +195,23 @@ export default function GeneratorPage() {
               </div>
               <div class="generator-toggles">
                 <label class="checkbox">
-                  <input type="checkbox" checked={pwOpts().uppercase} onChange={(e) => setPw('uppercase', e.currentTarget.checked)} /> A-Z
+                  <input type="checkbox" checked={pwOpts().uppercase} onChange={(e) => setPw('uppercase', e.currentTarget.checked)} /> {t('generator.charsetUpperAscii')}
                 </label>
                 <label class="checkbox">
-                  <input type="checkbox" checked={pwOpts().lowercase} onChange={(e) => setPw('lowercase', e.currentTarget.checked)} /> a-z
+                  <input type="checkbox" checked={pwOpts().lowercase} onChange={(e) => setPw('lowercase', e.currentTarget.checked)} /> {t('generator.charsetLowerAscii')}
                 </label>
                 <label class="checkbox">
-                  <input type="checkbox" checked={pwOpts().numbers} onChange={(e) => setPw('numbers', e.currentTarget.checked)} /> 0-9
+                  <input type="checkbox" checked={pwOpts().numbers} onChange={(e) => setPw('numbers', e.currentTarget.checked)} /> {t('generator.charsetNumbersAscii')}
                 </label>
                 <label class="checkbox">
-                  <input type="checkbox" checked={pwOpts().special} onChange={(e) => setPw('special', e.currentTarget.checked)} /> !@#
+                  <input type="checkbox" checked={pwOpts().special} onChange={(e) => setPw('special', e.currentTarget.checked)} /> {t('generator.charsetSpecial')}
                 </label>
                 <label class="checkbox">
                   <input
                     type="checkbox"
                     checked={pwOpts().avoidAmbiguous ?? false}
                     onChange={(e) => setPw('avoidAmbiguous', e.currentTarget.checked)}
-                  /> Avoid ambiguous
+                  /> {t('generator.avoidAmbiguous')}
                 </label>
               </div>
             </section>
@@ -217,7 +219,7 @@ export default function GeneratorPage() {
           <Match when={mode() === 'passphrase'}>
             <section class="generator-options">
               <div class="field">
-                <label>Words: {ppOpts().numWords}</label>
+                <label>{t('generator.wordsLabel', { count: ppOpts().numWords })}</label>
                 <input
                   type="range"
                   min="3"
@@ -227,7 +229,7 @@ export default function GeneratorPage() {
                 />
               </div>
               <div class="field">
-                <label>Separator</label>
+                <label>{t('generator.separator')}</label>
                 <input
                   class="generator-sep"
                   maxlength="5"
@@ -237,10 +239,10 @@ export default function GeneratorPage() {
               </div>
               <div class="generator-toggles">
                 <label class="checkbox">
-                  <input type="checkbox" checked={ppOpts().capitalize} onChange={(e) => setPp('capitalize', e.currentTarget.checked)} /> Capitalize
+                  <input type="checkbox" checked={ppOpts().capitalize} onChange={(e) => setPp('capitalize', e.currentTarget.checked)} /> {t('generator.capitalize')}
                 </label>
                 <label class="checkbox">
-                  <input type="checkbox" checked={ppOpts().includeNumber} onChange={(e) => setPp('includeNumber', e.currentTarget.checked)} /> Include number
+                  <input type="checkbox" checked={ppOpts().includeNumber} onChange={(e) => setPp('includeNumber', e.currentTarget.checked)} /> {t('generator.includeNumber')}
                 </label>
               </div>
             </section>
@@ -248,7 +250,7 @@ export default function GeneratorPage() {
           <Match when={mode() === 'username'}>
             <section class="generator-options">
               <div class="generator-mode generator-submode">
-                <For each={USERNAME_MODES}>
+                <For each={usernameModes()}>
                   {(m) => (
                     <button
                       class="generator-mode-btn"
@@ -263,32 +265,34 @@ export default function GeneratorPage() {
               <Switch>
                 <Match when={unOpts().mode === 'plusAddressed'}>
                   <div class="field">
-                    <label>Base email</label>
+                    <label>{t('generator.baseEmail')}</label>
                     <input
                       placeholder="you@example.com"
                       value={unOpts().email ?? ''}
                       onInput={(e) => setUn('email', e.currentTarget.value)}
                     />
                     <p class="muted generator-username-hint">
-                      Aliases like <code>you+abc123@example.com</code> all land in your inbox.
+                      {t('generator.plusAddressedHintBefore')}{' '}
+                      <code>you+abc123@example.com</code>{' '}
+                      {t('generator.plusAddressedHintAfter')}
                     </p>
                   </div>
                 </Match>
                 <Match when={unOpts().mode === 'catchAll'}>
                   <div class="field">
-                    <label>Catch-all domain</label>
+                    <label>{t('generator.catchAllDomain')}</label>
                     <input
                       placeholder="example.com"
                       value={unOpts().domain ?? ''}
                       onInput={(e) => setUn('domain', e.currentTarget.value)}
                     />
                     <p class="muted generator-username-hint">
-                      Needs a domain configured to accept all addresses.
+                      {t('generator.catchAllHint')}
                     </p>
                   </div>
                 </Match>
                 <Match when={unOpts().mode === 'random'}>
-                  <p class="muted generator-username-hint">A random standalone username.</p>
+                  <p class="muted generator-username-hint">{t('generator.randomHint')}</p>
                 </Match>
               </Switch>
             </section>

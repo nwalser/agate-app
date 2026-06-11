@@ -40,6 +40,7 @@ import Favicon from './Favicon.tsx';
 import VaultListHeader from './VaultListHeader.tsx';
 import FilterRow from './FilterRow.tsx';
 import VaultListCell from './VaultListCell.tsx';
+import { t } from '../lib/i18n.ts';
 import './VaultList.css';
 
 export interface VaultListProps {
@@ -61,6 +62,8 @@ export interface VaultListProps {
   onCheckboxToggle: (item: VaultItem, checked: boolean) => void;
   /** Copy the value of one cell (the screen resolves what each column copies). */
   onCopyCell: (item: VaultItem, col: ColumnSpec) => void;
+  /** Open the item's website (the Website column is click-to-open, not copy). */
+  onOpenWebsite: (item: VaultItem) => void;
   /** File-explorer keyboard nav while the list is focused (↑/↓, shift, ctrl+a, …). */
   onListKeyDown: (e: KeyboardEvent) => void;
   /** Replace the selection with `ids` (in displayed order) from a marquee drag. */
@@ -194,6 +197,12 @@ export default function VaultList(props: VaultListProps) {
     const el = tableRef;
     if (!el || e.button !== 0) return;
     const target = e.target as HTMLElement;
+    // Solid routes DELEGATED events (pointerdown) up the COMPONENT tree, so a
+    // pointerdown inside a <Portal>ed popover (the add-column menu) lands here even
+    // though its DOM lives at <body>, outside the table. Ignore anything not
+    // physically in the table — otherwise a marquee starts and the pointer-capture
+    // below swallows the popover's chip/Reset clicks (they'd never fire).
+    if (!el.contains(target)) return;
     // Rows handle their own click/drag (and focus the list); the sticky header
     // owns sort/filter/resize — don't steal focus from a filter input there.
     if (target.closest('.vault-row') || target.closest('.vault-thead')) return;
@@ -238,6 +247,10 @@ export default function VaultList(props: VaultListProps) {
   const [emptyMenu, setEmptyMenu] = createSignal<{ x: number; y: number } | null>(null);
   function onTableContextMenu(e: MouseEvent) {
     const target = e.target as HTMLElement;
+    // Same Portal caveat as onTablePointerDown: a right-click inside the portaled
+    // add-column menu bubbles here via the component tree — ignore anything not
+    // physically in the table so it doesn't open the empty-area menu.
+    if (tableRef && !tableRef.contains(target)) return;
     // Rows + the sticky header have their own menus / actions; only blank space.
     if (target.closest('.vault-row') || target.closest('.vault-thead')) return;
     e.preventDefault();
@@ -294,13 +307,12 @@ export default function VaultList(props: VaultListProps) {
   // Whether a column's cell carries a copyable value for this row. Value columns
   // get a hover copy button; the icon/category columns (type/security/passkey)
   // and empty values don't. The screen (onCopyCell) resolves what each one copies.
+  // Website is excluded — it's click-to-open (see `canOpen`), not copy.
   const canCopy = (item: VaultItem, col: ColumnSpec): boolean => {
     if (col.kind === 'custom') return true;
     switch (col.id) {
       case 'username':
         return !!item.username;
-      case 'website':
-        return !!item.uri;
       case 'folder':
         return !!folderName(item.folderId);
       case 'password':
@@ -311,6 +323,11 @@ export default function VaultList(props: VaultListProps) {
         return false;
     }
   };
+
+  // The Website column opens the site on click (instead of copying), when the row
+  // has a URI to open.
+  const canOpen = (item: VaultItem, col: ColumnSpec): boolean =>
+    col.kind === 'builtin' && col.id === 'website' && !!item.uri;
 
   return (
     <Show
@@ -400,6 +417,7 @@ export default function VaultList(props: VaultListProps) {
                           <VaultListCell
                             content={cellContent(item, col, cellCtx())}
                             onCopy={canCopy(item, col) ? () => props.onCopyCell(item, col) : undefined}
+                            onOpen={canOpen(item, col) ? () => props.onOpenWebsite(item) : undefined}
                           />
                         )}
                       </For>
@@ -446,7 +464,7 @@ export default function VaultList(props: VaultListProps) {
                         close();
                       }}
                     >
-                      <Icon size={14} /> New {ct.label.toLowerCase()}
+                      <Icon size={14} /> {t('vault.newItemType', { type: ct.label.toLowerCase() })}
                     </CtxItem>
                   );
                 }}
@@ -458,7 +476,7 @@ export default function VaultList(props: VaultListProps) {
                   close();
                 }}
               >
-                <CheckCheck size={14} /> Select all
+                <CheckCheck size={14} /> {t('vault.selectAll')}
               </CtxItem>
             </ContextMenu>
           );

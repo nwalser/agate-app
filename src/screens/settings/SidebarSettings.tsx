@@ -9,6 +9,7 @@
 import { createSignal, For, Show } from 'solid-js';
 import { ArrowDown, ArrowUp, Eye, EyeOff, GripVertical, Minus, Pencil, Plus, Trash2, X } from 'lucide-solid';
 import type { IconComponent } from '../../lib/icon.ts';
+import { t } from '../../lib/i18n.ts';
 import { ResetButton } from '../../components/settings/SettingsControls.tsx';
 import { entryMeta, isBuiltinId, isDividerId } from '../../lib/sidebarConfig.ts';
 import { DEFAULT_VIEW_ICON, VIEW_ICONS, viewIcon } from '../../lib/viewIcons.ts';
@@ -32,7 +33,7 @@ import './SidebarSettings.css';
 
 function resolveRow(id: string): { label: string; icon: IconComponent } {
   if (isBuiltinId(id)) return entryMeta(id);
-  if (isDividerId(id)) return { label: 'Divider', icon: Minus };
+  if (isDividerId(id)) return { label: t('sidebarSettings.divider'), icon: Minus };
   const q = queryById(id);
   return { label: q?.name ?? id, icon: viewIcon(q?.icon) };
 }
@@ -75,11 +76,8 @@ export default function SidebarSettings() {
   return (
     <div class="settings-page sidebar-settings">
       <section class="settings-section">
-        <h3>Sidebar entries</h3>
-        <p class="muted settings-help">
-          Drag to reorder, or use the arrows. Hide entries you don't use — Settings always stays
-          pinned at the bottom.
-        </p>
+        <h3>{t('sidebarSettings.entriesTitle')}</h3>
+        <p class="muted settings-help">{t('sidebarSettings.entriesHelp')}</p>
         <For each={sidebar().order}>
           {(id, i) => {
             const row = resolveRow(id);
@@ -98,21 +96,21 @@ export default function SidebarSettings() {
                 }}
                 {...reorder.rowProps(i)}
               >
-                <span class="sb-grip" title="Drag to reorder" {...reorder.handleProps(i)}>
+                <span class="sb-grip" title={t('sidebarSettings.dragToReorder')} {...reorder.handleProps(i)}>
                   <GripVertical size={14} />
                 </span>
                 <Icon size={15} strokeWidth={1.6} class="sb-row-icon" />
                 <Show when={isDividerId(id)} fallback={<span class="sb-name">{row.label}</span>}>
                   <input
                     class="sb-input sb-divider-input"
-                    placeholder="Section header (optional)"
+                    placeholder={t('sidebarSettings.sectionHeaderPlaceholder')}
                     value={sidebar().dividerLabels[id] ?? ''}
                     onInput={(e) => setDividerLabel(id, e.currentTarget.value)}
                   />
                 </Show>
                 <button
                   class="ghost icon-btn sb-btn"
-                  title="Move up"
+                  title={t('sidebarSettings.moveUp')}
                   disabled={i() === 0}
                   onClick={() => moveEntry(i(), -1)}
                 >
@@ -120,7 +118,7 @@ export default function SidebarSettings() {
                 </button>
                 <button
                   class="ghost icon-btn sb-btn"
-                  title="Move down"
+                  title={t('sidebarSettings.moveDown')}
                   disabled={i() === sidebar().order.length - 1}
                   onClick={() => moveEntry(i(), 1)}
                 >
@@ -131,7 +129,7 @@ export default function SidebarSettings() {
                   fallback={
                     <button
                       class="ghost icon-btn sb-btn"
-                      title={isHidden(id) ? 'Show' : 'Hide'}
+                      title={isHidden(id) ? t('common.show') : t('common.hide')}
                       onClick={() => toggleHidden(id)}
                     >
                       <Show when={isHidden(id)} fallback={<Eye size={14} />}>
@@ -140,7 +138,7 @@ export default function SidebarSettings() {
                     </button>
                   }
                 >
-                  <button class="ghost icon-btn sb-btn" title="Remove divider" onClick={() => removeEntry(id)}>
+                  <button class="ghost icon-btn sb-btn" title={t('sidebarSettings.removeDivider')} onClick={() => removeEntry(id)}>
                     <Trash2 size={14} />
                   </button>
                 </Show>
@@ -149,16 +147,13 @@ export default function SidebarSettings() {
           }}
         </For>
         <button class="sb-add-divider" onClick={() => addDivider()}>
-          <Minus size={14} /> Add divider
+          <Minus size={14} /> {t('sidebarSettings.addDivider')}
         </button>
       </section>
 
       <section class="settings-section">
-        <h3>Saved views</h3>
-        <p class="muted settings-help">
-          Pin a view to the rail. Set its name + icon here; configure what it shows (filter,
-          search, columns, sort) while viewing it, then hit “Save changes”.
-        </p>
+        <h3>{t('sidebarSettings.savedViewsTitle')}</h3>
+        <p class="muted settings-help">{t('sidebarSettings.savedViewsHelp')}</p>
 
         <Show when={views().length > 0}>
           <div class="sb-queries">
@@ -170,14 +165,14 @@ export default function SidebarSettings() {
                     <Icon size={15} strokeWidth={1.6} class="sb-row-icon" />
                     <div class="sb-query-text">
                       <span class="sb-query-name">{q.name}</span>
-                      <span class="sb-query-sub muted">View</span>
+                      <span class="sb-query-sub muted">{t('sidebarSettings.viewLabel')}</span>
                     </div>
-                    <button class="ghost icon-btn sb-btn" title="Edit" onClick={() => beginEdit(q.id)}>
+                    <button class="ghost icon-btn sb-btn" title={t('common.edit')} onClick={() => beginEdit(q.id)}>
                       <Pencil size={14} />
                     </button>
                     <button
                       class="ghost icon-btn sb-btn"
-                      title="Delete"
+                      title={t('common.delete')}
                       onClick={() => {
                         if (editId() === q.id) resetForm();
                         removeQuery(q.id);
@@ -194,20 +189,20 @@ export default function SidebarSettings() {
 
         <form class="sb-form" onSubmit={submit}>
           <div class="sb-form-head">
-            <span class="sb-form-title">{editId() ? 'Edit view' : 'New view'}</span>
+            <span class="sb-form-title">{editId() ? t('sidebarSettings.editView') : t('sidebarSettings.newView')}</span>
             <Show when={editId()}>
-              <button type="button" class="ghost icon-btn sb-btn" title="Cancel edit" onClick={resetForm}>
+              <button type="button" class="ghost icon-btn sb-btn" title={t('sidebarSettings.cancelEdit')} onClick={resetForm}>
                 <X size={14} />
               </button>
             </Show>
           </div>
           <input
             class="sb-input"
-            placeholder="Name (e.g. AWS logins)"
+            placeholder={t('sidebarSettings.namePlaceholder')}
             value={name()}
             onInput={(e) => setName(e.currentTarget.value)}
           />
-          <div class="sb-icon-grid" role="group" aria-label="Icon">
+          <div class="sb-icon-grid" role="group" aria-label={t('sidebarSettings.iconGroupLabel')}>
             <For each={VIEW_ICONS}>
               {(opt) => {
                 const Icon = opt.icon;
@@ -227,13 +222,13 @@ export default function SidebarSettings() {
             </For>
           </div>
           <button type="submit" class="sb-add" disabled={!name().trim()}>
-            <Plus size={14} /> {editId() ? 'Save view' : 'Add view'}
+            <Plus size={14} /> {editId() ? t('sidebarSettings.saveView') : t('sidebarSettings.addView')}
           </button>
         </form>
       </section>
 
       <div class="settings-actions">
-        <ResetButton label="Reset sidebar to default" onClick={() => resetSidebar()} />
+        <ResetButton label={t('sidebarSettings.resetToDefault')} onClick={() => resetSidebar()} />
       </div>
     </div>
   );

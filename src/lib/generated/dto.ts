@@ -410,9 +410,57 @@ export type PassphraseGenOptions = { numWords: number; wordSeparator: string; ca
 export type PasswordGenOptions = { length: number; uppercase: boolean; lowercase: boolean; numbers: boolean; special: boolean; avoidAmbiguous?: boolean; minNumber?: number | null; minSpecial?: number | null }
 
 /**
+ * Create-a-Send input (frontend → backend). Text Sends only for now; file Sends
+ * need the separate upload flow. An optional `password` gates access (password
+ * auth); otherwise the Send is open to anyone with the link.
+ */
+export type SendCreateInput = { 
+/**
+ * Which unlocked connection owns the new Send.
+ */
+accountEmail: string; name: string; 
+/**
+ * The shared text payload.
+ */
+text: string; 
+/**
+ * Hide the text by default (recipient must click to reveal).
+ */
+hidden: boolean; expiry: SendExpiry; 
+/**
+ * Cap on how many times the Send can be opened (None = unlimited).
+ */
+maxAccessCount: number | null; 
+/**
+ * Optional access password. SECRET — never logged.
+ */
+password: string | null; 
+/**
+ * Hide the sender's email from recipients.
+ */
+hideEmail: boolean }
+
+/**
+ * Result of creating a Send: the public share link to hand out, plus the identity
+ * the list needs to show it.
+ */
+export type SendCreated = { id: string; name: string; 
+/**
+ * Public access URL — includes the decryption key in the URL fragment.
+ */
+url: string }
+
+/**
+ * How long a new Send lives before it is auto-deleted (frontend → backend). A
+ * closed set so the backend computes the deletion timestamp from a trusted clock,
+ * rather than accepting an arbitrary date from the UI.
+ */
+export type SendExpiry = "oneHour" | "oneDay" | "twoDays" | "threeDays" | "sevenDays" | "thirtyDays"
+
+/**
  * A Bitwarden Send (ephemeral share) summary for the Sends manager. Named
- * `SendSummary` to avoid colliding with the `Send` marker trait. Read + revoke
- * only for now (create is a follow-up).
+ * `SendSummary` to avoid colliding with the `Send` marker trait. Listing covers
+ * the manager's rows; create uses `SendCreateInput`, revoke uses the id.
  */
 export type SendSummary = { id: string; name: string; 
 /**

@@ -1,6 +1,7 @@
 import { createSignal } from 'solid-js';
 import { Check, Laptop, ShieldCheck } from 'lucide-solid';
 import { ipc } from '../lib/ipc.ts';
+import { t } from '../lib/i18n.ts';
 import { refreshSession } from '../state/session.ts';
 import { pushToast, toastError } from '../state/toast.ts';
 import './Onboarding.css';
@@ -13,11 +14,11 @@ export default function AppUnlockSetup() {
 
   async function create() {
     if (pw().length < 8) {
-      pushToast('error', 'App password must be at least 8 characters.');
+      pushToast('error', t('setup.passwordTooShort'));
       return;
     }
     if (pw() !== confirm()) {
-      pushToast('error', 'Passwords do not match.');
+      pushToast('error', t('setup.passwordsDoNotMatch'));
       return;
     }
     setBusy(true);
@@ -26,7 +27,7 @@ export default function AppUnlockSetup() {
       setPw('');
       setConfirm('');
       await refreshSession();
-      pushToast('success', 'App unlock set — now add your first connection.');
+      pushToast('success', t('setup.appUnlockSet'));
     } catch (err) {
       toastError(err);
     } finally {
@@ -43,12 +44,10 @@ export default function AppUnlockSetup() {
         </div>
         <div class="onboarding-step">
           <p class="muted onboarding-sub">
-            Create one app password. It unlocks every Bitwarden connection you add and is the only
-            secret you'll type to open Agate. Choose something strong — it protects all of your
-            vaults on this device.
+            {t('setup.intro')}
           </p>
           <div class="field">
-            <label>App password</label>
+            <label>{t('setup.appPassword')}</label>
             <input
               type="password"
               autocomplete="new-password"
@@ -57,7 +56,7 @@ export default function AppUnlockSetup() {
             />
           </div>
           <div class="field">
-            <label>Confirm app password</label>
+            <label>{t('setup.confirmAppPassword')}</label>
             <input
               type="password"
               autocomplete="new-password"
@@ -70,21 +69,20 @@ export default function AppUnlockSetup() {
           <div class="unlock-method active">
             <Laptop size={18} strokeWidth={1.6} />
             <span class="unlock-method-text">
-              <span class="unlock-method-title">Bound to this computer</span>
+              <span class="unlock-method-title">{t('setup.boundToComputerTitle')}</span>
               <span class="muted unlock-method-sub">
-                A device key is mixed into the unlock, so your vault can only be opened on this
-                machine — even with the password, the data is useless if copied elsewhere.
+                {t('setup.boundToComputerSub')}
               </span>
             </span>
             <Check size={18} strokeWidth={2} />
           </div>
 
           <button class="primary full" disabled={busy()} onClick={() => void create()}>
-            {busy() ? 'Setting up…' : 'Set app password'}
+            {busy() ? t('setup.settingUp') : t('setup.setAppPassword')}
           </button>
         </div>
         <p class="onboarding-disclaimer muted">
-          Unofficial client — not affiliated with Bitwarden, Inc.
+          {t('setup.disclaimer')}
         </p>
       </div>
     </div>

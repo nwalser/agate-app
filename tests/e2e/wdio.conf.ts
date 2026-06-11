@@ -33,10 +33,11 @@ const APP_EXE = resolve(ROOT, 'src-tauri', 'target', 'debug', 'agate.exe');
 let tauriDriver: ChildProcess | undefined;
 
 // ── Vite dev server lifecycle ───────────────────────────────────────────────
-// The debug binary loads its frontend from `devUrl` (http://localhost:5173), so
-// the harness keeps a vite dev server up for the run (and the DEV build is where
-// the test-only IPC seam lives — see src/lib/ipc.ts).
-const VITE_PORT = 5173;
+// The debug binary loads its frontend from `devUrl` (http://localhost:5273 —
+// Agate's own port; 5173 belongs to whichever other vite project, e.g. themia,
+// is running), so the harness keeps a vite dev server up for the run (and the
+// DEV build is where the test-only IPC seam lives — see src/lib/ipc.ts).
+const VITE_PORT = 5273;
 const VITE_BIN = resolve(ROOT, 'node_modules', 'vite', 'bin', 'vite.js');
 const VITE_PID_FILE = resolve(__dirname, '.vite-harness.pid');
 
@@ -131,7 +132,7 @@ async function ensureViteDev(): Promise<void> {
   removeVitePidFile(); // nothing listening — a pidfile here is stale
 
   // Spawn vite DIRECTLY via node so the handle PID is the real server PID (a
-  // shell wrapper would orphan the node child on kill and leak :5173).
+  // shell wrapper would orphan the node child on kill and leak the port).
   const proc = spawn(process.execPath, [VITE_BIN], { cwd: ROOT, stdio: 'ignore' });
   proc.on('error', (e) => console.error('vite:dev failed to start:', e));
   ownVitePid = proc.pid;

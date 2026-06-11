@@ -1,47 +1,110 @@
 // Sends view — a main vault view (reached from the left rail, like Generator /
 // Security) that lists the Bitwarden Sends (ephemeral shares) across every unlocked
-// connection and lets you revoke ones you no longer need. Backed by the SDK's sends
-// client (list + delete). Creating Sends is a follow-up. Previously this lived under
-// Settings; it now sits in the vault so shares are managed alongside the vault.
+// connection, lets you create a new text Send, and revoke ones you no longer need.
+// Backed by the SDK's sends client (list + create + delete). File Sends (a separate
+// upload flow) are a follow-up. Previously this lived under Settings; it now sits in
+// the vault so shares are managed alongside the vault.
 
 import { createSignal, For, onMount, Show } from 'solid-js';
-import { Send as SendIcon, Trash2 } from 'lucide-solid';
+import { Copy, Plus, Send as SendIcon, Trash2, X } from 'lucide-solid';
 import { ipc } from '../lib/ipc.ts';
-import type { SendSummary } from '../lib/types.ts';
+import type { ConnectionSummary, SendCreateInput, SendCreated, SendExpiry, SendSummary } from '../lib/types.ts';
 import { relativeUntil } from '../lib/dates.ts';
+import { copyWithAutoClear } from '../lib/clipboard.ts';
+import { t } from '../lib/i18n.ts';
 import { pushToast, toastError } from '../state/toast.ts';
+import { Select, Switch } from './settings/SettingsControls.tsx';
 import './SendsView.css';
 
 /** The "type · views · flags · expiry" metadata line under a Send's name. */
 export function sendMeta(s: SendSummary, now: number = Date.now()): string {
   const views =
     s.maxAccessCount != null
-      ? `${s.accessCount}/${s.maxAccessCount} views`
-      : `${s.accessCount} view${s.accessCount === 1 ? '' : 's'}`;
+      ? t('sends.viewsCapped', { count: s.accessCount, max: s.maxAccessCount })
+      : s.accessCount === 1
+        ? t('sends.viewsOne', { count: s.accessCount })
+        : t('sends.viewsMany', { count: s.accessCount });
   const parts = [s.sendType, views];
-  if (s.hasPassword) parts.push('password');
-  if (s.disabled) parts.push('disabled');
+  if (s.hasPassword) parts.push(t('sends.password'));
+  if (s.disabled) parts.push(t('sends.disabled'));
   if (s.expirationDate) {
-    const t = Date.parse(s.expirationDate);
+    const ts = Date.parse(s.expirationDate);
     // Unparseable expiry: drop the segment entirely (no dangling "expires ").
-    if (!Number.isNaN(t)) {
-      parts.push(t <= now ? 'expired' : `expires ${relativeUntil(s.expirationDate, now)}`);
+    if (!Number.isNaN(ts)) {
+      parts.push(
+        ts <= now
+          ? t('sends.expired')
+          : t('sends.expires', { when: relativeUntil(s.expirationDate, now) }),
+      );
     }
   }
   return parts.join(' · ');
 }
 
+/** Editable state of the create form. */
+export interface SendDraft {
+  accountEmail: string;
+  name: string;
+  text: string;
+  expiry: SendExpiry;
+  /** Raw text of the "max views" input ('' = unlimited). */
+  maxViews: string;
+  password: string;
+  hidden: boolean;
+  hideEmail: boolean;
+}
+
+/** Map the create form's draft onto the IPC input: trim where a blank means
+ *  "unset", coerce max-views to a positive integer or null (unlimited). Pure so
+ *  the field→payload mapping is unit-tested without rendering the form. */
+export function buildSendInput(d: SendDraft): SendCreateInput {
+  const raw = d.maxViews.trim();
+  const n = Number(raw);
+  const maxAccessCount = raw !== '' && Number.isInteger(n) && n > 0 ? n : null;
+  return {
+    accountEmail: d.accountEmail,
+    name: d.name.trim(),
+    text: d.text,
+    hidden: d.hidden,
+    expiry: d.expiry,
+    maxAccessCount,
+    // Whitespace-only password means "no password", not a blank one.
+    password: d.password.trim() === '' ? null : d.password,
+    hideEmail: d.hideEmail,
+  };
+}
+
+const emptyDraft = (accountEmail = ''): SendDraft => ({
+  accountEmail,
+  name: '',
+  text: '',
+  expiry: 'sevenDays',
+  maxViews: '',
+  password: '',
+  hidden: false,
+  hideEmail: false,
+});
+
 export default function SendsView() {
   const [sends, setSends] = createSignal<SendSummary[]>([]);
+  const [accounts, setAccounts] = createSignal<ConnectionSummary[]>([]);
   const [loading, setLoading] = createSignal(true);
   // Ids with a revoke in flight — a Set so concurrent revokes on different rows
   // don't re-enable each other's buttons (or allow a double-delete).
   const [removing, setRemoving] = createSignal<ReadonlySet<string>>(new Set());
 
+  // Create-form state: closed unless `draft` is set; `created` holds the share
+  // link to copy after a successful create (replaces the form until dismissed).
+  const [draft, setDraft] = createSignal<SendDraft | null>(null);
+  const [created, setCreated] = createSignal<SendCreated | null>(null);
+  const [saving, setSaving] = createSignal(false);
+
   async function load() {
     setLoading(true);
     try {
-      setSends(await ipc.listSends());
+      const [list, conns] = await Promise.all([ipc.listSends(), ipc.listConnections()]);
+      setSends(list);
+      setAccounts(conns.filter((c) => c.unlocked));
     } catch (err) {
       toastError(err);
     } finally {
@@ -50,12 +113,58 @@ export default function SendsView() {
   }
   onMount(() => void load());
 
+  const expiryOptions = (): { value: SendExpiry; label: string }[] => [
+    { value: 'oneHour', label: t('sends.exp1h') },
+    { value: 'oneDay', label: t('sends.exp1d') },
+    { value: 'twoDays', label: t('sends.exp2d') },
+    { value: 'threeDays', label: t('sends.exp3d') },
+    { value: 'sevenDays', label: t('sends.exp7d') },
+    { value: 'thirtyDays', label: t('sends.exp30d') },
+  ];
+
+  function openForm() {
+    setCreated(null);
+    setDraft(emptyDraft(accounts()[0]?.email ?? ''));
+  }
+
+  function closeForm() {
+    setDraft(null);
+    setCreated(null);
+  }
+
+  // Patch one field of the open draft.
+  function patch<K extends keyof SendDraft>(key: K, value: SendDraft[K]) {
+    setDraft((d) => (d ? { ...d, [key]: value } : d));
+  }
+
+  const canSubmit = () => {
+    const d = draft();
+    return !!d && !!d.accountEmail && d.name.trim() !== '' && d.text !== '' && !saving();
+  };
+
+  async function submit() {
+    const d = draft();
+    if (!d || !canSubmit()) return;
+    setSaving(true);
+    try {
+      const result = await ipc.createSend(buildSendInput(d));
+      setCreated(result);
+      setDraft(null);
+      pushToast('success', t('sends.created'));
+      await load(); // surface the new Send in the list below
+    } catch (err) {
+      toastError(err);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function revoke(s: SendSummary) {
     if (removing().has(s.id)) return;
     setRemoving((prev) => new Set(prev).add(s.id));
     try {
       await ipc.deleteSend(s.accountEmail, s.id);
-      pushToast('success', 'Send revoked.');
+      pushToast('success', t('sends.revoked'));
       await load();
     } catch (err) {
       toastError(err);
@@ -72,20 +181,156 @@ export default function SendsView() {
     <div class="sends">
       <header class="sends-header">
         <SendIcon size={16} strokeWidth={1.75} />
-        <h2>Sends</h2>
+        <h2>{t('sends.title')}</h2>
         <Show when={!loading()}>
           <span class="sends-count">
-            {sends().length} {sends().length === 1 ? 'send' : 'sends'}
+            {sends().length === 1
+              ? t('sends.countOne', { count: sends().length })
+              : t('sends.countMany', { count: sends().length })}
           </span>
+        </Show>
+        <Show when={!loading() && !draft() && !created()}>
+          <button
+            class="sends-new"
+            disabled={accounts().length === 0}
+            onClick={openForm}
+          >
+            <Plus size={13} strokeWidth={2} /> {t('sends.new')}
+          </button>
         </Show>
       </header>
 
       <div class="sends-body">
-        <p class="muted sends-intro">
-          Ephemeral shares from your accounts. Revoke any you no longer need.
-        </p>
-        <Show when={!loading()} fallback={<p class="muted">Loading…</p>}>
-          <Show when={sends().length > 0} fallback={<p class="muted">No active Sends.</p>}>
+        <p class="muted sends-intro">{t('sends.intro')}</p>
+
+        {/* Created-link panel: shown after a successful create until dismissed. */}
+        <Show when={created()}>
+          {(c) => (
+            <div class="send-created">
+              <p class="send-created-msg">{t('sends.linkReady')}</p>
+              <div class="send-link-row">
+                <input class="send-link" type="text" readOnly value={c().url} />
+                <button
+                  class="primary"
+                  onClick={() => void copyWithAutoClear('URL', c().url)}
+                >
+                  <Copy size={13} strokeWidth={1.75} /> {t('sends.copyLink')}
+                </button>
+              </div>
+              <button class="send-done" onClick={closeForm}>
+                {t('sends.done')}
+              </button>
+            </div>
+          )}
+        </Show>
+
+        {/* Inline create form (no modal — inline by design). */}
+        <Show when={draft()}>
+          {(d) => (
+            <div class="send-form">
+              <Show when={accounts().length > 1}>
+                <label class="send-field">
+                  <span>{t('sends.account')}</span>
+                  <Select
+                    value={d().accountEmail}
+                    options={accounts().map((a) => ({ value: a.email, label: a.email }))}
+                    onChange={(v) => patch('accountEmail', v)}
+                    ariaLabel={t('sends.account')}
+                  />
+                </label>
+              </Show>
+
+              <label class="send-field">
+                <span>{t('sends.nameLabel')}</span>
+                <input
+                  type="text"
+                  value={d().name}
+                  placeholder={t('sends.namePlaceholder')}
+                  onInput={(e) => patch('name', e.currentTarget.value)}
+                />
+              </label>
+
+              <label class="send-field">
+                <span>{t('sends.textLabel')}</span>
+                <textarea
+                  rows={4}
+                  value={d().text}
+                  placeholder={t('sends.textPlaceholder')}
+                  onInput={(e) => patch('text', e.currentTarget.value)}
+                />
+              </label>
+
+              <div class="send-field-row">
+                <label class="send-field">
+                  <span>{t('sends.expiryLabel')}</span>
+                  <Select
+                    value={d().expiry}
+                    options={expiryOptions()}
+                    onChange={(v) => patch('expiry', v)}
+                    ariaLabel={t('sends.expiryLabel')}
+                  />
+                </label>
+                <label class="send-field">
+                  <span>{t('sends.maxViewsLabel')}</span>
+                  <input
+                    type="number"
+                    min="1"
+                    inputMode="numeric"
+                    value={d().maxViews}
+                    placeholder={t('sends.maxViewsPlaceholder')}
+                    onInput={(e) => patch('maxViews', e.currentTarget.value)}
+                  />
+                </label>
+              </div>
+
+              <label class="send-field">
+                <span>{t('sends.passwordLabel')}</span>
+                <input
+                  type="password"
+                  autocomplete="new-password"
+                  value={d().password}
+                  placeholder={t('sends.passwordPlaceholder')}
+                  onInput={(e) => patch('password', e.currentTarget.value)}
+                />
+              </label>
+
+              <div class="send-toggle">
+                <Switch
+                  checked={d().hidden}
+                  onChange={(v) => patch('hidden', v)}
+                  label={t('sends.hideText')}
+                />
+                <span class="send-toggle-text">
+                  <span>{t('sends.hideText')}</span>
+                  <span class="muted">{t('sends.hideTextDesc')}</span>
+                </span>
+              </div>
+
+              <div class="send-toggle">
+                <Switch
+                  checked={d().hideEmail}
+                  onChange={(v) => patch('hideEmail', v)}
+                  label={t('sends.hideEmail')}
+                />
+                <span class="send-toggle-text">
+                  <span>{t('sends.hideEmail')}</span>
+                </span>
+              </div>
+
+              <div class="send-form-actions">
+                <button onClick={closeForm} disabled={saving()}>
+                  <X size={13} strokeWidth={1.75} /> {t('sends.cancel')}
+                </button>
+                <button class="primary" disabled={!canSubmit()} onClick={() => void submit()}>
+                  {saving() ? t('sends.creating') : t('sends.create')}
+                </button>
+              </div>
+            </div>
+          )}
+        </Show>
+
+        <Show when={!loading()} fallback={<p class="muted">{t('common.loading')}</p>}>
+          <Show when={sends().length > 0} fallback={<p class="muted">{t('sends.empty')}</p>}>
             <For each={sends()}>
               {(s) => (
                 <div class="send-row">
@@ -94,7 +339,7 @@ export default function SendsView() {
                     <span class="muted send-meta">{sendMeta(s)}</span>
                   </span>
                   <button class="danger" disabled={removing().has(s.id)} onClick={() => void revoke(s)}>
-                    <Trash2 size={13} strokeWidth={1.75} /> Revoke
+                    <Trash2 size={13} strokeWidth={1.75} /> {t('sends.revoke')}
                   </button>
                 </div>
               )}

@@ -3,12 +3,27 @@
 // the columns store, and the item editor.
 
 import type { ItemType } from './types.ts';
+import { t } from './i18n.ts';
 
+// Getters keep the `TYPE_LABELS[type]` access shape while resolving lazily, so the
+// value tracks the active locale when read inside Solid JSX.
 export const TYPE_LABELS: Record<ItemType, string> = {
-  login: 'Login',
-  secureNote: 'Secure note',
-  card: 'Card',
-  identity: 'Identity',
-  sshKey: 'SSH key',
-  unknown: 'Item',
+  get login() {
+    return t('itemType.login');
+  },
+  get secureNote() {
+    return t('itemType.secureNote');
+  },
+  get card() {
+    return t('itemType.card');
+  },
+  get identity() {
+    return t('itemType.identity');
+  },
+  get sshKey() {
+    return t('itemType.sshKey');
+  },
+  get unknown() {
+    return t('itemType.unknown');
+  },
 };

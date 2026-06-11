@@ -8,6 +8,7 @@ import { createSignal, For, Show } from 'solid-js';
 import { Check, ChevronsUpDown, Layers, Lock, Plus } from 'lucide-solid';
 import type { ConnectionSummary } from '../lib/types.ts';
 import { accountColorVar } from '../lib/accountColor.ts';
+import { t } from '../lib/i18n.ts';
 import './VaultSwitcher.css';
 
 export default function VaultSwitcher(props: {
@@ -21,7 +22,7 @@ export default function VaultSwitcher(props: {
   const [open, setOpen] = createSignal(false);
 
   const activeConn = () => props.connections.find((c) => c.email === props.active) ?? null;
-  const label = () => (props.active ? activeConn()?.email ?? props.active : 'All vaults');
+  const label = () => (props.active ? activeConn()?.email ?? props.active : t('switcher.allVaults'));
 
   function pick(email: string | null) {
     setOpen(false);
@@ -32,7 +33,7 @@ export default function VaultSwitcher(props: {
     <div class="vault-switcher">
       <button
         class="vault-switcher-btn"
-        title={`Vault: ${label()} — switch vault`}
+        title={t('switcher.buttonTitle', { label: label() })}
         aria-haspopup="menu"
         aria-expanded={open()}
         onClick={() => setOpen((v) => !v)}
@@ -54,7 +55,7 @@ export default function VaultSwitcher(props: {
           <div class="vault-switcher-menu" role="menu">
             <button class="vault-switcher-item" role="menuitem" onClick={() => pick(null)}>
               <Layers size={15} strokeWidth={1.6} />
-              <span class="vault-switcher-item-text">All vaults</span>
+              <span class="vault-switcher-item-text">{t('switcher.allVaults')}</span>
               <Show when={props.active === null}>
                 <Check size={14} strokeWidth={2} class="vault-switcher-check" />
               </Show>
@@ -97,7 +98,7 @@ export default function VaultSwitcher(props: {
                     }}
                   >
                     <Plus size={15} strokeWidth={1.6} />
-                    <span class="vault-switcher-item-text">Add connection</span>
+                    <span class="vault-switcher-item-text">{t('switcher.addConnection')}</span>
                   </button>
                 </>
               )}

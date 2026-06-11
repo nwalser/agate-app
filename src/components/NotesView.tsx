@@ -8,6 +8,7 @@ import { For, Show, createSignal, type JSX } from 'solid-js';
 import { Code2, Eye } from 'lucide-solid';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { parseMarkdown, type Block, type Inline } from '../lib/markdown.ts';
+import { t } from '../lib/i18n.ts';
 import './NotesView.css';
 
 function renderInline(nodes: Inline[]): JSX.Element {
@@ -80,10 +81,10 @@ export default function NotesView(props: { notes: string }) {
   return (
     <div class="detail-field">
       <div class="md-head">
-        <label>Notes</label>
+        <label>{t('notes.title')}</label>
         <button
           class="ghost icon-btn md-toggle"
-          title={raw() ? 'Show rendered' : 'Show raw text'}
+          title={raw() ? t('notes.showRendered') : t('notes.showRaw')}
           onClick={() => setRaw((v) => !v)}
         >
           <Show when={raw()} fallback={<Code2 size={13} strokeWidth={1.75} />}>

@@ -10,6 +10,7 @@
 import { createSignal, For, onMount, Show } from 'solid-js';
 import { KeyRound, Lock, Pencil, Trash2, Unlock as UnlockIcon, UserPlus, X } from 'lucide-solid';
 import { ipc } from '../../lib/ipc.ts';
+import { t } from '../../lib/i18n.ts';
 import type { ConnectionSummary, ServerConfig, TwoFactorKind } from '../../lib/types.ts';
 import { refreshSession, setAddingConnection } from '../../state/session.ts';
 import { pushToast, toastError } from '../../state/toast.ts';
@@ -60,7 +61,7 @@ export default function ConnectionsSettings() {
       setEditing(null);
       setUnlocking(null);
       await reload();
-      pushToast('success', 'Connection removed.');
+      pushToast('success', t('connections.removed'));
     } catch (err) {
       toastError(err);
     }
@@ -87,12 +88,8 @@ export default function ConnectionsSettings() {
   return (
     <div class="settings-page">
       <section class="settings-section">
-        <h3>Connections</h3>
-        <p class="muted settings-help">
-          Each connection is a Bitwarden account. Choose per account whether its login is stored
-          (opens automatically) or unlocked manually. Removing one forgets its stored credentials on
-          this device.
-        </p>
+        <h3>{t('connections.title')}</h3>
+        <p class="muted settings-help">{t('connections.help')}</p>
         <For each={connections()}>
           {(conn) => (
             <div class="settings-account-card">
@@ -103,31 +100,31 @@ export default function ConnectionsSettings() {
                 </span>
                 <span class="settings-account-badges">
                   <span class="settings-badge" classList={{ 'settings-badge-warn': !conn.storeCredentials }}>
-                    {conn.storeCredentials ? 'Auto-unlock' : 'Manual'}
+                    {conn.storeCredentials ? t('connections.badgeAutoUnlock') : t('connections.badgeManual')}
                   </span>
                   <span
                     class="settings-badge"
                     classList={{ 'settings-badge-ok': conn.unlocked, 'settings-badge-muted': !conn.unlocked }}
                   >
-                    {conn.unlocked ? 'Unlocked' : 'Locked'}
+                    {conn.unlocked ? t('connections.badgeUnlocked') : t('connections.badgeLocked')}
                   </span>
                 </span>
                 <span class="row settings-account-actions">
                   <Show when={!conn.unlocked}>
                     <button
                       class="ghost icon-btn"
-                      title="Unlock now"
+                      title={t('connections.unlockNow')}
                       onClick={() => toggleUnlock(conn.email)}
                     >
                       <KeyRound size={14} strokeWidth={1.75} />
                     </button>
                   </Show>
-                  <button class="ghost icon-btn" title="Edit connection" onClick={() => toggleEdit(conn.email)}>
+                  <button class="ghost icon-btn" title={t('connections.editConnection')} onClick={() => toggleEdit(conn.email)}>
                     <Pencil size={14} strokeWidth={1.75} />
                   </button>
                   <button
                     class="ghost icon-btn"
-                    title="Remove connection"
+                    title={t('connections.removeConnection')}
                     onClick={() => void removeConn(conn.email)}
                   >
                     <Trash2 size={14} strokeWidth={1.75} />
@@ -160,10 +157,10 @@ export default function ConnectionsSettings() {
         </For>
         <div class="settings-actions">
           <button class="danger" onClick={() => void logout()}>
-            Log out of everything
+            {t('connections.logoutAll')}
           </button>
           <button class="primary gen-btn" onClick={() => setAddingConnection(true)}>
-            <UserPlus size={14} strokeWidth={1.75} /> Add connection
+            <UserPlus size={14} strokeWidth={1.75} /> {t('connections.addConnection')}
           </button>
         </div>
       </section>
@@ -185,23 +182,23 @@ function TwoFactorStep(props: {
   return (
     <>
       <div class="field">
-        <label>Provider</label>
+        <label>{t('connections.provider')}</label>
         <select
           value={props.provider}
           onChange={(e) => props.setProvider(e.currentTarget.value as TwoFactorKind)}
         >
           <For each={props.providers}>
-            {(p) => <option value={p}>{p === 'authenticator' ? 'Authenticator app' : 'Email'}</option>}
+            {(p) => <option value={p}>{p === 'authenticator' ? t('connections.providerAuthenticator') : t('connections.providerEmail')}</option>}
           </For>
         </select>
       </div>
       <Show when={props.provider === 'email'}>
         <button class="ghost send-code" disabled={props.busy} onClick={() => props.onSendCode()}>
-          Send code to email
+          {t('connections.sendCodeToEmail')}
         </button>
       </Show>
       <div class="field">
-        <label>Verification code</label>
+        <label>{t('connections.verificationCode')}</label>
         <input
           value={props.token}
           inputmode="numeric"
@@ -239,7 +236,7 @@ function EditConnection(props: {
 
   async function save(withTf: boolean) {
     if (passwordRequired() && !password()) {
-      pushToast('error', 'Enter your master password to apply these changes.');
+      pushToast('error', t('connections.enterMasterPwToApply'));
       return;
     }
     setBusy(true);
@@ -252,9 +249,9 @@ function EditConnection(props: {
       if (result.status === 'twoFactorRequired') {
         setTfProviders(result.providers);
         setTfProvider(result.providers[0] ?? 'authenticator');
-        pushToast('info', 'Two-factor authentication required.');
+        pushToast('info', t('connections.twoFactorRequired'));
       } else {
-        pushToast('success', 'Connection updated.');
+        pushToast('success', t('connections.updated'));
         props.onDone();
       }
     } catch (err) {
@@ -268,7 +265,7 @@ function EditConnection(props: {
     setBusy(true);
     try {
       await ipc.sendEmailCode(server(), props.conn.email, password());
-      pushToast('success', 'Code sent to your email.');
+      pushToast('success', t('connections.codeSent'));
     } catch (err) {
       toastError(err);
     } finally {
@@ -279,8 +276,8 @@ function EditConnection(props: {
   return (
     <div class="settings-conn-form">
       <div class="settings-conn-form-head">
-        <span class="settings-conn-form-title">Edit connection</span>
-        <button class="ghost icon-btn" title="Close" onClick={() => props.onClose()}>
+        <span class="settings-conn-form-title">{t('connections.editConnection')}</span>
+        <button class="ghost icon-btn" title={t('common.close')} onClick={() => props.onClose()}>
           <X size={14} strokeWidth={1.75} />
         </button>
       </div>
@@ -301,16 +298,16 @@ function EditConnection(props: {
         }
       >
         <div class="field">
-          <label>Server</label>
+          <label>{t('connections.server')}</label>
           <select value={region()} onChange={(e) => setRegion(e.currentTarget.value as Region)}>
-            <option value="us">Bitwarden — US (bitwarden.com)</option>
-            <option value="eu">Bitwarden — EU (bitwarden.eu)</option>
-            <option value="selfHosted">Self-hosted / Vaultwarden…</option>
+            <option value="us">{t('connections.serverUs')}</option>
+            <option value="eu">{t('connections.serverEu')}</option>
+            <option value="selfHosted">{t('connections.serverSelfHosted')}</option>
           </select>
         </div>
         <Show when={region() === 'selfHosted'}>
           <div class="field">
-            <label>Server URL</label>
+            <label>{t('connections.serverUrl')}</label>
             <input
               placeholder="https://vault.example.com"
               value={baseUrl()}
@@ -320,19 +317,19 @@ function EditConnection(props: {
         </Show>
         <label class="checkbox settings-bind">
           <input type="checkbox" checked={store()} onChange={(e) => setStore(e.currentTarget.checked)} />
-          Store login on this device (auto-unlock)
+          {t('connections.storeLogin')}
         </label>
         <div class="field">
           <label>
-            Master password
+            {t('connections.masterPassword')}
             <Show when={!passwordRequired()}>
-              <span class="muted"> (only to re-authenticate)</span>
+              <span class="muted"> {t('connections.masterPasswordOnlyReauth')}</span>
             </Show>
           </label>
           <input
             type="password"
             autocomplete="current-password"
-            placeholder={passwordRequired() ? 'Required for this change' : 'Leave blank to keep current'}
+            placeholder={passwordRequired() ? t('connections.pwRequiredForChange') : t('connections.pwLeaveBlank')}
             value={password()}
             onInput={(e) => setPassword(e.currentTarget.value)}
             onKeyDown={(e) => e.key === 'Enter' && void save(false)}
@@ -345,7 +342,7 @@ function EditConnection(props: {
         disabled={busy()}
         onClick={() => void save(tfProviders() !== null)}
       >
-        {busy() ? 'Saving…' : tfProviders() ? 'Verify & save' : 'Save changes'}
+        {busy() ? t('connections.saving') : tfProviders() ? t('connections.verifyAndSave') : t('connections.saveChanges')}
       </button>
     </div>
   );
@@ -366,7 +363,7 @@ function UnlockConnection(props: {
 
   async function unlock(withTf: boolean) {
     if (!password()) {
-      pushToast('error', 'Enter this account’s master password.');
+      pushToast('error', t('connections.enterAccountMasterPw'));
       return;
     }
     setBusy(true);
@@ -378,9 +375,9 @@ function UnlockConnection(props: {
       if (result.status === 'twoFactorRequired') {
         setTfProviders(result.providers);
         setTfProvider(result.providers[0] ?? 'authenticator');
-        pushToast('info', 'Two-factor authentication required.');
+        pushToast('info', t('connections.twoFactorRequired'));
       } else {
-        pushToast('success', 'Connection unlocked.');
+        pushToast('success', t('connections.unlocked'));
         props.onDone();
       }
     } catch (err) {
@@ -394,7 +391,7 @@ function UnlockConnection(props: {
     setBusy(true);
     try {
       await ipc.sendEmailCode(props.conn.server, props.conn.email, password());
-      pushToast('success', 'Code sent to your email.');
+      pushToast('success', t('connections.codeSent'));
     } catch (err) {
       toastError(err);
     } finally {
@@ -406,9 +403,9 @@ function UnlockConnection(props: {
     <div class="settings-conn-form">
       <div class="settings-conn-form-head">
         <span class="settings-conn-form-title">
-          <UnlockIcon size={13} strokeWidth={1.75} /> Unlock {props.conn.email}
+          <UnlockIcon size={13} strokeWidth={1.75} /> {t('connections.unlockEmail', { email: props.conn.email })}
         </span>
-        <button class="ghost icon-btn" title="Close" onClick={() => props.onClose()}>
+        <button class="ghost icon-btn" title={t('common.close')} onClick={() => props.onClose()}>
           <X size={14} strokeWidth={1.75} />
         </button>
       </div>
@@ -429,7 +426,7 @@ function UnlockConnection(props: {
         }
       >
         <div class="field">
-          <label>Master password</label>
+          <label>{t('connections.masterPassword')}</label>
           <input
             type="password"
             autocomplete="current-password"
@@ -446,7 +443,7 @@ function UnlockConnection(props: {
         onClick={() => void unlock(tfProviders() !== null)}
       >
         <Lock size={14} strokeWidth={1.75} />
-        {busy() ? 'Unlocking…' : tfProviders() ? 'Verify & unlock' : 'Unlock'}
+        {busy() ? t('connections.unlocking') : tfProviders() ? t('connections.verifyAndUnlock') : t('connections.unlock')}
       </button>
     </div>
   );

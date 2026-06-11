@@ -5,6 +5,7 @@
 // isolation; VaultListHeader maps each item id to the matching column mutator.
 
 import type { SortDir } from '../state/columns.ts';
+import { t } from './i18n.ts';
 
 export type HeaderMenuItemId =
   | 'sort-asc'
@@ -16,6 +17,7 @@ export type HeaderMenuItemId =
   | 'ungroup'
   | 'move-left'
   | 'move-right'
+  | 'configure'
   | 'reset-width'
   | 'hide';
 
@@ -48,10 +50,12 @@ export interface HeaderTarget {
   grouped: boolean;
   /** A custom drag-width is set for this column. */
   hasWidth: boolean;
+  /** A custom-field column — it alone can be configured (display name + icon). */
+  custom: boolean;
 }
 
 /** The ordered menu items for a header, with disabled/section state resolved. */
-export function headerMenuItems(t: HeaderTarget): HeaderMenuItem[] {
+export function headerMenuItems(target: HeaderTarget): HeaderMenuItem[] {
   const items: HeaderMenuItem[] = [];
   const add = (
     id: HeaderMenuItemId,
@@ -68,31 +72,33 @@ export function headerMenuItems(t: HeaderTarget): HeaderMenuItem[] {
     });
   };
 
-  if (t.sortable) {
-    add('sort-asc', 'Sort ascending', { disabled: t.sorted && t.sortDir === 'asc' });
-    add('sort-desc', 'Sort descending', { disabled: t.sorted && t.sortDir === 'desc' });
+  if (target.sortable) {
+    add('sort-asc', t('headerMenu.sortAscending'), { disabled: target.sorted && target.sortDir === 'asc' });
+    add('sort-desc', t('headerMenu.sortDescending'), { disabled: target.sorted && target.sortDir === 'desc' });
   }
 
-  if (t.secret) {
-    if (t.revealed) add('hide-values', 'Hide values', { section: true });
-    else add('reveal', 'Reveal values', { section: true });
+  if (target.secret) {
+    if (target.revealed) add('hide-values', t('headerMenu.hideValues'), { section: true });
+    else add('reveal', t('headerMenu.revealValues'), { section: true });
   }
 
-  if (t.filterable) add('filter', 'Filter by this column', { section: true });
+  if (target.filterable) add('filter', t('headerMenu.filterByColumn'), { section: true });
 
-  if (t.groupable) {
-    if (t.grouped) add('ungroup', 'Ungroup', { section: true });
-    else add('group', 'Group by this column', { section: true });
+  if (target.groupable) {
+    if (target.grouped) add('ungroup', t('headerMenu.ungroup'), { section: true });
+    else add('group', t('headerMenu.groupByColumn'), { section: true });
   }
 
-  if (!t.isName) {
-    add('move-left', 'Move left', { disabled: t.index <= 0, section: true });
-    add('move-right', 'Move right', { disabled: t.index >= t.count - 1 });
+  if (!target.isName) {
+    add('move-left', t('headerMenu.moveLeft'), { disabled: target.index <= 0, section: true });
+    add('move-right', t('headerMenu.moveRight'), { disabled: target.index >= target.count - 1 });
   }
 
-  if (t.hasWidth) add('reset-width', 'Reset width', { section: true });
+  if (target.custom) add('configure', t('headerMenu.configureColumn'), { section: true });
 
-  if (!t.isName) add('hide', 'Hide column', { danger: true, section: true });
+  if (target.hasWidth) add('reset-width', t('headerMenu.resetWidth'), { section: true });
+
+  if (!target.isName) add('hide', t('headerMenu.hideColumn'), { danger: true, section: true });
 
   return items;
 }

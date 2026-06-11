@@ -4,6 +4,7 @@
 // the vault-list "Security" column, so both render the same flag set.
 
 import type { ItemAudit } from './types.ts';
+import { t } from './i18n.ts';
 
 export interface AuditChip {
   label: string;
@@ -14,11 +15,11 @@ export interface AuditChip {
 /** Audit flags for one item, ordered worst-first. Empty when the item is clean. */
 export function itemAuditChips(a: ItemAudit): AuditChip[] {
   return [
-    a.reused && { label: 'Reused', severe: true },
-    a.weak && { label: 'Weak', severe: true },
-    a.insecureUri && { label: 'Insecure URL', severe: true },
-    a.old && { label: 'Old', severe: false },
-    a.noTotp && { label: 'No 2FA', severe: false },
+    a.reused && { label: t('audit.reused'), severe: true },
+    a.weak && { label: t('audit.weak'), severe: true },
+    a.insecureUri && { label: t('audit.insecureUrl'), severe: true },
+    a.old && { label: t('audit.old'), severe: false },
+    a.noTotp && { label: t('audit.noTwoFactor'), severe: false },
   ].filter((c): c is AuditChip => Boolean(c));
 }
 

@@ -17,6 +17,7 @@ import {
   type GroupKey,
   type GroupSpec,
 } from './columnConfig.ts';
+import { isColumnIconId } from '../lib/columnIconIds.ts';
 
 const [columns, setColumnsSignal] = createSignal<ColumnConfig>(readColumnConfig());
 
@@ -83,12 +84,41 @@ export function removeColumn(c: ColumnSpec) {
   toggleColumn(c); // remove path of toggle (also clears its reveal)
 }
 
-export function addCustomColumn(field: string) {
+export function addCustomColumn(field: string, meta?: { label?: string; icon?: string }) {
   const f = field.trim();
   if (!f) return;
   const c: ColumnSpec = { kind: 'custom', field: f };
+  const label = meta?.label?.trim();
+  if (label) c.label = label;
+  const icon = meta?.icon;
+  if (isColumnIconId(icon)) c.icon = icon;
+  // Identity is the field, so a column for this field already shown stays as-is
+  // (re-adding never clobbers an existing label/icon — configure it instead).
   if (isColumnVisible(c)) return;
   persist({ ...columns(), columns: [...columns().columns, c] });
+}
+
+/** Update a custom column's presentation (display label + icon) by its column key.
+ *  Per field: `undefined` keeps the current value, `null` or a blank string clears
+ *  it, a string sets it (an unknown icon id clears the icon). Builtins and unknown
+ *  keys are a no-op — only custom columns carry a label/icon. */
+export function configureColumn(key: string, meta: { label?: string | null; icon?: string | null }) {
+  const cur = columns();
+  let changed = false;
+  const next = cur.columns.map((c) => {
+    if (c.kind !== 'custom' || columnKey(c) !== key) return c;
+    changed = true;
+    const updated: ColumnSpec = { kind: 'custom', field: c.field };
+    let label = c.label;
+    if (meta.label !== undefined) label = (meta.label ?? '').trim() || undefined;
+    if (label) updated.label = label;
+    let icon = c.icon;
+    if (meta.icon !== undefined) icon = meta.icon ?? undefined;
+    if (isColumnIconId(icon)) updated.icon = icon;
+    return updated;
+  });
+  if (!changed) return;
+  persist({ ...cur, columns: next });
 }
 
 export function moveColumn(index: number, dir: -1 | 1) {

@@ -19,7 +19,12 @@ export default defineConfig(({ command }) => ({
   plugins: [solid()],
   clearScreen: false,
   server: {
-    port: 5173,
+    // NOT vite's default 5173: themia (and any other vite project) grabs that
+    // one, and whichever app's shell loads first would render the WRONG app's
+    // frontend (tauri devUrl is a fixed URL). 5273 is Agate's own port, off the
+    // 5173/5174/… auto-increment chain; strictPort fails LOUD instead of
+    // silently drifting away from devUrl.
+    port: 5273,
     strictPort: true,
     watch: {
       ignored: ['**/src-tauri/**', '**/target/**', '**/dist/**', '**/node_modules/**'],

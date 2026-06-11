@@ -42,6 +42,7 @@ export {
   addCustomColumn,
   applyColumnConfig,
   columns,
+  configureColumn,
   isColumnVisible,
   isRevealed,
   moveColumn,

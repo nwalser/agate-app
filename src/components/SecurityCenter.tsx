@@ -12,6 +12,7 @@
 import { createEffect, createSignal } from 'solid-js';
 import { ShieldCheck } from 'lucide-solid';
 import type { VaultHealthReport } from '../lib/types.ts';
+import { t } from '../lib/i18n.ts';
 import BreachMonitor from './security/BreachMonitor.tsx';
 import ExposedPasswordsView from './security/ExposedPasswordsView.tsx';
 import VaultHealth from './security/VaultHealth.tsx';
@@ -36,7 +37,7 @@ export default function SecurityCenter(props: {
     <div class="sec">
       <header class="sec-header">
         <ShieldCheck size={16} strokeWidth={1.75} />
-        <h2>Vault security</h2>
+        <h2>{t('security.title')}</h2>
       </header>
 
       <div class="sec-body">

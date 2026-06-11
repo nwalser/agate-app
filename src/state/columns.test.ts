@@ -278,3 +278,58 @@ describe('columns store — display mode', () => {
     expect(m.columns().displayMode).toBe('table');
   });
 });
+
+describe('columns store — custom column config (label + icon)', () => {
+  beforeEach(() => localStorage.clear());
+
+  const byField = (m: Awaited<ReturnType<typeof freshColumns>>, field: string) =>
+    m.columns().columns.find((c) => c.kind === 'custom' && c.field === field);
+
+  it('addCustomColumn stores a trimmed label + known icon, ignoring blanks/unknowns', async () => {
+    const m = await freshColumns();
+    m.addCustomColumn('env', { label: ' Environment ', icon: 'tag' });
+    m.addCustomColumn('pin', { label: '   ', icon: 'not-an-icon' });
+    expect(byField(m, 'env')).toEqual({ kind: 'custom', field: 'env', label: 'Environment', icon: 'tag' });
+    expect(byField(m, 'pin')).toEqual({ kind: 'custom', field: 'pin' });
+  });
+
+  it('re-adding an existing field is a no-op (never clobbers its config)', async () => {
+    const m = await freshColumns();
+    m.addCustomColumn('env', { label: 'Environment', icon: 'tag' });
+    m.addCustomColumn('env', { label: 'Other', icon: 'key' });
+    const env = m.columns().columns.filter((c) => c.kind === 'custom' && c.field === 'env');
+    expect(env).toEqual([{ kind: 'custom', field: 'env', label: 'Environment', icon: 'tag' }]);
+  });
+
+  it('configureColumn sets label + icon and persists', async () => {
+    const m = await freshColumns();
+    m.addCustomColumn('env');
+    m.configureColumn('custom:env', { label: 'Environment', icon: 'tag' });
+    expect(byField(m, 'env')).toEqual({ kind: 'custom', field: 'env', label: 'Environment', icon: 'tag' });
+    const raw = JSON.parse(localStorage.getItem('agate.columns') ?? '{}');
+    expect(raw.columns.find((c: { field?: string }) => c.field === 'env')).toEqual({
+      kind: 'custom',
+      field: 'env',
+      label: 'Environment',
+      icon: 'tag',
+    });
+  });
+
+  it('configureColumn clears with null/blank and drops an unknown icon', async () => {
+    const m = await freshColumns();
+    m.addCustomColumn('env', { label: 'Environment', icon: 'tag' });
+    m.configureColumn('custom:env', { label: null, icon: 'nope' });
+    expect(byField(m, 'env')).toEqual({ kind: 'custom', field: 'env' });
+  });
+
+  it('configureColumn keeps undefined fields, and is a no-op on a builtin / unknown key', async () => {
+    const m = await freshColumns();
+    m.addCustomColumn('env', { label: 'Environment', icon: 'tag' });
+    m.configureColumn('custom:env', { icon: 'key' }); // label left undefined → kept
+    expect(byField(m, 'env')).toEqual({ kind: 'custom', field: 'env', label: 'Environment', icon: 'key' });
+    const before = JSON.stringify(m.columns());
+    m.configureColumn('custom:missing', { label: 'X' });
+    m.configureColumn('builtin:username', { label: 'X' });
+    expect(JSON.stringify(m.columns())).toBe(before);
+  });
+});

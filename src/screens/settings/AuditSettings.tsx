@@ -14,26 +14,29 @@ import {
   ToggleRow,
 } from '../../components/settings/SettingsControls.tsx';
 import type { IconComponent } from '../../lib/icon.ts';
+import { t } from '../../lib/i18n.ts';
 import './AuditSettings.css';
 
-const WEAK_LEVELS = [
-  { value: 2, label: 'Below fair' },
-  { value: 3, label: 'Below good' },
-  { value: 4, label: 'Below strong' },
+// Option lists are functions (not module constants) so the labels re-localize on
+// a language flip — they're called in render.
+const weakLevels = () => [
+  { value: 2, label: t('auditSettings.weakBelowFair') },
+  { value: 3, label: t('auditSettings.weakBelowGood') },
+  { value: 4, label: t('auditSettings.weakBelowStrong') },
 ];
 
-const OLD_OPTIONS = [
-  { value: 30, label: '1 month' },
-  { value: 90, label: '3 months' },
-  { value: 180, label: '6 months' },
-  { value: 365, label: '1 year' },
-  { value: 730, label: '2 years' },
+const oldOptions = () => [
+  { value: 30, label: t('auditSettings.old1Month') },
+  { value: 90, label: t('auditSettings.old3Months') },
+  { value: 180, label: t('auditSettings.old6Months') },
+  { value: 365, label: t('auditSettings.old1Year') },
+  { value: 730, label: t('auditSettings.old2Years') },
 ];
 
-const REUSE_OPTIONS = [
-  { value: 2, label: '2 or more' },
-  { value: 3, label: '3 or more' },
-  { value: 5, label: '5 or more' },
+const reuseOptions = () => [
+  { value: 2, label: t('auditSettings.reuse2OrMore') },
+  { value: 3, label: t('auditSettings.reuse3OrMore') },
+  { value: 5, label: t('auditSettings.reuse5OrMore') },
 ];
 
 export default function AuditSettings() {
@@ -42,26 +45,22 @@ export default function AuditSettings() {
   return (
     <section class="settings-section">
         <h3>
-          <ShieldCheck size={14} strokeWidth={1.75} /> Security audits
+          <ShieldCheck size={14} strokeWidth={1.75} /> {t('auditSettings.title')}
         </h3>
-        <p class="muted settings-help">
-          Local checks over your decrypted vault — nothing leaves your device. Turn each on or off
-          and tune what counts as a problem. Results drive the Security center, the list's Security
-          column, and the sidebar badge.
-        </p>
+        <p class="muted settings-help">{t('auditSettings.help')}</p>
 
         <AuditCheck
           icon={Repeat}
-          label="Reused passwords"
-          desc="The same password used on more than one login."
+          label={t('auditSettings.reusedLabel')}
+          desc={t('auditSettings.reusedDesc')}
           enabled={c().reused}
           onToggle={(v) => setAuditOption('reused', v)}
         >
-          <SettingSubField label="Flag when shared by">
+          <SettingSubField label={t('auditSettings.flagWhenSharedBy')}>
             <Select
-              ariaLabel="Reuse threshold"
+              ariaLabel={t('auditSettings.reuseThreshold')}
               value={c().reuseMin}
-              options={REUSE_OPTIONS}
+              options={reuseOptions()}
               onChange={(v) => setAuditOption('reuseMin', v)}
             />
           </SettingSubField>
@@ -69,16 +68,16 @@ export default function AuditSettings() {
 
         <AuditCheck
           icon={Gauge}
-          label="Weak passwords"
-          desc="Easy-to-guess passwords, scored offline with zxcvbn."
+          label={t('auditSettings.weakLabel')}
+          desc={t('auditSettings.weakDesc')}
           enabled={c().weak}
           onToggle={(v) => setAuditOption('weak', v)}
         >
-          <SettingSubField label="Flag strength">
+          <SettingSubField label={t('auditSettings.flagStrength')}>
             <Select
-              ariaLabel="Weak-password threshold"
+              ariaLabel={t('auditSettings.weakThreshold')}
               value={c().weakMaxScore}
-              options={WEAK_LEVELS}
+              options={weakLevels()}
               onChange={(v) => setAuditOption('weakMaxScore', v)}
             />
           </SettingSubField>
@@ -86,16 +85,16 @@ export default function AuditSettings() {
 
         <AuditCheck
           icon={Clock}
-          label="Old passwords"
-          desc="Passwords that haven't been changed in a long time."
+          label={t('auditSettings.oldLabel')}
+          desc={t('auditSettings.oldDesc')}
           enabled={c().old}
           onToggle={(v) => setAuditOption('old', v)}
         >
-          <SettingSubField label="Flag when older than">
+          <SettingSubField label={t('auditSettings.flagWhenOlderThan')}>
             <Select
-              ariaLabel="Old-password threshold"
+              ariaLabel={t('auditSettings.oldThreshold')}
               value={c().oldDays}
-              options={OLD_OPTIONS}
+              options={oldOptions()}
               onChange={(v) => setAuditOption('oldDays', v)}
             />
           </SettingSubField>
@@ -103,22 +102,22 @@ export default function AuditSettings() {
 
         <AuditCheck
           icon={Globe}
-          label="Insecure website"
-          desc="A login whose website uses http:// instead of https://."
+          label={t('auditSettings.insecureLabel')}
+          desc={t('auditSettings.insecureDesc')}
           enabled={c().insecureUri}
           onToggle={(v) => setAuditOption('insecureUri', v)}
         />
 
         <AuditCheck
           icon={Timer}
-          label="No one-time code"
-          desc="A login without a TOTP / two-factor code stored."
+          label={t('auditSettings.noTotpLabel')}
+          desc={t('auditSettings.noTotpDesc')}
           enabled={c().noTotp}
           onToggle={(v) => setAuditOption('noTotp', v)}
         />
 
         <div class="settings-actions">
-          <ResetButton label="Reset to defaults" onClick={() => resetAuditConfig()} />
+          <ResetButton label={t('auditSettings.resetToDefaults')} onClick={() => resetAuditConfig()} />
         </div>
     </section>
   );

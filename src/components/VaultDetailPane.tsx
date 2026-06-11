@@ -29,6 +29,7 @@ import {
 } from 'lucide-solid';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import type { Attachment, BreachRecord, CardInput, CustomField, ItemDetail, TotpCode } from '../lib/types.ts';
+import { t } from '../lib/i18n.ts';
 import { ipc } from '../lib/ipc.ts';
 import { pushToast, toastError } from '../state/toast.ts';
 import {
@@ -116,7 +117,7 @@ export default function VaultDetailPane(props: {
     setDownloading(att.id);
     try {
       const path = await ipc.downloadAttachment(props.detail.accountEmail, props.detail.id, att.id);
-      pushToast('success', `Saved ${att.fileName ?? 'attachment'} to ${path}`);
+      pushToast('success', t('detail.savedAttachment', { name: att.fileName ?? t('detail.attachmentFallback'), path }));
     } catch (err) {
       toastError(err);
     } finally {
@@ -134,12 +135,12 @@ export default function VaultDetailPane(props: {
             when={!props.inTrash}
             fallback={
               <>
-                <button class="ghost icon-btn" title="Restore" onClick={() => props.onRestore(d().id)}>
+                <button class="ghost icon-btn" title={t('detail.restore')} onClick={() => props.onRestore(d().id)}>
                   <RotateCcw size={15} strokeWidth={1.6} />
                 </button>
                 <button
                   class="ghost icon-btn detail-del"
-                  title="Delete permanently"
+                  title={t('detail.deletePermanently')}
                   onClick={() => props.onDelete(d().id, true)}
                 >
                   <Trash2 size={15} strokeWidth={1.6} />
@@ -149,20 +150,20 @@ export default function VaultDetailPane(props: {
           >
             <button
               class="ghost icon-btn"
-              title={d().favorite ? 'Unfavorite' : 'Favorite'}
+              title={d().favorite ? t('detail.unfavorite') : t('detail.favorite')}
               onClick={() => props.onFavorite(d())}
             >
               <Star size={15} strokeWidth={1.6} class={d().favorite ? 'vault-row-fav' : ''} />
             </button>
-            <button class="ghost icon-btn" title="Edit" onClick={() => props.onEdit(d())}>
+            <button class="ghost icon-btn" title={t('common.edit')} onClick={() => props.onEdit(d())}>
               <Pencil size={15} strokeWidth={1.6} />
             </button>
-            <button class="ghost icon-btn" title="Clone" onClick={() => props.onClone(d().id)}>
+            <button class="ghost icon-btn" title={t('detail.clone')} onClick={() => props.onClone(d().id)}>
               <Copy size={15} strokeWidth={1.6} />
             </button>
             <button
               class="ghost icon-btn detail-del"
-              title="Move to trash"
+              title={t('detail.moveToTrash')}
               onClick={() => props.onDelete(d().id, false)}
             >
               <Trash2 size={15} strokeWidth={1.6} />
@@ -176,7 +177,7 @@ export default function VaultDetailPane(props: {
           <>
             <Show when={login().username}>
               <Field
-                label="Username"
+                label={t('common.username')}
                 value={login().username}
                 onCopy={() => props.copy('Username', login().username)}
                 onCtx={openFieldCtx}
@@ -191,7 +192,7 @@ export default function VaultDetailPane(props: {
                     class="detail-field"
                     onContextMenu={(e) =>
                       openFieldCtx(e, {
-                        label: 'Password',
+                        label: t('common.password'),
                         copy: () => guard(() => props.copy('Password', login().password)),
                         reveal: {
                           shown: pwShown(),
@@ -200,18 +201,18 @@ export default function VaultDetailPane(props: {
                       })
                     }
                   >
-                    <label>Password</label>
+                    <label>{t('common.password')}</label>
                     <div class="detail-value-row">
                       <code
                         class="detail-value mono copyable"
-                        title="Copy"
+                        title={t('common.copy')}
                         onClick={() => guard(() => props.copy('Password', login().password))}
                       >
                         {pwShown() ? login().password : '••••••••••••'}
                       </code>
                       <button
                         class="ghost icon-btn"
-                        title={pwShown() ? 'Hide' : 'Reveal'}
+                        title={pwShown() ? t('common.hide') : t('detail.reveal')}
                         onClick={() => guard(() => props.setRevealed(!props.revealed))}
                       >
                         {pwShown() ? <EyeOff size={14} /> : <Eye size={14} />}
@@ -228,18 +229,18 @@ export default function VaultDetailPane(props: {
                   class="detail-field"
                   onContextMenu={(e) =>
                     openFieldCtx(e, {
-                      label: 'One-time code',
+                      label: t('detail.oneTimeCode'),
                       copy: () => guard(() => props.copy('Code', code().code)),
                     })
                   }
                 >
                   <label>
-                    <Timer size={11} strokeWidth={2} /> One-time code
+                    <Timer size={11} strokeWidth={2} /> {t('detail.oneTimeCode')}
                   </label>
                   <div class="detail-value-row">
                     <code
                       class="detail-value mono totp-code copyable"
-                      title="Copy"
+                      title={t('common.copy')}
                       onClick={() => guard(() => props.copy('Code', code().code))}
                     >
                       {/* Reprompt protects the code from being READ, not just
@@ -259,22 +260,22 @@ export default function VaultDetailPane(props: {
                     class="detail-field"
                     onContextMenu={(e) =>
                       openFieldCtx(e, {
-                        label: 'Website',
+                        label: t('detail.website'),
                         copy: () => props.copy('URL', u.uri),
                         openUrl: u.uri ?? undefined,
                       })
                     }
                   >
-                    <label>Website</label>
+                    <label>{t('detail.website')}</label>
                     <div class="detail-value-row">
                       <span
                         class="detail-value truncate copyable"
-                        title="Copy"
+                        title={t('common.copy')}
                         onClick={() => props.copy('URL', u.uri)}
                       >
                         {u.uri}
                       </span>
-                      <button class="ghost icon-btn" title="Open" onClick={() => u.uri && void openUrl(u.uri)}>
+                      <button class="ghost icon-btn" title={t('common.open')} onClick={() => u.uri && void openUrl(u.uri)}>
                         <ExternalLink size={14} />
                       </button>
                     </div>
@@ -312,7 +313,7 @@ export default function VaultDetailPane(props: {
           <>
             <Show when={key().publicKey}>
               <Field
-                label="Public key"
+                label={t('detail.publicKey')}
                 value={key().publicKey}
                 onCopy={() => props.copy('Public key', key().publicKey)}
                 onCtx={openFieldCtx}
@@ -320,7 +321,7 @@ export default function VaultDetailPane(props: {
             </Show>
             <Show when={key().fingerprint}>
               <Field
-                label="Fingerprint"
+                label={t('detail.fingerprint')}
                 value={key().fingerprint}
                 onCopy={() => props.copy('Fingerprint', key().fingerprint)}
                 onCtx={openFieldCtx}
@@ -328,7 +329,7 @@ export default function VaultDetailPane(props: {
             </Show>
             <Show when={key().privateKey}>
               <SecretField
-                label="Private key"
+                label={t('detail.privateKey')}
                 value={key().privateKey}
                 onCopy={() => props.copy('Private key', key().privateKey)}
                 onCtx={openFieldCtx}
@@ -362,7 +363,7 @@ export default function VaultDetailPane(props: {
           email turns up in a known breach. */}
       <Show when={props.selectedSecurity || props.selectedBreaches.length > 0}>
         <div class="detail-sec-section">
-          <label class="detail-sec-heading">Security</label>
+          <label class="detail-sec-heading">{t('detail.security')}</label>
 
           {/* The offline verdict. Suppress the clean "no issues" line when the item
               is in a breach — the breach block below is the real verdict then. */}
@@ -383,7 +384,7 @@ export default function VaultDetailPane(props: {
                     fallback={
                       <>
                         <ShieldCheck size={14} strokeWidth={1.75} />
-                        <span class="detail-sec-label">No known security issues</span>
+                        <span class="detail-sec-label">{t('detail.noKnownIssues')}</span>
                       </>
                     }
                   >
@@ -412,8 +413,9 @@ export default function VaultDetailPane(props: {
               <ShieldAlert size={14} strokeWidth={1.75} />
               <div class="detail-sec-breach-body">
                 <span class="detail-sec-breach-title">
-                  Found in {props.selectedBreaches.length} data breach
-                  {props.selectedBreaches.length === 1 ? '' : 'es'}
+                  {props.selectedBreaches.length === 1
+                    ? t('detail.foundInBreach', { count: props.selectedBreaches.length })
+                    : t('detail.foundInBreaches', { count: props.selectedBreaches.length })}
                 </span>
                 <div class="detail-sec-chips">
                   <For each={props.selectedBreaches}>
@@ -429,7 +431,7 @@ export default function VaultDetailPane(props: {
       {/* Stored passkeys (FIDO2) — read-only display; use needs a browser extension. */}
       <Show when={d().passkeys.length > 0}>
         <div class="detail-field">
-          <label>Passkeys</label>
+          <label>{t('detail.passkeys')}</label>
           <For each={d().passkeys}>
             {(pk) => (
               <div class="detail-passkey">
@@ -449,18 +451,18 @@ export default function VaultDetailPane(props: {
       {/* File attachments — download fetches + decrypts to the Downloads folder. */}
       <Show when={d().attachments.length > 0}>
         <div class="detail-field">
-          <label>Attachments</label>
+          <label>{t('detail.attachments')}</label>
           <For each={d().attachments}>
             {(att) => (
               <div class="detail-attachment">
                 <Paperclip size={14} strokeWidth={1.6} />
-                <span class="detail-attachment-name truncate">{att.fileName ?? 'attachment'}</span>
+                <span class="detail-attachment-name truncate">{att.fileName ?? t('detail.attachmentFallback')}</span>
                 <Show when={att.sizeName}>
                   <span class="detail-attachment-size muted">{att.sizeName}</span>
                 </Show>
                 <button
                   class="ghost icon-btn"
-                  title="Download"
+                  title={t('detail.download')}
                   disabled={downloading() === att.id}
                   onClick={() => guard(() => void downloadAttachment(att))}
                 >
@@ -475,7 +477,7 @@ export default function VaultDetailPane(props: {
       {/* Collections this item belongs to (read-only). */}
       <Show when={collectionNames().length > 0}>
         <div class="detail-field">
-          <label>Collections</label>
+          <label>{t('detail.collections')}</label>
           <div class="detail-collections">
             <For each={collectionNames()}>
               {(name) => <span class="detail-collection-chip">{name}</span>}
@@ -486,8 +488,8 @@ export default function VaultDetailPane(props: {
 
       {/* Created / updated timestamps, pinned to the very bottom. */}
       <div class="detail-meta muted">
-        <span title={absoluteDate(d().creationDate)}>Created {relativeFromNow(d().creationDate)}</span>
-        <span title={absoluteDate(d().revisionDate)}>Updated {relativeFromNow(d().revisionDate)}</span>
+        <span title={absoluteDate(d().creationDate)}>{t('detail.created', { date: relativeFromNow(d().creationDate) })}</span>
+        <span title={absoluteDate(d().revisionDate)}>{t('detail.updated', { date: relativeFromNow(d().revisionDate) })}</span>
       </div>
 
 
@@ -508,26 +510,26 @@ export default function VaultDetailPane(props: {
                 fallback={
                   <>
                     <CtxItem onClick={act(() => props.onRestore(d().id))}>
-                      <RotateCcw size={14} /> Restore
+                      <RotateCcw size={14} /> {t('detail.restore')}
                     </CtxItem>
                     <CtxItem danger onClick={act(() => props.onDelete(d().id, true))}>
-                      <Trash2 size={14} /> Delete permanently
+                      <Trash2 size={14} /> {t('detail.deletePermanently')}
                     </CtxItem>
                   </>
                 }
               >
                 <CtxItem onClick={act(() => props.onFavorite(d()))}>
-                  <Star size={14} /> {d().favorite ? 'Unfavorite' : 'Favorite'}
+                  <Star size={14} /> {d().favorite ? t('detail.unfavorite') : t('detail.favorite')}
                 </CtxItem>
                 <CtxItem onClick={act(() => props.onEdit(d()))}>
-                  <Pencil size={14} /> Edit
+                  <Pencil size={14} /> {t('common.edit')}
                 </CtxItem>
                 <CtxItem onClick={act(() => props.onClone(d().id))}>
-                  <Copy size={14} /> Clone
+                  <Copy size={14} /> {t('detail.clone')}
                 </CtxItem>
                 <CtxSep />
                 <CtxItem danger onClick={act(() => props.onDelete(d().id, false))}>
-                  <Trash2 size={14} /> Move to trash
+                  <Trash2 size={14} /> {t('detail.moveToTrash')}
                 </CtxItem>
               </Show>
             </ContextMenu>
@@ -547,7 +549,7 @@ export default function VaultDetailPane(props: {
                   close();
                 }}
               >
-                <Copy size={14} /> Copy {m().label.toLowerCase()}
+                <Copy size={14} /> {t('detail.copyField', { label: m().label.toLowerCase() })}
               </CtxItem>
               <Show when={m().reveal}>
                 {(r) => (
@@ -560,7 +562,7 @@ export default function VaultDetailPane(props: {
                     <Show when={r().shown} fallback={<Eye size={14} />}>
                       <EyeOff size={14} />
                     </Show>{' '}
-                    {r().shown ? 'Hide' : 'Reveal'}
+                    {r().shown ? t('common.hide') : t('detail.reveal')}
                   </CtxItem>
                 )}
               </Show>
@@ -572,7 +574,7 @@ export default function VaultDetailPane(props: {
                       close();
                     }}
                   >
-                    <ExternalLink size={14} /> Open website
+                    <ExternalLink size={14} /> {t('detail.openWebsite')}
                   </CtxItem>
                 )}
               </Show>
@@ -592,7 +594,7 @@ function Field(props: { label: string; value: string | null; onCopy: () => void;
     >
       <label>{props.label}</label>
       <div class="detail-value-row">
-        <span class="detail-value truncate copyable" title="Copy" onClick={() => props.onCopy()}>
+        <span class="detail-value truncate copyable" title={t('common.copy')} onClick={() => props.onCopy()}>
           {props.value}
         </span>
       </div>
@@ -625,12 +627,12 @@ function SecretField(props: {
     >
       <label>{props.label}</label>
       <div class="detail-value-row">
-        <code class="detail-value mono copyable" title="Copy" onClick={() => gate(props.onCopy)}>
+        <code class="detail-value mono copyable" title={t('common.copy')} onClick={() => gate(props.onCopy)}>
           {show() ? props.value : '••••••••••••'}
         </code>
         <button
           class="ghost icon-btn"
-          title={show() ? 'Hide' : 'Reveal'}
+          title={show() ? t('common.hide') : t('detail.reveal')}
           onClick={() => gate(() => setShow(!show()))}
         >
           {show() ? <EyeOff size={14} /> : <Eye size={14} />}
@@ -651,7 +653,7 @@ function CardVisual(props: {
   const [revealed, setRevealed] = createSignal(false);
   const gate = (action: () => void) => (props.gate ?? ((a: () => void) => a()))(action);
   const reveal = () => ({ shown: revealed(), toggle: () => gate(() => setRevealed((r) => !r)) });
-  const brand = () => props.card.brand || detectCardBrand(props.card.number ?? '') || 'Card';
+  const brand = () => props.card.brand || detectCardBrand(props.card.number ?? '') || t('detail.cardBrandFallback');
   const number = () => props.card.number ?? '';
   const numberText = () =>
     number()
@@ -670,7 +672,7 @@ function CardVisual(props: {
         onContextMenu={(e) =>
           number() &&
           props.onCtx?.(e, {
-            label: 'Number',
+            label: t('detail.number'),
             copy: () => gate(() => props.onCopy('Number', number())),
             reveal: reveal(),
           })
@@ -679,7 +681,7 @@ function CardVisual(props: {
         <span
           class="card-visual-number mono"
           classList={{ copyable: !!number() }}
-          title={number() ? 'Copy' : undefined}
+          title={number() ? t('common.copy') : undefined}
           onClick={() => number() && gate(() => props.onCopy('Number', number()))}
         >
           {numberText()}
@@ -687,7 +689,7 @@ function CardVisual(props: {
         <Show when={number()}>
           <button
             class="ghost icon-btn"
-            title={revealed() ? 'Hide' : 'Reveal'}
+            title={revealed() ? t('common.hide') : t('detail.reveal')}
             onClick={() => gate(() => setRevealed(!revealed()))}
           >
             {revealed() ? <EyeOff size={14} /> : <Eye size={14} />}
@@ -696,23 +698,23 @@ function CardVisual(props: {
       </div>
       <div class="card-visual-bottom">
         <div class="card-visual-meta">
-          <span class="card-visual-cap">Cardholder</span>
+          <span class="card-visual-cap">{t('detail.cardholder')}</span>
           <span class="card-visual-val">{props.card.cardholderName || '—'}</span>
         </div>
         <Show when={props.card.expMonth || props.card.expYear}>
           <div class="card-visual-meta">
-            <span class="card-visual-cap">Expires</span>
+            <span class="card-visual-cap">{t('detail.expires')}</span>
             <span class="card-visual-val">{cardExpiry(props.card)}</span>
           </div>
         </Show>
         <Show when={props.card.code}>
           <div class="card-visual-meta">
-            <span class="card-visual-cap">CVV</span>
+            <span class="card-visual-cap">{t('detail.cvv')}</span>
             <span
               class="card-visual-cvv"
               onContextMenu={(e) =>
                 props.onCtx?.(e, {
-                  label: 'Security code',
+                  label: t('detail.securityCode'),
                   copy: () => gate(() => props.onCopy('Security code', props.card.code)),
                   reveal: reveal(),
                 })
@@ -720,7 +722,7 @@ function CardVisual(props: {
             >
               <span
                 class="card-visual-val copyable"
-                title="Copy"
+                title={t('common.copy')}
                 onClick={() => gate(() => props.onCopy('Security code', props.card.code))}
               >
                 {revealed() ? props.card.code : '•••'}
@@ -745,7 +747,7 @@ function CustomFieldView(props: {
   gate?: (action: () => void) => void;
 }) {
   const f = () => props.field;
-  const label = () => f().name ?? 'Field';
+  const label = () => f().name ?? t('detail.fieldFallback');
   return (
     <Switch
       fallback={
@@ -761,8 +763,8 @@ function CustomFieldView(props: {
         <div class="detail-field">
           <label>{label()}</label>
           <div class="detail-bool" classList={{ on: f().value === 'true' }}>
-            <Show when={f().value === 'true'} fallback={<span>Off</span>}>
-              <Check size={14} strokeWidth={2.25} /> On
+            <Show when={f().value === 'true'} fallback={<span>{t('detail.off')}</span>}>
+              <Check size={14} strokeWidth={2.25} /> {t('detail.on')}
             </Show>
           </div>
         </div>
@@ -788,7 +790,7 @@ function CustomFieldView(props: {
                   <LinkIcon size={11} strokeWidth={2} /> {lbl}
                 </label>
                 <div class="detail-value-row">
-                  <span class="detail-value muted">Linked field (empty)</span>
+                  <span class="detail-value muted">{t('detail.linkedFieldEmpty')}</span>
                 </div>
               </div>
             );
@@ -812,7 +814,7 @@ function CustomFieldView(props: {
               <div class="detail-value-row">
                 <span
                   class="detail-value truncate copyable"
-                  title="Copy"
+                  title={t('common.copy')}
                   onClick={() => props.onCopy(label(), value)}
                 >
                   {value}

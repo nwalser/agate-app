@@ -5,6 +5,7 @@
 
 import VaultList from '../../components/VaultList.tsx';
 import { useVault } from './VaultContext.tsx';
+import { t } from '../../lib/i18n.ts';
 
 export default function VaultListConnected() {
   const v = useVault();
@@ -24,12 +25,13 @@ export default function VaultListConnected() {
       onRowContextMenu={v.openRowCtxMenu}
       onCheckboxToggle={v.selection.onCheckboxToggle}
       onCopyCell={v.copyCell}
+      onOpenWebsite={(item) => void v.actions.openSiteFor(item)}
       onListKeyDown={v.selection.handleListKeyDown}
       onMarqueeSelect={v.selection.marqueeSelect}
       enableItemDrag={v.filtering.filter().kind !== 'trash'}
       onCreateItem={(type) => v.actions.openCreate(type)}
       onSelectAll={v.selection.selectAll}
-      emptyMessage={v.data.items().length === 0 ? 'Vault is empty or not synced.' : 'No matches.'}
+      emptyMessage={v.data.items().length === 0 ? t('vault.emptyVault') : t('vault.noMatches')}
       cacheToken={v.actions.cacheToken()}
       security={v.data.health()}
       detailCache={v.rowDetail}

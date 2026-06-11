@@ -8,6 +8,8 @@
 //   * item list → child of the list pane itself, pinned at its right edge
 // The variant class selects the positioning; this component only owns the drag.
 
+import { t } from '../lib/i18n.ts';
+
 export default function Resizer(props: {
   /** Positioning variant, e.g. 'sidebar-resizer' or 'list-resizer'. */
   variant: string;
@@ -48,7 +50,7 @@ export default function Resizer(props: {
       class={`resizer ${props.variant}`}
       role="separator"
       aria-orientation="vertical"
-      aria-label={props.label ?? 'Resize'}
+      aria-label={props.label ?? t('misc.resize')}
       onPointerDown={onDown}
       onDblClick={() => props.onReset?.()}
     />

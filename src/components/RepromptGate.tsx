@@ -6,6 +6,7 @@
 import { createSignal, onMount, Show } from 'solid-js';
 import { Lock } from 'lucide-solid';
 import { ipc } from '../lib/ipc.ts';
+import { t } from '../lib/i18n.ts';
 import { toastError } from '../state/toast.ts';
 import './RepromptGate.css';
 
@@ -50,26 +51,26 @@ export default function RepromptGate(props: {
         onSubmit={(e) => void submit(e)}
       >
         <div class="reprompt-title">
-          <Lock size={15} strokeWidth={1.75} /> Verify it's you
+          <Lock size={15} strokeWidth={1.75} /> {t('reprompt.title')}
         </div>
-        <p class="muted reprompt-desc">“{props.itemName}” requires your app password to view.</p>
+        <p class="muted reprompt-desc">{t('reprompt.desc', { name: props.itemName })}</p>
         <input
           ref={(el) => (input = el)}
           type="password"
           autocomplete="off"
-          placeholder="App password"
+          placeholder={t('reprompt.placeholder')}
           value={pw()}
           onInput={(e) => setPw(e.currentTarget.value)}
         />
         <Show when={error()}>
-          <p class="error-text">Incorrect app password.</p>
+          <p class="error-text">{t('reprompt.incorrect')}</p>
         </Show>
         <div class="reprompt-actions">
           <button type="button" class="ghost" onClick={() => props.onClose()}>
-            Cancel
+            {t('common.cancel')}
           </button>
           <button type="submit" class="primary" disabled={busy() || !pw()}>
-            {busy() ? 'Checking…' : 'Unlock'}
+            {busy() ? t('reprompt.checking') : t('reprompt.unlock')}
           </button>
         </div>
       </form>

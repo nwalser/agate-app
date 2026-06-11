@@ -9,6 +9,7 @@ import { createMemo, createSignal, For, onMount, Show } from 'solid-js';
 import { Bot, Copy, Eye, EyeOff, RefreshCw, ShieldAlert } from 'lucide-solid';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { ipc } from '../../lib/ipc.ts';
+import { t } from '../../lib/i18n.ts';
 import type { AiAuditEntry, AiGrant, AiServerStatus, VaultItem } from '../../lib/types.ts';
 import { copyWithAutoClear } from '../../lib/clipboard.ts';
 import { pushToast, toastError } from '../../state/toast.ts';
@@ -79,7 +80,7 @@ export default function AiAccessSettings() {
     setBusy(true);
     try {
       setStatus(await ipc.aiSetServerEnabled(enabled));
-      pushToast('success', enabled ? 'AI access server enabled.' : 'AI access server disabled.');
+      pushToast('success', enabled ? t('ai.serverEnabled') : t('ai.serverDisabled'));
     } catch (e) {
       toastError(e);
     } finally {
@@ -109,7 +110,7 @@ export default function AiAccessSettings() {
     try {
       await ipc.aiClearGrants();
       await loadGrants();
-      pushToast('success', 'Revoked AI access to every item.');
+      pushToast('success', t('ai.revokedAll'));
     } catch (e) {
       toastError(e);
     }
@@ -119,7 +120,7 @@ export default function AiAccessSettings() {
     if (!value) return;
     try {
       await writeText(value);
-      pushToast('success', `${label} copied.`);
+      pushToast('success', t('ai.copied', { label }));
     } catch (e) {
       toastError(e);
     }
@@ -160,31 +161,23 @@ export default function AiAccessSettings() {
     <div class="settings-page ai-access">
       <section class="settings-section">
         <h3>
-          <Bot size={16} strokeWidth={1.7} /> AI access
+          <Bot size={16} strokeWidth={1.7} /> {t('ai.title')}
         </h3>
-        <p class="muted settings-help">
-          Run a local server that lets an AI assistant (e.g. Claude) read the vault items you
-          pick below — and nothing else. The server listens on your machine only
-          (127.0.0.1) and requires a secret token.
-        </p>
+        <p class="muted settings-help">{t('ai.help')}</p>
 
         <div class="ai-warn">
           <ShieldAlert size={16} strokeWidth={1.75} />
-          <span>
-            A granted item's password, TOTP code, and custom fields are sent to the AI in
-            cleartext. Only grant items you're comfortable an assistant — and its model
-            provider — can see. Revoke anytime; every read is logged below.
-          </span>
+          <span>{t('ai.warning')}</span>
         </div>
 
         <ToggleRow
-          label="Enable MCP server"
+          label={t('ai.enableServer')}
           desc={
             <Show
               when={status()?.enabled && status()?.running}
-              fallback="Off — no endpoint is listening."
+              fallback={t('ai.serverOff')}
             >
-              Listening on {status()?.url}
+              {t('ai.listeningOn', { url: status()?.url ?? '' })}
             </Show>
           }
           checked={status()?.enabled ?? false}
@@ -194,73 +187,72 @@ export default function AiAccessSettings() {
 
         <Show when={status()?.enabled && status()?.url && status()?.token}>
           <div class="ai-conn">
-            <label class="ai-conn-label">Server URL</label>
+            <label class="ai-conn-label">{t('ai.serverUrl')}</label>
             <div class="ai-code-row">
               <code class="ai-code">{status()?.url}</code>
               <button
                 class="ghost icon-btn"
-                title="Copy URL"
+                title={t('ai.copyUrl')}
                 onClick={() => void copy('URL', status()?.url)}
               >
                 <Copy size={14} />
               </button>
             </div>
 
-            <label class="ai-conn-label">Bearer token</label>
+            <label class="ai-conn-label">{t('ai.bearerToken')}</label>
             <div class="ai-code-row">
               <code class="ai-code ai-token">{shownToken()}</code>
               <button
                 class="ghost icon-btn"
-                title={tokenShown() ? 'Hide token' : 'Reveal token'}
+                title={tokenShown() ? t('ai.hideToken') : t('ai.revealToken')}
                 onClick={() => setTokenShown(!tokenShown())}
               >
                 {tokenShown() ? <EyeOff size={14} /> : <Eye size={14} />}
               </button>
               <button
                 class="ghost icon-btn"
-                title="Copy token"
+                title={t('ai.copyToken')}
                 onClick={() => void copyWithAutoClear('Token', status()?.token)}
               >
                 <Copy size={14} />
               </button>
             </div>
 
-            <label class="ai-conn-label">Connect Claude Code</label>
+            <label class="ai-conn-label">{t('ai.connectClaudeCode')}</label>
             <div class="ai-code-row">
               <code class="ai-code ai-cmd">{shownCommand()}</code>
               <button
                 class="ghost icon-btn"
-                title="Copy command"
+                title={t('ai.copyCommand')}
                 onClick={() => void copyWithAutoClear('Command', mcpCommand())}
               >
                 <Copy size={14} />
               </button>
             </div>
-            <p class="muted settings-help">
-              Paste the command in a terminal, or add the URL + Authorization header to your MCP
-              client's config. The token is stored in your OS keychain and is cleared on logout.
-            </p>
+            <p class="muted settings-help">{t('ai.connectHelp')}</p>
           </div>
         </Show>
       </section>
 
       <section class="settings-section">
-        <h3>Allowed items</h3>
+        <h3>{t('ai.allowedItems')}</h3>
         <p class="muted settings-help">
-          The allowlist — the only items the assistant can ever read.{' '}
-          {grantedCount()} item{grantedCount() === 1 ? '' : 's'} granted.
+          {t('ai.allowlistHelp')}{' '}
+          {grantedCount() === 1
+            ? t('ai.itemGrantedOne', { count: grantedCount() })
+            : t('ai.itemsGrantedMany', { count: grantedCount() })}
         </p>
 
         <Show
           when={items().length > 0}
           fallback={
-            <p class="muted settings-help">Unlock a connection to choose items to share.</p>
+            <p class="muted settings-help">{t('ai.unlockToShare')}</p>
           }
         >
           <input
             class="ai-search"
             type="text"
-            placeholder="Search items…"
+            placeholder={t('ai.searchItems')}
             value={filter()}
             onInput={(e) => setFilter(e.currentTarget.value)}
           />
@@ -277,35 +269,33 @@ export default function AiAccessSettings() {
                   <Switch
                     checked={isGranted(it)}
                     onChange={(v) => void toggleGrant(it, v)}
-                    label={`Allow AI access to ${it.name}`}
+                    label={t('ai.allowAccessTo', { name: it.name })}
                     disabled={pendingGrants().has(grantKey(it.accountEmail, it.id))}
                   />
                 </div>
               )}
             </For>
             <Show when={shownItems().length === 0}>
-              <p class="muted settings-help">No items match.</p>
+              <p class="muted settings-help">{t('ai.noItemsMatch')}</p>
             </Show>
           </div>
           <Show when={grantedCount() > 0}>
-            <ResetButton label="Revoke all" onClick={() => void revokeAll()} />
+            <ResetButton label={t('ai.revokeAll')} onClick={() => void revokeAll()} />
           </Show>
         </Show>
       </section>
 
       <section class="settings-section">
         <h3 class="ai-audit-head">
-          Access log
-          <button class="ghost icon-btn" title="Refresh" onClick={() => void loadAudit()}>
+          {t('ai.accessLog')}
+          <button class="ghost icon-btn" title={t('ai.refresh')} onClick={() => void loadAudit()}>
             <RefreshCw size={14} />
           </button>
         </h3>
-        <p class="muted settings-help">
-          Every tool call the server served this session (cleared on restart).
-        </p>
+        <p class="muted settings-help">{t('ai.accessLogHelp')}</p>
         <Show
           when={audit().length > 0}
-          fallback={<p class="muted settings-help">No accesses yet.</p>}
+          fallback={<p class="muted settings-help">{t('ai.noAccessesYet')}</p>}
         >
           <div class="ai-audit-list">
             <For each={audit().slice().reverse()}>
@@ -317,7 +307,7 @@ export default function AiAccessSettings() {
                   </span>
                   <span class="ai-audit-when muted">{new Date(e.timestamp).toLocaleTimeString()}</span>
                   <span class="ai-audit-verdict" classList={{ denied: !e.allowed }}>
-                    {e.allowed ? 'allowed' : 'denied'}
+                    {e.allowed ? t('ai.verdictAllowed') : t('ai.verdictDenied')}
                   </span>
                 </div>
               )}

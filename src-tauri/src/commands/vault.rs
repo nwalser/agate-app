@@ -6,7 +6,7 @@ use tauri_plugin_dialog::DialogExt;
 use super::State;
 use crate::dto::{
     Collection, ExportFormat, Folder, ItemDetail, PassphraseGenOptions, PasswordGenOptions,
-    SendSummary, TotpCode, UsernameGenOptions, VaultItem,
+    SendCreateInput, SendCreated, SendSummary, TotpCode, UsernameGenOptions, VaultItem,
 };
 use crate::error::{AgateError, AgateResult};
 use crate::{qrscan, vault};
@@ -31,9 +31,21 @@ pub async fn list_collections(state: State<'_>) -> AgateResult<Vec<Collection>> 
     vault::list_collections(&state).await
 }
 
+/// Distinct custom-field names across every unlocked vault — feeds the column
+/// picker so a custom-field column is chosen, not blind-typed.
+#[tauri::command]
+pub async fn list_custom_field_names(state: State<'_>) -> AgateResult<Vec<String>> {
+    vault::list_custom_field_names(&state).await
+}
+
 #[tauri::command]
 pub async fn list_sends(state: State<'_>) -> AgateResult<Vec<SendSummary>> {
     vault::list_sends(&state).await
+}
+
+#[tauri::command]
+pub async fn create_send(state: State<'_>, input: SendCreateInput) -> AgateResult<SendCreated> {
+    vault::create_send(&state, input).await
 }
 
 #[tauri::command]

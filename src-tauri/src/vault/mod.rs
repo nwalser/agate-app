@@ -23,7 +23,9 @@ mod sends;
 mod transform;
 
 // Read path consumed by the Tauri commands in `lib.rs`.
-pub use reads::{item_detail, item_totp, list_collections, list_folders, list_items, sync};
+pub use reads::{
+    item_detail, item_totp, list_collections, list_custom_field_names, list_folders, list_items, sync,
+};
 
 // Generation, also driven from `lib.rs`.
 pub use generators::{generate_passphrase, generate_password, generate_username};
@@ -37,8 +39,8 @@ pub use import::parse_csv;
 // Attachment download (fetch + decrypt), driven from `lib.rs`.
 pub use attachments::download_attachment;
 
-// Bitwarden Send (list + revoke), driven from `lib.rs`.
-pub use sends::{delete_send, list_sends};
+// Bitwarden Send (list + create + revoke), driven from `lib.rs`.
+pub use sends::{create_send, delete_send, list_sends};
 
 // Per-connection helpers shared with the write path (`mutate`).
 pub(crate) use reads::{client_for, decrypt_one};

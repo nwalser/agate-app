@@ -179,8 +179,8 @@ pub struct Attachment {
 }
 
 /// A Bitwarden Send (ephemeral share) summary for the Sends manager. Named
-/// `SendSummary` to avoid colliding with the `Send` marker trait. Read + revoke
-/// only for now (create is a follow-up).
+/// `SendSummary` to avoid colliding with the `Send` marker trait. Listing covers
+/// the manager's rows; create uses `SendCreateInput`, revoke uses the id.
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
@@ -199,6 +199,56 @@ pub struct SendSummary {
     pub expiration_date: Option<String>,
     pub account_email: String,
     pub account_label: String,
+}
+
+/// How long a new Send lives before it is auto-deleted (frontend → backend). A
+/// closed set so the backend computes the deletion timestamp from a trusted clock,
+/// rather than accepting an arbitrary date from the UI.
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(specta::Type))]
+#[serde(rename_all = "camelCase")]
+pub enum SendExpiry {
+    OneHour,
+    OneDay,
+    TwoDays,
+    ThreeDays,
+    SevenDays,
+    ThirtyDays,
+}
+
+/// Create-a-Send input (frontend → backend). Text Sends only for now; file Sends
+/// need the separate upload flow. An optional `password` gates access (password
+/// auth); otherwise the Send is open to anyone with the link.
+#[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(specta::Type))]
+#[serde(rename_all = "camelCase")]
+pub struct SendCreateInput {
+    /// Which unlocked connection owns the new Send.
+    pub account_email: String,
+    pub name: String,
+    /// The shared text payload.
+    pub text: String,
+    /// Hide the text by default (recipient must click to reveal).
+    pub hidden: bool,
+    pub expiry: SendExpiry,
+    /// Cap on how many times the Send can be opened (None = unlimited).
+    pub max_access_count: Option<u32>,
+    /// Optional access password. SECRET — never logged.
+    pub password: Option<String>,
+    /// Hide the sender's email from recipients.
+    pub hide_email: bool,
+}
+
+/// Result of creating a Send: the public share link to hand out, plus the identity
+/// the list needs to show it.
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(specta::Type))]
+#[serde(rename_all = "camelCase")]
+pub struct SendCreated {
+    pub id: String,
+    pub name: String,
+    /// Public access URL — includes the decryption key in the URL fragment.
+    pub url: String,
 }
 
 /// A decrypted collection (a shared-vault grouping). Per-connection in the

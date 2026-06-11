@@ -9,6 +9,8 @@ import type { ColumnSpec } from '../state/columnConfig.ts';
 import { columnKey, TYPE_LABELS } from '../state/columnConfig.ts';
 import type { ItemAudit, ItemDetail, TotpCode, VaultItem } from './types.ts';
 import { auditSeverity, itemAuditChips } from './audit.ts';
+import { hostOf } from '../state/favicons.ts';
+import { t } from './i18n.ts';
 
 /**
  * What a vault-list cell should display. A discriminated union so the renderer
@@ -62,7 +64,9 @@ export function cellContent(item: VaultItem, col: ColumnSpec, ctx: CellContext):
     case 'username':
       return { kind: 'text', value: item.username ?? '', truncate: true };
     case 'website':
-      return { kind: 'text', value: item.uri ?? '', truncate: true, muted: true };
+      // Show just the site host (drop scheme + path/query), falling back to the
+      // raw value for things that aren't a real host (app schemes, bare words).
+      return { kind: 'text', value: hostOf(item.uri) ?? item.uri ?? '', truncate: true, muted: true };
     case 'folder':
       return { kind: 'text', value: ctx.folderName(item.folderId), truncate: true, muted: true };
     case 'type':
@@ -84,12 +88,12 @@ function securityCell(item: VaultItem, ctx: CellContext): CellContent {
   // first report arrives.
   if (item.itemType !== 'login' || !ctx.hasSecurityReport) return { kind: 'blank' };
   const audit = ctx.audit(item.id);
-  if (!audit) return { kind: 'secBadge', status: 'ok', tooltip: 'No known security issues' };
+  if (!audit) return { kind: 'secBadge', status: 'ok', tooltip: t('audit.noKnownIssues') };
   // Collapse the per-flag chips into one status: red when any severe flag (reused
   // / weak / insecure URL) is present, amber when only minor flags are. The
   // tooltip still spells out every flag.
   const chips = itemAuditChips(audit);
-  if (chips.length === 0) return { kind: 'secBadge', status: 'ok', tooltip: 'No known security issues' };
+  if (chips.length === 0) return { kind: 'secBadge', status: 'ok', tooltip: t('audit.noKnownIssues') };
   return {
     kind: 'secBadge',
     status: auditSeverity(audit),

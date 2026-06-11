@@ -10,6 +10,7 @@
 // written to plaintext localStorage (see `templateToSeed`).
 
 import type { CustomField, ItemDetail, ItemType } from './types.ts';
+import { t } from './i18n.ts';
 
 /** Field kinds a template can pre-define. A subset of the editor's custom-field
  *  kinds — no `linked` (its targets are item-type specific and item-instance
@@ -38,13 +39,14 @@ export interface ItemTemplate {
 
 export const TEMPLATES_STORAGE_KEY = 'agate.templates';
 
-/** Item types a template can target (excludes `unknown`). */
+/** Item types a template can target (excludes `unknown`). `label` is a getter so
+ *  it tracks the active locale when read in JSX. */
 export const TEMPLATE_ITEM_TYPES: { type: ItemType; label: string }[] = [
-  { type: 'login', label: 'Login' },
-  { type: 'card', label: 'Card' },
-  { type: 'identity', label: 'Identity' },
-  { type: 'secureNote', label: 'Secure note' },
-  { type: 'sshKey', label: 'SSH key' },
+  { type: 'login', get label() { return t('itemType.login'); } },
+  { type: 'card', get label() { return t('itemType.card'); } },
+  { type: 'identity', get label() { return t('itemType.identity'); } },
+  { type: 'secureNote', get label() { return t('itemType.secureNote'); } },
+  { type: 'sshKey', get label() { return t('itemType.sshKey'); } },
 ];
 
 const VALID_TYPES = new Set<ItemType>(TEMPLATE_ITEM_TYPES.map((t) => t.type));

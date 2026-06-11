@@ -18,6 +18,7 @@ import {
   UserRound,
 } from 'lucide-solid';
 import type { VaultItem } from '../lib/types.ts';
+import { t } from '../lib/i18n.ts';
 
 export interface CtxMenuTarget {
   item: VaultItem;
@@ -63,7 +64,7 @@ export default function VaultContextMenu(props: {
               props.copyUsername(item());
             }}
           >
-            <UserRound size={14} /> Copy username
+            <UserRound size={14} /> {t('menu.copyUsername')}
           </button>
         </Show>
         <Show when={isLogin()}>
@@ -74,7 +75,7 @@ export default function VaultContextMenu(props: {
               props.copyPasswordFor(item());
             }}
           >
-            <KeyRound size={14} /> Copy password
+            <KeyRound size={14} /> {t('menu.copyPassword')}
           </button>
         </Show>
         <Show when={item().hasTotp}>
@@ -85,7 +86,7 @@ export default function VaultContextMenu(props: {
               props.copyTotpFor(item());
             }}
           >
-            <Timer size={14} /> Copy one-time code
+            <Timer size={14} /> {t('menu.copyOneTimeCode')}
           </button>
         </Show>
         <Show when={isLogin()}>
@@ -96,7 +97,7 @@ export default function VaultContextMenu(props: {
               props.copyUriFor(item());
             }}
           >
-            <Copy size={14} /> Copy website
+            <Copy size={14} /> {t('menu.copyWebsite')}
           </button>
           <button
             class="vault-ctx-item"
@@ -105,7 +106,7 @@ export default function VaultContextMenu(props: {
               props.openSiteFor(item());
             }}
           >
-            <ExternalLink size={14} /> Open website
+            <ExternalLink size={14} /> {t('menu.openWebsite')}
           </button>
         </Show>
         <div class="vault-ctx-sep" />
@@ -120,7 +121,7 @@ export default function VaultContextMenu(props: {
                   props.detailRestore(item().id);
                 }}
               >
-                <RotateCcw size={14} /> Restore
+                <RotateCcw size={14} /> {t('menu.restore')}
               </button>
               <button
                 class="vault-ctx-item danger"
@@ -129,7 +130,7 @@ export default function VaultContextMenu(props: {
                   props.detailDelete(item().id, true);
                 }}
               >
-                <Trash2 size={14} /> Delete permanently
+                <Trash2 size={14} /> {t('menu.deletePermanently')}
               </button>
             </>
           }
@@ -141,7 +142,7 @@ export default function VaultContextMenu(props: {
               props.rowFavorite(item());
             }}
           >
-            <Star size={14} /> {item().favorite ? 'Unfavorite' : 'Favorite'}
+            <Star size={14} /> {item().favorite ? t('menu.unfavorite') : t('menu.favorite')}
           </button>
           <button
             class="vault-ctx-item"
@@ -150,7 +151,7 @@ export default function VaultContextMenu(props: {
               props.rowEdit(item());
             }}
           >
-            <Pencil size={14} /> Edit
+            <Pencil size={14} /> {t('common.edit')}
           </button>
           <button
             class="vault-ctx-item"
@@ -159,7 +160,7 @@ export default function VaultContextMenu(props: {
               props.detailClone(item().id);
             }}
           >
-            <Copy size={14} /> Clone
+            <Copy size={14} /> {t('menu.clone')}
           </button>
           <div class="vault-ctx-sep" />
           <button
@@ -169,7 +170,7 @@ export default function VaultContextMenu(props: {
               props.detailDelete(item().id, false);
             }}
           >
-            <Trash2 size={14} /> Move to trash
+            <Trash2 size={14} /> {t('menu.moveToTrash')}
           </button>
         </Show>
       </div>

@@ -9,6 +9,7 @@
 import { Show } from 'solid-js';
 import { Activity, AlertTriangle, ChevronRight, ShieldCheck } from 'lucide-solid';
 import type { VaultHealthReport } from '../../lib/types.ts';
+import { t } from '../../lib/i18n.ts';
 
 // A single summary count. `tone` tints the number once the count is non-zero, so
 // problem categories stand out at a glance; the neutral "Logins" total stays plain.
@@ -29,20 +30,20 @@ export default function VaultHealth(props: {
 }) {
   const r = () => props.report;
   return (
-    <Show when={!props.loading} fallback={<p class="sec-loading muted">Analysing your vault…</p>}>
-      <Show when={r()} fallback={<p class="sec-loading muted">No report available.</p>}>
+    <Show when={!props.loading} fallback={<p class="sec-loading muted">{t('security.analysing')}</p>}>
+      <Show when={r()} fallback={<p class="sec-loading muted">{t('security.noReport')}</p>}>
         {(rep) => {
           const atRisk = () => rep().atRisk.length;
           return (
             <section class="sec-card">
-              <h3><Activity size={14} strokeWidth={1.75} /> Vault health</h3>
+              <h3><Activity size={14} strokeWidth={1.75} /> {t('security.vaultHealth')}</h3>
               <div class="sec-summary">
-                <Stat n={rep().totalLogins} label="Logins" />
-                <Stat n={rep().reused} label="Reused" tone="bad" />
-                <Stat n={rep().weak} label="Weak" tone="bad" />
-                <Stat n={rep().old} label="Old" tone="warn" />
-                <Stat n={rep().insecure} label="Insecure" tone="warn" />
-                <Stat n={rep().noTotp} label="No 2FA" tone="warn" />
+                <Stat n={rep().totalLogins} label={t('security.logins')} />
+                <Stat n={rep().reused} label={t('security.reused')} tone="bad" />
+                <Stat n={rep().weak} label={t('security.weak')} tone="bad" />
+                <Stat n={rep().old} label={t('security.old')} tone="warn" />
+                <Stat n={rep().insecure} label={t('security.insecure')} tone="warn" />
+                <Stat n={rep().noTotp} label={t('security.no2fa')} tone="warn" />
               </div>
 
               {/* Reference to the dedicated At-risk items view. */}
@@ -52,13 +53,15 @@ export default function VaultHealth(props: {
                   fallback={
                     <>
                       <ShieldCheck size={14} strokeWidth={1.75} class="sec-atrisk-clean" />
-                      <span class="sec-atrisk-text">No at-risk items</span>
+                      <span class="sec-atrisk-text">{t('security.noAtRiskItems')}</span>
                     </>
                   }
                 >
                   <AlertTriangle size={14} strokeWidth={1.75} class="sec-atrisk-warn" />
                   <span class="sec-atrisk-text">
-                    {atRisk()} at-risk item{atRisk() === 1 ? '' : 's'}
+                    {atRisk() === 1
+                      ? t('security.atRiskItems_one', { count: atRisk() })
+                      : t('security.atRiskItems_other', { count: atRisk() })}
                   </span>
                 </Show>
                 <ChevronRight size={15} strokeWidth={2} class="sec-atrisk-chev" />

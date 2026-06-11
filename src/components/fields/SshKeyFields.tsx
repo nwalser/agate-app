@@ -2,6 +2,7 @@
 // signals and exposes its SshKeyInput builder to the orchestrator via `onReady`.
 import { createSignal } from 'solid-js';
 import type { ItemDetail, SshKeyInput } from '../../lib/types.ts';
+import { t } from '../../lib/i18n.ts';
 
 export default function SshKeyFields(props: {
   item?: ItemDetail | null;
@@ -25,7 +26,7 @@ export default function SshKeyFields(props: {
   return (
     <div class="ie-section">
       <div class="field">
-        <label>Private key</label>
+        <label>{t('fields.privateKey')}</label>
         <textarea
           class="ie-textarea ie-mono"
           value={privateKey()}
@@ -35,7 +36,7 @@ export default function SshKeyFields(props: {
         />
       </div>
       <div class="field">
-        <label>Public key</label>
+        <label>{t('fields.publicKey')}</label>
         <textarea
           class="ie-textarea ie-mono"
           value={publicKey()}
@@ -44,7 +45,7 @@ export default function SshKeyFields(props: {
         />
       </div>
       <div class="field">
-        <label>Fingerprint</label>
+        <label>{t('fields.fingerprint')}</label>
         <input
           class="ie-mono"
           value={fingerprint()}

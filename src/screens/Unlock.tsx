@@ -1,6 +1,7 @@
 import { createEffect, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
 import { Fingerprint, KeyRound, Lock, LockOpen } from 'lucide-solid';
 import { ipc } from '../lib/ipc.ts';
+import { t } from '../lib/i18n.ts';
 import type { TwoFactorKind, UnlockOutcome } from '../lib/types.ts';
 import { refreshSession, status } from '../state/session.ts';
 import { pushToast, toastError } from '../state/toast.ts';
@@ -8,13 +9,14 @@ import './Unlock.css';
 
 /** Rotating status lines shown on the unlocking screen. Ordered to roughly track
  *  what `unlock_all` actually does — derive the AUK (Argon2id), unwrap the VMK,
- *  re-login every connection — without claiming a precise step it can't observe. */
-const WORKING_MESSAGES = [
-  'Deriving your key…',
-  'Unwrapping the vault key…',
-  'Reconnecting your accounts…',
-  'Almost there…',
-] as const;
+ *  re-login every connection — without claiming a precise step it can't observe.
+ *  A function (not a module constant) so the strings re-translate on a language flip. */
+const workingMessages = () => [
+  t('unlock.workingDerivingKey'),
+  t('unlock.workingUnwrappingVaultKey'),
+  t('unlock.workingReconnectingAccounts'),
+  t('unlock.workingAlmostThere'),
+];
 
 const TEXT_ROTATE_MS = 1400;
 
@@ -55,18 +57,20 @@ export default function Unlock() {
     if (phase() !== 'working') return;
     setMsgIndex(0);
     const id = setInterval(
-      () => setMsgIndex((i) => Math.min(i + 1, WORKING_MESSAGES.length - 1)),
+      () => setMsgIndex((i) => Math.min(i + 1, workingMessages().length - 1)),
       TEXT_ROTATE_MS,
     );
     onCleanup(() => clearInterval(id));
   });
 
   const statusLine = () =>
-    phase() === 'unlocked' ? 'Vault unlocked' : WORKING_MESSAGES[msgIndex()];
+    phase() === 'unlocked' ? t('unlock.vaultUnlocked') : workingMessages()[msgIndex()];
 
   const connectionLabel = () => {
     const n = status().connectionCount;
-    return `${n} connection${n === 1 ? '' : 's'}`;
+    return n === 1
+      ? t('unlock.connectionCountOne', { count: n })
+      : t('unlock.connectionCountOther', { count: n });
   };
 
   /** Play the unlock beat, then hand off to the vault. */
@@ -163,7 +167,7 @@ export default function Unlock() {
     setBusy(true);
     try {
       await ipc.sendConnectionEmailCode(c.email);
-      pushToast('success', 'Code sent to your email.');
+      pushToast('success', t('unlock.codeSent'));
     } catch (err) {
       toastError(err);
     } finally {
@@ -206,7 +210,7 @@ export default function Unlock() {
             </div>
 
             <h2 class="unlocking-title">
-              {phase() === 'unlocked' ? 'Welcome back' : 'Unlocking Agate'}
+              {phase() === 'unlocked' ? t('unlock.welcomeBack') : t('unlock.unlockingAgate')}
             </h2>
 
             {/* Keyed so each new line re-mounts and re-runs its fade-in. */}
@@ -222,13 +226,15 @@ export default function Unlock() {
               class="unlock-progress"
               classList={{ done: phase() === 'unlocked' }}
               role="progressbar"
-              aria-label="Unlocking"
+              aria-label={t('unlock.unlocking')}
             >
               <div class="unlock-progress-bar" />
             </div>
 
             <p class="unlocking-sub">
-              {phase() === 'unlocked' ? 'Opening your vault' : `Unlocking ${connectionLabel()}`}
+              {phase() === 'unlocked'
+                ? t('unlock.openingVault')
+                : t('unlock.unlockingConnections', { label: connectionLabel() })}
             </p>
           </div>
           </>
@@ -243,23 +249,23 @@ export default function Unlock() {
             when={!current()}
             fallback={
               <>
-                <h2 class="unlock-title">Two-factor needed</h2>
+                <h2 class="unlock-title">{t('unlock.twoFactorNeeded')}</h2>
                 <p class="muted unlock-email">{current()?.email}</p>
                 <div class="field unlock-field">
-                  <label>Provider</label>
+                  <label>{t('unlock.provider')}</label>
                   <select value={tfProvider()} onChange={(e) => setTfProvider(e.currentTarget.value as TwoFactorKind)}>
                     <For each={providersFor(current())}>
-                      {(p) => <option value={p}>{p === 'authenticator' ? 'Authenticator app' : 'Email'}</option>}
+                      {(p) => <option value={p}>{p === 'authenticator' ? t('unlock.authenticatorApp') : t('unlock.email')}</option>}
                     </For>
                   </select>
                 </div>
                 <Show when={tfProvider() === 'email'}>
                   <button class="ghost send-code" disabled={busy()} onClick={() => void sendCode()}>
-                    Send code to email
+                    {t('unlock.sendCodeToEmail')}
                   </button>
                 </Show>
                 <div class="field unlock-field">
-                  <label>Verification code</label>
+                  <label>{t('unlock.verificationCode')}</label>
                   <input
                     value={tfToken()}
                     inputmode="numeric"
@@ -269,18 +275,20 @@ export default function Unlock() {
                   />
                 </div>
                 <button class="primary full" disabled={busy()} onClick={() => void submit2fa()}>
-                  {busy() ? 'Verifying…' : `Verify (${pending().length} left)`}
+                  {busy() ? t('unlock.verifying') : t('unlock.verifyLeft', { count: pending().length })}
                 </button>
               </>
             }
           >
-            <h2 class="unlock-title">Unlock Agate</h2>
+            <h2 class="unlock-title">{t('unlock.unlockAgate')}</h2>
             <p class="muted unlock-email">
-              {status().connectionCount} connection{status().connectionCount === 1 ? '' : 's'}
+              {status().connectionCount === 1
+                ? t('unlock.connectionCountOne', { count: status().connectionCount })
+                : t('unlock.connectionCountOther', { count: status().connectionCount })}
             </p>
 
             <div class="unlock-methods">
-              <span class="unlock-methods-head muted">Sign-in options</span>
+              <span class="unlock-methods-head muted">{t('unlock.signInOptions')}</span>
 
               {/* Windows Hello — actionable when enrolled, otherwise shown disabled
                   with why it can't be used (not set up vs not available here). */}
@@ -293,12 +301,12 @@ export default function Unlock() {
                       <span class="unlock-method-name">Windows Hello</span>
                       <span class="unlock-method-note muted">
                         {helloAvailable()
-                          ? 'This option is not set up — turn it on in Settings › Unlock.'
-                          : 'This option is not available on this device.'}
+                          ? t('unlock.helloNotSetUp')
+                          : t('unlock.helloNotAvailable')}
                       </span>
                     </span>
                     <span class="unlock-method-badge">
-                      {helloAvailable() ? 'Not set up' : 'Unavailable'}
+                      {helloAvailable() ? t('unlock.notSetUp') : t('unlock.unavailable')}
                     </span>
                   </div>
                 }
@@ -312,9 +320,9 @@ export default function Unlock() {
                   <Fingerprint size={16} strokeWidth={1.75} class="unlock-method-ico" />
                   <span class="unlock-method-info">
                     <span class="unlock-method-name">Windows Hello</span>
-                    <span class="unlock-method-note muted">Face, fingerprint, or PIN</span>
+                    <span class="unlock-method-note muted">{t('unlock.helloMethods')}</span>
                   </span>
-                  <span class="unlock-method-badge is-ready">Unlock</span>
+                  <span class="unlock-method-badge is-ready">{t('unlock.unlockBadge')}</span>
                 </button>
               </Show>
 
@@ -322,18 +330,18 @@ export default function Unlock() {
               <div class="unlock-method-row is-on">
                 <KeyRound size={16} strokeWidth={1.75} class="unlock-method-ico" />
                 <span class="unlock-method-info">
-                  <span class="unlock-method-name">App password</span>
-                  <span class="unlock-method-note muted">Always available</span>
+                  <span class="unlock-method-name">{t('unlock.appPassword')}</span>
+                  <span class="unlock-method-note muted">{t('unlock.alwaysAvailable')}</span>
                 </span>
-                <span class="unlock-method-badge is-ready">Ready</span>
+                <span class="unlock-method-badge is-ready">{t('unlock.ready')}</span>
               </div>
             </div>
 
             <div class="field unlock-field">
               <input
                 type="password"
-                aria-label="App password"
-                placeholder="Enter your app password"
+                aria-label={t('unlock.appPassword')}
+                placeholder={t('unlock.appPasswordPlaceholder')}
                 autocomplete="current-password"
                 value={appPassword()}
                 onInput={(e) => setAppPassword(e.currentTarget.value)}
@@ -341,12 +349,12 @@ export default function Unlock() {
               />
             </div>
             <button class="primary full" disabled={busy()} onClick={() => void unlock()}>
-              Unlock all
+              {t('unlock.unlockAll')}
             </button>
           </Show>
 
           <button class="ghost full unlock-logout" onClick={() => void logout()}>
-            Log out of everything
+            {t('unlock.logOutEverything')}
           </button>
         </div>
       </Show>

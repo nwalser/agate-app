@@ -35,6 +35,8 @@ tauri-plugin-dialog = "2"
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Host OS UI locale for first-run language detection (get_system_locale).
+sys-locale = "0.3"
 # Decode user-picked image files for the OCR "fill from image" path (the SDK
 # already pulls `image` in transitively; promoting it costs ~nothing).
 image = "0.25"

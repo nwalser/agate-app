@@ -17,7 +17,7 @@ import SecuritySettings from '../components/SecuritySettings.tsx';
 import ExportSettings from '../components/ExportSettings.tsx';
 import Resizer from '../components/Resizer.tsx';
 import { resetSidebarWidth, setSidebarWidth } from '../state/ui.ts';
-import { t, type Key } from '../lib/i18n.ts';
+import { t } from '../lib/i18n.ts';
 import './Settings.css';
 
 export type Page =
@@ -36,7 +36,7 @@ export type Page =
 // preferences that apply across every connection.
 type SettingsGroup = 'vault' | 'global';
 
-const GROUPS: { id: SettingsGroup; labelKey: Key }[] = [
+const GROUPS: { id: SettingsGroup; labelKey: string }[] = [
   { id: 'vault', labelKey: 'settings.group.vault' },
   { id: 'global', labelKey: 'settings.group.global' },
 ];
@@ -44,7 +44,7 @@ const GROUPS: { id: SettingsGroup; labelKey: Key }[] = [
 // `keywords` lets the nav filter match concepts that aren't in the visible label
 // (e.g. "clipboard" / "timeout" → Security, "theme" → Appearance). `labelKey`
 // drives the localized display label.
-const PAGES: { id: Page; group: SettingsGroup; labelKey: Key; icon: typeof Info; keywords: string }[] = [
+const PAGES: { id: Page; group: SettingsGroup; labelKey: string; icon: typeof Info; keywords: string }[] = [
   { id: 'connections', group: 'vault', labelKey: 'nav.connections', icon: Users, keywords: 'account email server login add remove' },
   { id: 'export', group: 'vault', labelKey: 'nav.export', icon: FileDown, keywords: 'export import csv json backup download' },
   { id: 'aiAccess', group: 'vault', labelKey: 'nav.aiAccess', icon: Bot, keywords: 'ai mcp claude assistant model context protocol allowlist grant token server reveal password' },

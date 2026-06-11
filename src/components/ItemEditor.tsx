@@ -20,6 +20,7 @@ import type {
 } from '../lib/types.ts';
 import { linkedOptionsFor } from '../lib/itemFields.ts';
 import { TYPE_LABELS } from '../lib/labels.ts';
+import { t } from '../lib/i18n.ts';
 import { toastError } from '../state/toast.ts';
 import {
   CardFields,
@@ -90,23 +91,23 @@ export default function ItemEditor(props: {
 
   async function save() {
     if (name().trim().length === 0) {
-      toastError(new Error('Name is required.'));
+      toastError(new Error(t('editor.nameRequired')));
       return;
     }
-    const t = itemType();
+    const type = itemType();
     const input: ItemInput = {
       id: props.item?.id ?? null,
-      itemType: t,
+      itemType: type,
       name: name().trim(),
       folderId: folderId(),
       organizationId: props.item?.organizationId ?? null,
       favorite: favorite(),
       reprompt: reprompt(),
       notes: orNull(notes()),
-      login: t === 'login' ? (buildLogin?.() ?? null) : null,
-      card: t === 'card' ? (buildCard?.() ?? null) : null,
-      identity: t === 'identity' ? (buildIdentity?.() ?? null) : null,
-      sshKey: t === 'sshKey' ? (buildSshKey?.() ?? null) : null,
+      login: type === 'login' ? (buildLogin?.() ?? null) : null,
+      card: type === 'card' ? (buildCard?.() ?? null) : null,
+      identity: type === 'identity' ? (buildIdentity?.() ?? null) : null,
+      sshKey: type === 'sshKey' ? (buildSshKey?.() ?? null) : null,
       fields: buildFields?.() ?? [],
     };
 
@@ -121,15 +122,17 @@ export default function ItemEditor(props: {
     }
   }
 
-  const heading = createMemo(
-    () => `${editing() ? 'Edit' : 'New'} ${TYPE_LABELS[itemType()].toLowerCase()}`,
+  const heading = createMemo(() =>
+    editing()
+      ? t('editor.editTitle', { type: TYPE_LABELS[itemType()].toLowerCase() })
+      : t('editor.newTitle', { type: TYPE_LABELS[itemType()].toLowerCase() }),
   );
 
   return (
     <div class="item-editor">
         <header class="ie-header">
           <h2 class="ie-title">{heading()}</h2>
-          <button class="ghost icon-btn" title="Cancel" onClick={() => props.onClose()}>
+          <button class="ghost icon-btn" title={t('common.cancel')} onClick={() => props.onClose()}>
             <X size={16} strokeWidth={1.75} />
           </button>
         </header>
@@ -190,10 +193,10 @@ export default function ItemEditor(props: {
 
         <footer class="ie-footer">
           <button class="ghost" onClick={() => props.onClose()}>
-            Cancel
+            {t('common.cancel')}
           </button>
           <button class="primary" disabled={saving()} onClick={() => void save()}>
-            {saving() ? 'Saving…' : 'Save'}
+            {saving() ? t('editor.saving') : t('common.save')}
           </button>
         </footer>
     </div>

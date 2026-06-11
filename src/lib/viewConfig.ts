@@ -25,7 +25,17 @@ function sameColumns(a: ColumnConfig | undefined, b: ColumnConfig | undefined): 
   if (a.displayMode !== b.displayMode) return false;
   if (a.columns.length !== b.columns.length) return false;
   for (let i = 0; i < a.columns.length; i++) {
-    if (columnKey(a.columns[i]) !== columnKey(b.columns[i])) return false;
+    const ca = a.columns[i];
+    const cb = b.columns[i];
+    if (columnKey(ca) !== columnKey(cb)) return false;
+    // A custom column's presentation (display label + icon) is part of the view, so
+    // renaming/re-iconing it marks the view dirty too.
+    const la = ca.kind === 'custom' ? ca.label : undefined;
+    const lb = cb.kind === 'custom' ? cb.label : undefined;
+    if (la !== lb) return false;
+    const ia = ca.kind === 'custom' ? ca.icon : undefined;
+    const ib = cb.kind === 'custom' ? cb.icon : undefined;
+    if (ia !== ib) return false;
   }
   if (a.revealed.length !== b.revealed.length) return false;
   const ar = new Set(a.revealed);

@@ -8,6 +8,7 @@ import { TYPE_LABELS } from '../state/columnConfig.ts';
 import type { ItemAudit, ItemDetail, VaultItem } from './types.ts';
 import { auditSeverity } from './audit.ts';
 import { hostOf } from '../state/favicons.ts';
+import { t } from './i18n.ts';
 
 /** A row's value for a custom-field grouping, by readiness/secrecy. */
 export type CustomFieldGroupValue =
@@ -76,11 +77,11 @@ export function groupOf(item: VaultItem, by: GroupKey | GroupSpec, ctx: GroupCon
         return { id: `cf:${fv.value.toLowerCase()}`, label: fv.value, rank: 0 };
       // Hidden fields share ONE bucket — the value never reaches a header.
       case 'hidden':
-        return { id: 'cf:hidden', label: 'Hidden', rank: 1 };
+        return { id: 'cf:hidden', label: t('group.hidden'), rank: 1 };
       case 'missing':
-        return { id: 'cf:none', label: `No ${spec.field}`, rank: 2 };
+        return { id: 'cf:none', label: t('group.noField', { field: spec.field }), rank: 2 };
       case 'loading':
-        return { id: 'cf:loading', label: 'Loading…', rank: 3 };
+        return { id: 'cf:loading', label: t('group.loading'), rank: 3 };
     }
   }
   const key = spec.key;
@@ -96,51 +97,51 @@ export function groupOf(item: VaultItem, by: GroupKey | GroupSpec, ctx: GroupCon
       const u = item.username?.trim();
       return u
         ? { id: `u:${u.toLowerCase()}`, label: u, rank: 0 }
-        : { id: 'u:none', label: 'No username', rank: 1 };
+        : { id: 'u:none', label: t('group.noUsername'), rank: 1 };
     }
     case 'passkey':
       return item.hasPasskey
-        ? { id: 'k:yes', label: 'Has passkey', rank: 0 }
-        : { id: 'k:no', label: 'No passkey', rank: 1 };
+        ? { id: 'k:yes', label: t('group.hasPasskey'), rank: 0 }
+        : { id: 'k:no', label: t('group.noPasskey'), rank: 1 };
     case 'website': {
       // Bucket by bare lowercase host (the same derivation favicons use), so
       // https://login.x.com and login.x.com/path land together.
       const host = hostOf(item.uri);
       return host
         ? { id: `w:${host}`, label: host, rank: 0 }
-        : { id: 'w:none', label: 'No website', rank: 1 };
+        : { id: 'w:none', label: t('group.noWebsite'), rank: 1 };
     }
     case 'totp':
       // Presence only — the code itself is a secret and lives behind a detail
       // fetch; group headers must never carry secret-derived values.
       return item.hasTotp
-        ? { id: 'o:yes', label: 'Has one-time code', rank: 0 }
-        : { id: 'o:no', label: 'None', rank: 1 };
+        ? { id: 'o:yes', label: t('group.hasOneTimeCode'), rank: 0 }
+        : { id: 'o:no', label: t('group.none'), rank: 1 };
     case 'password':
       // Presence proxy: only login rows carry a password, and the list row
       // can't (and must not) see the value. Same never-by-value rule as totp.
       return item.itemType === 'login'
-        ? { id: 'p:yes', label: 'Has password', rank: 0 }
-        : { id: 'p:no', label: 'No password', rank: 1 };
+        ? { id: 'p:yes', label: t('group.hasPassword'), rank: 0 }
+        : { id: 'p:no', label: t('group.noPassword'), rank: 1 };
     case 'folder': {
       const name = ctx.folderName(item.folderId);
       // Foldered rows sort alphabetically (rank 0); "No folder" trails (rank 1).
       return name
         ? { id: `f:${item.folderId}`, label: name, rank: 0 }
-        : { id: 'f:none', label: 'No folder', rank: 1 };
+        : { id: 'f:none', label: t('folder.noFolder'), rank: 1 };
     }
     case 'type':
       return { id: `t:${item.itemType}`, label: TYPE_LABELS[item.itemType], rank: 0 };
     case 'security': {
       // The audit covers logins only and needs a report; everything else trails.
       if (item.itemType !== 'login' || !ctx.hasSecurityReport) {
-        return { id: 's:na', label: 'Not applicable', rank: 9 };
+        return { id: 's:na', label: t('group.notApplicable'), rank: 9 };
       }
       const a = ctx.audit(item.id);
-      if (!a) return { id: 's:ok', label: 'No issues', rank: 3 };
+      if (!a) return { id: 's:ok', label: t('group.noIssues'), rank: 3 };
       return auditSeverity(a) === 'risk'
-        ? { id: 's:risk', label: 'At risk', rank: 1 }
-        : { id: 's:warn', label: 'Minor issues', rank: 2 };
+        ? { id: 's:risk', label: t('group.atRisk'), rank: 1 }
+        : { id: 's:warn', label: t('group.minorIssues'), rank: 2 };
     }
   }
 }

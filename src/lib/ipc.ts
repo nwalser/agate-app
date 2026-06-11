@@ -15,6 +15,8 @@ import type {
   ExposedResult,
   Folder,
   SendSummary,
+  SendCreateInput,
+  SendCreated,
   ItemDetail,
   ItemInput,
   LoginResult,
@@ -73,6 +75,9 @@ export const ipc = {
   getSessionStatus: (): Promise<SessionStatus> => invoke('get_session_status'),
 
   getServerConfig: (): Promise<ServerConfig> => invoke('get_server_config'),
+
+  /** Host OS UI locale (e.g. "de-DE") for first-run language detection. */
+  getSystemLocale: (): Promise<string> => invoke('get_system_locale'),
 
   /** Reveal + focus the main window (tray popup's "Open Agate" button). */
   showMainWindow: (): Promise<void> => invoke('show_main_window'),
@@ -165,8 +170,16 @@ export const ipc = {
 
   listCollections: (): Promise<Collection[]> => invoke('list_collections'),
 
+  /** Distinct custom-field names across every unlocked vault, for the column
+   *  picker (so a custom-field column is chosen, not blind-typed). */
+  listCustomFields: (): Promise<string[]> => invoke('list_custom_field_names'),
+
   /** List Bitwarden Sends (ephemeral shares) across all unlocked connections. */
   listSends: (): Promise<SendSummary[]> => invoke('list_sends'),
+
+  /** Create a text Send and return its public share link. */
+  createSend: (input: SendCreateInput): Promise<SendCreated> =>
+    invoke('create_send', { input }),
 
   /** Revoke (delete) one Send. */
   deleteSend: (accountEmail: string, sendId: string): Promise<void> =>

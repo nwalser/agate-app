@@ -1,124 +1,57 @@
-// Lightweight, dependency-free i18n. `t(key)` reads the reactive `locale` signal,
-// so any component using it re-renders when the language changes. `en` is the
-// source of truth (its keys define the `Key` type); other locales may be partial
-// and fall back to `en` for missing keys. Locale persists in localStorage (a
-// non-secret UI pref), validated at the storage boundary.
-//
-// Coverage is incremental: surfaces are migrated to `t()` over time. Unmigrated
-// strings simply stay in English until they're keyed.
+// Lightweight, dependency-free i18n, structured like themia-app's: one nested
+// message file per language under `src/locales`, flattened to dotted keys at load.
+// `t(key)` reads the reactive `locale` signal, so any component using it re-renders
+// when the language flips. `en` is the source of truth; other locales are
+// PartialMessages and fall back to English per missing key. The locale persists in
+// localStorage (a non-secret UI pref), validated at the storage boundary; the first
+// run detects the OS language (maybeInitLanguageFromSystem).
 
-import { createSignal } from 'solid-js';
+import { createMemo, createSignal } from 'solid-js';
+import { ipc } from './ipc.ts';
+import { interpolate } from './i18nFormat.ts';
+import { en } from '../locales/en.ts';
+import { de } from '../locales/de.ts';
+import { es } from '../locales/es.ts';
 
-export type Locale = 'en' | 'es';
+export type Locale = 'en' | 'de' | 'es';
 
 export const LOCALES: { id: Locale; label: string }[] = [
   { id: 'en', label: 'English' },
+  { id: 'de', label: 'Deutsch' },
   { id: 'es', label: 'Español' },
 ];
 
-// English base — the full key set. Every other locale is a Partial of this.
-const en = {
-  'common.back': 'Back',
-  'common.close': 'Close',
-  'common.enable': 'Enable',
-  'common.disable': 'Disable',
-  'common.retry': 'Retry',
-
-  'settings.title': 'Settings',
-  'settings.search': 'Search settings',
-  'settings.empty': 'No settings match.',
-  'settings.group.vault': 'Vault',
-  'settings.group.global': 'Global',
-
-  'nav.connections': 'Connections',
-  'nav.export': 'Export',
-  'nav.unlock': 'Unlock',
-  'nav.security': 'Security',
-  'nav.appearance': 'Appearance',
-  'nav.sidebar': 'Sidebar',
-  'nav.templates': 'Templates',
-  'nav.aiAccess': 'AI Access',
-  'nav.updates': 'Updates',
-  'nav.about': 'About',
-
-  'appearance.title': 'Appearance',
-  'appearance.help': 'Choose a light or dark theme, or follow your system setting.',
-  'appearance.language': 'Language',
-  'appearance.languageHelp': 'The language Agate is displayed in.',
-  'theme.system': 'System',
-  'theme.light': 'Light',
-  'theme.dark': 'Dark',
-
-  'startup.title': 'Startup',
-  'startup.help': 'Open Agate automatically when you sign in to your computer. It still starts locked.',
-  'startup.launch': 'Launch at login',
-  'startup.closeToTray': 'Keep running in the tray when the window is closed',
-  'startup.closeToTrayDesc': 'Closing the window hides Agate instead of quitting; use the tray icon to reopen or quit.',
-
-  'offline.message': 'Offline — showing your last synced vault. Changes you make may not reach the server yet.',
-
-  'shortcuts.title': 'Keyboard shortcuts',
-  'shortcuts.navigation': 'Navigation',
-  'shortcuts.search': 'Search',
-  'shortcuts.general': 'General',
-} as const;
-
-export type Key = keyof typeof en;
-
-// Spanish overrides. Missing keys fall back to English.
-const es: Partial<Record<Key, string>> = {
-  'common.back': 'Atrás',
-  'common.close': 'Cerrar',
-  'common.enable': 'Activar',
-  'common.disable': 'Desactivar',
-  'common.retry': 'Reintentar',
-
-  'settings.title': 'Ajustes',
-  'settings.search': 'Buscar ajustes',
-  'settings.empty': 'No hay ajustes que coincidan.',
-  'settings.group.vault': 'Bóveda',
-  'settings.group.global': 'Global',
-
-  'nav.connections': 'Conexiones',
-  'nav.export': 'Exportar',
-  'nav.unlock': 'Desbloqueo',
-  'nav.security': 'Seguridad',
-  'nav.appearance': 'Apariencia',
-  'nav.sidebar': 'Barra lateral',
-  'nav.templates': 'Plantillas',
-  'nav.aiAccess': 'Acceso IA',
-  'nav.updates': 'Actualizaciones',
-  'nav.about': 'Acerca de',
-
-  'appearance.title': 'Apariencia',
-  'appearance.help': 'Elige un tema claro u oscuro, o sigue la configuración del sistema.',
-  'appearance.language': 'Idioma',
-  'appearance.languageHelp': 'El idioma en que se muestra Agate.',
-  'theme.system': 'Sistema',
-  'theme.light': 'Claro',
-  'theme.dark': 'Oscuro',
-
-  'startup.title': 'Inicio',
-  'startup.help': 'Abre Agate automáticamente al iniciar sesión en tu equipo. Sigue arrancando bloqueado.',
-  'startup.launch': 'Abrir al iniciar sesión',
-  'startup.closeToTray': 'Seguir en la bandeja al cerrar la ventana',
-  'startup.closeToTrayDesc': 'Cerrar la ventana oculta Agate en vez de salir; usa el icono de la bandeja para reabrir o salir.',
-
-  'offline.message': 'Sin conexión — mostrando tu última bóveda sincronizada. Tus cambios podrían no llegar al servidor todavía.',
-
-  'shortcuts.title': 'Atajos de teclado',
-  'shortcuts.navigation': 'Navegación',
-  'shortcuts.search': 'Búsqueda',
-  'shortcuts.general': 'General',
+const dictionaries: Record<Locale, Record<string, string>> = {
+  en: flatten(en),
+  de: flatten(de),
+  es: flatten(es),
 };
 
-const DICTS: Record<Locale, Partial<Record<Key, string>>> = { en, es };
+/** Flatten a nested message dict into a "a.b.c" → value map. */
+function flatten(
+  obj: Record<string, unknown>,
+  prefix = '',
+  out: Record<string, string> = {},
+): Record<string, string> {
+  for (const k of Object.keys(obj)) {
+    const v = obj[k];
+    const path = prefix ? `${prefix}.${k}` : k;
+    if (v && typeof v === 'object') flatten(v as Record<string, unknown>, path, out);
+    else out[path] = String(v);
+  }
+  return out;
+}
 
 const STORAGE_KEY = 'agate.locale';
 
+function isLocale(v: unknown): v is Locale {
+  return v === 'en' || v === 'de' || v === 'es';
+}
+
 function read(): Locale {
   try {
-    return localStorage.getItem(STORAGE_KEY) === 'es' ? 'es' : 'en';
+    const v = localStorage.getItem(STORAGE_KEY);
+    return isLocale(v) ? v : 'en';
   } catch {
     // ignore: storage unavailable → default English
     return 'en';
@@ -137,7 +70,42 @@ export function setLocale(l: Locale): void {
   }
 }
 
-/** Translate a key for the current locale, falling back to English. */
-export function t(key: Key): string {
-  return DICTS[locale()][key] ?? en[key];
+const missingLogged = new Set<string>();
+
+/** Translate a key for the current locale, falling back to English. Reactive:
+ *  reads the `locale` signal, so JSX consumers re-render on a language change.
+ *  Interpolates `{name}` placeholders from `params`. Unknown keys are logged once
+ *  and returned verbatim so a missing translation is visible, never a silent gap. */
+export function t(key: string, params?: Record<string, string | number>): string {
+  const dict = dictionaries[locale()] ?? dictionaries.en;
+  const s = dict[key] ?? dictionaries.en[key];
+  if (s === undefined) {
+    if (!missingLogged.has(key)) {
+      missingLogged.add(key);
+      console.warn(`[i18n] missing key: ${key}`);
+    }
+    return key;
+  }
+  return interpolate(s, params);
+}
+
+/** Memo wrapper for a single reactive translation cell in JSX:
+ *    <span>{tm('settings.title')()}</span>  */
+export function tm(key: string, params?: Record<string, string | number>) {
+  return createMemo(() => t(key, params));
+}
+
+/** First-run OS-locale detection. Best-effort and async — render immediately; if
+ *  a language flip happens after detection, all consumers re-render reactively
+ *  because t()/tm() read the `locale` signal. Only applies when the user has not
+ *  already chosen a language (no persisted value). Called from main.tsx. */
+export async function maybeInitLanguageFromSystem(): Promise<void> {
+  try {
+    if (localStorage.getItem(STORAGE_KEY)) return;
+    const sys = (await ipc.getSystemLocale()) ?? '';
+    const next: Locale = /^de/i.test(sys) ? 'de' : /^es/i.test(sys) ? 'es' : 'en';
+    if (next !== locale()) setLocale(next);
+  } catch {
+    // ignore: detection is best-effort; default English stands
+  }
 }

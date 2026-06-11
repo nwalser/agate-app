@@ -23,7 +23,7 @@ export { FIXTURE_EMAIL, FIXTURE_LABEL, lockedFake, setupFake, unlockedFake };
 export type { FakeConfig };
 
 // ── Window attach ─────────────────────────────────────────────────────────────
-const APP_URLS = ['http://tauri.localhost/', 'http://localhost:5173/'];
+const APP_URLS = ['http://tauri.localhost/', 'http://localhost:5273/'];
 
 async function mountedHere(): Promise<boolean> {
   return browser.execute(() => !!document.getElementById('app')).catch(() => false);

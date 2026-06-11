@@ -7,7 +7,7 @@
     "beforeBuildCommand": "npm run vite:build",
     "beforeDevCommand": "npm run vite:dev",
     "frontendDist": "../dist",
-    "devUrl": "http://localhost:5173"
+    "devUrl": "http://localhost:5273"
   },
   "app": {
     "windows": [

@@ -16,13 +16,17 @@ import {
 import { addTemplate, removeTemplate, templateById, templates, updateTemplate } from '../../state/templates.ts';
 import { typeIcon } from '../../lib/vaultIcons.ts';
 import { createLabel } from '../../lib/vaultConfig.ts';
+import { t } from '../../lib/i18n.ts';
 import './TemplatesSettings.css';
 
-const KIND_LABELS: Record<TemplateFieldKind, string> = {
-  text: 'Text',
-  hidden: 'Hidden',
-  boolean: 'Boolean',
-};
+// Reactive — called in render so a language flip re-localizes the field-kind labels.
+function kindLabels(): Record<TemplateFieldKind, string> {
+  return {
+    text: t('templatesSettings.kindText'),
+    hidden: t('templatesSettings.kindHidden'),
+    boolean: t('templatesSettings.kindBoolean'),
+  };
+}
 
 export default function TemplatesSettings() {
   // Form state. editId === null → creating a new template.
@@ -92,12 +96,8 @@ export default function TemplatesSettings() {
   return (
     <div class="settings-page templates-settings">
       <section class="settings-section">
-        <h3>Templates</h3>
-        <p class="muted settings-help">
-          Define reusable item skeletons. Pick a template from the vault’s “Add” menu to open the
-          editor pre-filled with its custom fields. Templates are saved on this device, not in your
-          vault — hidden fields start empty and are filled in per item.
-        </p>
+        <h3>{t('templatesSettings.title')}</h3>
+        <p class="muted settings-help">{t('templatesSettings.help')}</p>
 
         <Show when={templates().length > 0}>
           <div class="tpl-list">
@@ -110,16 +110,18 @@ export default function TemplatesSettings() {
                     <div class="tpl-row-text">
                       <span class="tpl-row-name">{tpl.name}</span>
                       <span class="tpl-row-sub muted">
-                        {createLabel(tpl.itemType)} · {tpl.fields.length}{' '}
-                        {tpl.fields.length === 1 ? 'field' : 'fields'}
+                        {createLabel(tpl.itemType)} ·{' '}
+                        {tpl.fields.length === 1
+                          ? t('templatesSettings.fieldCountOne', { count: tpl.fields.length })
+                          : t('templatesSettings.fieldCountMany', { count: tpl.fields.length })}
                       </span>
                     </div>
-                    <button class="ghost icon-btn tpl-btn" title="Edit" onClick={() => beginEdit(tpl.id)}>
+                    <button class="ghost icon-btn tpl-btn" title={t('common.edit')} onClick={() => beginEdit(tpl.id)}>
                       <Pencil size={14} />
                     </button>
                     <button
                       class="ghost icon-btn tpl-btn"
-                      title="Delete"
+                      title={t('common.delete')}
                       onClick={() => {
                         if (editId() === tpl.id) resetForm();
                         removeTemplate(tpl.id);
@@ -138,25 +140,25 @@ export default function TemplatesSettings() {
       <section class="settings-section">
         <form class="tpl-form" onSubmit={submit}>
           <div class="tpl-form-head">
-            <h3>{editId() ? 'Edit template' : 'New template'}</h3>
+            <h3>{editId() ? t('templatesSettings.editTemplate') : t('templatesSettings.newTemplate')}</h3>
             <Show when={editId()}>
-              <button type="button" class="ghost icon-btn tpl-btn" title="Cancel edit" onClick={resetForm}>
+              <button type="button" class="ghost icon-btn tpl-btn" title={t('templatesSettings.cancelEdit')} onClick={resetForm}>
                 <X size={14} />
               </button>
             </Show>
           </div>
 
           <div class="field">
-            <label>Name</label>
+            <label>{t('common.name')}</label>
             <input
               value={name()}
-              placeholder="e.g. Server credentials"
+              placeholder={t('templatesSettings.namePlaceholder')}
               onInput={(e) => setName(e.currentTarget.value)}
             />
           </div>
 
           <div class="field">
-            <label>Item type</label>
+            <label>{t('templatesSettings.itemType')}</label>
             <select value={itemType()} onChange={(e) => setItemType(e.currentTarget.value as ItemType)}>
               <For each={TEMPLATE_ITEM_TYPES}>
                 {(t) => <option value={t.type}>{t.label}</option>}
@@ -165,7 +167,7 @@ export default function TemplatesSettings() {
           </div>
 
           <div class="field">
-            <label>Default notes (optional)</label>
+            <label>{t('templatesSettings.defaultNotes')}</label>
             <textarea
               class="tpl-textarea"
               value={notes()}
@@ -175,14 +177,14 @@ export default function TemplatesSettings() {
           </div>
 
           <div class="tpl-fields-head">
-            <label>Custom fields</label>
+            <label>{t('templatesSettings.customFields')}</label>
             <button type="button" class="ghost tpl-add-field" onClick={addField}>
-              <Plus size={13} strokeWidth={1.75} /> Add field
+              <Plus size={13} strokeWidth={1.75} /> {t('templatesSettings.addField')}
             </button>
           </div>
           <Show
             when={fields().length > 0}
-            fallback={<p class="muted tpl-empty">No custom fields yet. Add text, hidden, or boolean fields.</p>}
+            fallback={<p class="muted tpl-empty">{t('templatesSettings.noFieldsYet')}</p>}
           >
             <For each={fields()}>
               {(f, i) => (
@@ -190,7 +192,7 @@ export default function TemplatesSettings() {
                   <input
                     class="tpl-field-name"
                     value={f.name}
-                    placeholder="Field name"
+                    placeholder={t('templatesSettings.fieldNamePlaceholder')}
                     onInput={(e) => updateField(i(), { name: e.currentTarget.value })}
                   />
                   <Show
@@ -201,7 +203,7 @@ export default function TemplatesSettings() {
                         type="text"
                         value={f.kind === 'hidden' ? '' : f.value}
                         disabled={f.kind === 'hidden'}
-                        placeholder={f.kind === 'hidden' ? 'Filled in per item' : 'Default value (optional)'}
+                        placeholder={f.kind === 'hidden' ? t('templatesSettings.filledPerItem') : t('templatesSettings.defaultValuePlaceholder')}
                         onInput={(e) => updateField(i(), { value: e.currentTarget.value })}
                       />
                     }
@@ -212,7 +214,7 @@ export default function TemplatesSettings() {
                         checked={f.value === 'true'}
                         onChange={(e) => updateField(i(), { value: e.currentTarget.checked ? 'true' : 'false' })}
                       />
-                      {f.value === 'true' ? 'True' : 'False'}
+                      {f.value === 'true' ? t('templatesSettings.true') : t('templatesSettings.false')}
                     </label>
                   </Show>
                   <select
@@ -220,14 +222,14 @@ export default function TemplatesSettings() {
                     value={f.kind}
                     onChange={(e) => changeKind(i(), e.currentTarget.value as TemplateFieldKind, f)}
                   >
-                    <option value="text">{KIND_LABELS.text}</option>
-                    <option value="hidden">{KIND_LABELS.hidden}</option>
-                    <option value="boolean">{KIND_LABELS.boolean}</option>
+                    <option value="text">{kindLabels().text}</option>
+                    <option value="hidden">{kindLabels().hidden}</option>
+                    <option value="boolean">{kindLabels().boolean}</option>
                   </select>
                   <button
                     type="button"
                     class="ghost icon-btn tpl-btn"
-                    title="Move up"
+                    title={t('templatesSettings.moveUp')}
                     disabled={i() === 0}
                     onClick={() => moveField(i(), -1)}
                   >
@@ -236,7 +238,7 @@ export default function TemplatesSettings() {
                   <button
                     type="button"
                     class="ghost icon-btn tpl-btn"
-                    title="Move down"
+                    title={t('templatesSettings.moveDown')}
                     disabled={i() === fields().length - 1}
                     onClick={() => moveField(i(), 1)}
                   >
@@ -245,7 +247,7 @@ export default function TemplatesSettings() {
                   <button
                     type="button"
                     class="ghost icon-btn tpl-btn"
-                    title="Remove field"
+                    title={t('templatesSettings.removeField')}
                     onClick={() => removeField(i())}
                   >
                     <Trash2 size={14} />
@@ -256,7 +258,7 @@ export default function TemplatesSettings() {
           </Show>
 
           <button type="submit" class="primary tpl-submit" disabled={!name().trim()}>
-            <Plus size={14} /> {editId() ? 'Save template' : 'Add template'}
+            <Plus size={14} /> {editId() ? t('templatesSettings.saveTemplate') : t('templatesSettings.addTemplate')}
           </button>
         </form>
       </section>

@@ -7,6 +7,7 @@ import { createSignal, For, Show } from 'solid-js';
 import { Copy, Dices, History, Trash2 } from 'lucide-solid';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { ipc } from '../lib/ipc.ts';
+import { t } from '../lib/i18n.ts';
 import { toastError } from '../state/toast.ts';
 import {
   clearGeneratorHistory,
@@ -73,7 +74,7 @@ export default function PasswordGenerator(props: {
     <div class="ie-gen-anchor">
       <button
         class="ghost icon-btn"
-        title="Generate"
+        title={t('generator.generate')}
         onClick={() => setGenOpen(!genOpen())}
       >
         <Dices size={14} />
@@ -85,13 +86,13 @@ export default function PasswordGenerator(props: {
               classList={{ active: genMode() === 'password' }}
               onClick={() => setGenMode('password')}
             >
-              Password
+              {t('generator.password')}
             </button>
             <button
               classList={{ active: genMode() === 'passphrase' }}
               onClick={() => setGenMode('passphrase')}
             >
-              Passphrase
+              {t('generator.passphrase')}
             </button>
           </div>
 
@@ -100,7 +101,7 @@ export default function PasswordGenerator(props: {
             fallback={
               <div class="ie-gen-opts">
                 <div class="field">
-                  <label>Words: {genWords()}</label>
+                  <label>{t('generator.wordsLabel', { count: genWords() })}</label>
                   <input
                     type="range"
                     min="3"
@@ -112,7 +113,7 @@ export default function PasswordGenerator(props: {
                   />
                 </div>
                 <div class="field">
-                  <label>Separator</label>
+                  <label>{t('generator.separator')}</label>
                   <input
                     value={genSeparator()}
                     maxlength="1"
@@ -127,7 +128,7 @@ export default function PasswordGenerator(props: {
                       setGenCapitalize(e.currentTarget.checked)
                     }
                   />
-                  Capitalize
+                  {t('generator.capitalize')}
                 </label>
                 <label class="ie-check">
                   <input
@@ -137,14 +138,14 @@ export default function PasswordGenerator(props: {
                       setGenWordNumber(e.currentTarget.checked)
                     }
                   />
-                  Include number
+                  {t('generator.includeNumber')}
                 </label>
               </div>
             }
           >
             <div class="ie-gen-opts">
               <div class="field">
-                <label>Length: {genLength()}</label>
+                <label>{t('generator.lengthLabel', { count: genLength() })}</label>
                 <input
                   type="range"
                   min="8"
@@ -159,7 +160,7 @@ export default function PasswordGenerator(props: {
                   checked={genUpper()}
                   onChange={(e) => setGenUpper(e.currentTarget.checked)}
                 />
-                A–Z
+                {t('generator.charsetUpper')}
               </label>
               <label class="ie-check">
                 <input
@@ -167,7 +168,7 @@ export default function PasswordGenerator(props: {
                   checked={genLower()}
                   onChange={(e) => setGenLower(e.currentTarget.checked)}
                 />
-                a–z
+                {t('generator.charsetLower')}
               </label>
               <label class="ie-check">
                 <input
@@ -175,7 +176,7 @@ export default function PasswordGenerator(props: {
                   checked={genNumbers()}
                   onChange={(e) => setGenNumbers(e.currentTarget.checked)}
                 />
-                0–9
+                {t('generator.charsetNumbers')}
               </label>
               <label class="ie-check">
                 <input
@@ -183,22 +184,22 @@ export default function PasswordGenerator(props: {
                   checked={genSpecial()}
                   onChange={(e) => setGenSpecial(e.currentTarget.checked)}
                 />
-                !@#$
+                {t('generator.charsetSpecialPw')}
               </label>
             </div>
           </Show>
 
           <button class="primary ie-gen-go" onClick={() => void generate()}>
-            Generate &amp; use
+            {t('generator.generateAndUse')}
           </button>
 
           <Show when={generatorHistory().length > 0}>
             <div class="ie-gen-history">
               <div class="ie-gen-history-head">
                 <span class="ie-gen-history-title">
-                  <History size={12} strokeWidth={1.75} /> Recent
+                  <History size={12} strokeWidth={1.75} /> {t('generator.recent')}
                 </span>
-                <button class="ghost icon-btn" title="Clear history" onClick={() => clearGeneratorHistory()}>
+                <button class="ghost icon-btn" title={t('generator.clearHistory')} onClick={() => clearGeneratorHistory()}>
                   <Trash2 size={12} strokeWidth={1.75} />
                 </button>
               </div>
@@ -207,7 +208,7 @@ export default function PasswordGenerator(props: {
                   <div class="ie-gen-history-row">
                     <button
                       class="ie-gen-history-value"
-                      title="Use this value"
+                      title={t('generator.useThisValue')}
                       onClick={() => {
                         props.onGenerated(entry.value);
                         setGenOpen(false);
@@ -215,7 +216,7 @@ export default function PasswordGenerator(props: {
                     >
                       {entry.value}
                     </button>
-                    <button class="ghost icon-btn" title="Copy" onClick={() => void copyEntry(entry.value)}>
+                    <button class="ghost icon-btn" title={t('common.copy')} onClick={() => void copyEntry(entry.value)}>
                       <Copy size={12} strokeWidth={1.75} />
                     </button>
                   </div>

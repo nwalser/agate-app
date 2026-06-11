@@ -14,6 +14,7 @@ import { Dynamic } from 'solid-js/web';
 import { ExternalLink, KeyRound, LockKeyhole, Search, Timer, UserRound } from 'lucide-solid';
 import ToastHost from '../components/Toast.tsx';
 import { ipc } from '../lib/ipc.ts';
+import { t } from '../lib/i18n.ts';
 import { copyWithAutoClear } from '../lib/clipboard.ts';
 import { typeIcon } from '../lib/vaultIcons.ts';
 import { pushToast, toastError } from '../state/toast.ts';
@@ -29,7 +30,7 @@ export default function TrayApp() {
     onError: toastError,
     // The reprompt gate (master-password re-entry) lives in the main window;
     // the popup never bypasses it and never re-implements it.
-    onRepromptBlocked: () => pushToast('info', 'Master-password protected — open Agate to copy.'),
+    onRepromptBlocked: () => pushToast('info', t('tray.repromptBlocked')),
   });
   const [selected, setSelected] = createSignal(0);
   let searchEl: HTMLInputElement | undefined;
@@ -97,15 +98,15 @@ export default function TrayApp() {
       <span class="tray-actions">
         <Show when={item.itemType === 'login'}>
           <Show when={item.username}>
-            <button title="Copy username" onClick={() => void store.copyUsername(item)}>
+            <button title={t('tray.copyUsername')} onClick={() => void store.copyUsername(item)}>
               <UserRound size={14} />
             </button>
           </Show>
-          <button title="Copy password" onClick={() => void store.copyPassword(item)}>
+          <button title={t('tray.copyPassword')} onClick={() => void store.copyPassword(item)}>
             <KeyRound size={14} />
           </button>
           <Show when={item.hasTotp}>
-            <button title="Copy TOTP code" onClick={() => void store.copyTotp(item)}>
+            <button title={t('tray.copyTotp')} onClick={() => void store.copyTotp(item)}>
               <Timer size={14} />
             </button>
           </Show>
@@ -116,15 +117,15 @@ export default function TrayApp() {
 
   return (
     <div class="tray-app">
-      <Show when={store.ready()} fallback={<div class="tray-status">Loading…</div>}>
+      <Show when={store.ready()} fallback={<div class="tray-status">{t('common.loading')}</div>}>
         <Show
           when={store.unlocked()}
           fallback={
             <div class="tray-locked">
               <LockKeyhole size={28} />
-              <span>Vault is locked</span>
+              <span>{t('tray.locked')}</span>
               <button class="tray-unlock-btn" onClick={openApp}>
-                <ExternalLink size={14} /> Open Agate
+                <ExternalLink size={14} /> {t('tray.openAgate')}
               </button>
             </div>
           }
@@ -133,7 +134,7 @@ export default function TrayApp() {
             <Search size={14} />
             <input
               ref={searchEl}
-              placeholder="Search vault…"
+              placeholder={t('tray.searchPlaceholder')}
               value={store.query()}
               onInput={(e) => {
                 store.setQuery(e.currentTarget.value);
@@ -142,14 +143,14 @@ export default function TrayApp() {
             />
           </div>
           <ul class="tray-list">
-            <For each={store.filtered()} fallback={<li class="tray-status">No matches.</li>}>
+            <For each={store.filtered()} fallback={<li class="tray-status">{t('tray.noMatches')}</li>}>
               {row}
             </For>
           </ul>
           <footer class="tray-footer">
-            <span class="tray-hint">↵ copy password · Esc close</span>
+            <span class="tray-hint">{t('tray.footerHint')}</span>
             <button class="tray-open" onClick={openApp}>
-              <ExternalLink size={14} /> Open Agate
+              <ExternalLink size={14} /> {t('tray.openAgate')}
             </button>
           </footer>
         </Show>

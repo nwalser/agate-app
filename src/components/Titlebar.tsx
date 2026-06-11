@@ -18,6 +18,7 @@ import { createMemo, createSignal, For, Match, onCleanup, onMount, Show, Switch 
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Copy, Lock, Minus, Monitor, Moon, Search, ShieldCheck, Square, Sun, Terminal, X } from 'lucide-solid';
 import { ipc } from '../lib/ipc.ts';
+import { t } from '../lib/i18n.ts';
 import type { VaultItem, WindowControl, WindowControlsLayout } from '../lib/types.ts';
 import { typeIcon } from '../lib/vaultIcons.ts';
 import {
@@ -41,11 +42,18 @@ import './Titlebar.css';
 
 // Theme button cycles through these in order (mirrors the old vault header).
 const THEME_CYCLE: ThemePref[] = ['system', 'light', 'dark'];
-const THEME_LABEL: Record<ThemePref, string> = {
-  system: 'System theme',
-  light: 'Light theme',
-  dark: 'Dark theme',
-};
+// Translated lazily at the call site (a function, not a frozen const) so the
+// theme-button tooltip re-translates when the language flips.
+function themeLabel(pref: ThemePref): string {
+  switch (pref) {
+    case 'system':
+      return t('titlebar.themeSystem');
+    case 'light':
+      return t('titlebar.themeLight');
+    case 'dark':
+      return t('titlebar.themeDark');
+  }
+}
 
 const appWindow = getCurrentWindow();
 
@@ -72,12 +80,12 @@ const RESULT_LIMIT = 8;
 // fresh sync. The caller clamps a just-set timestamp to "just now" via the floor.
 function relTime(ts: number, now: number): string {
   const sec = Math.max(0, Math.floor((now - ts) / 1000));
-  if (sec < 60) return 'just now';
+  if (sec < 60) return t('titlebar.justNow');
   const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m ago`;
+  if (min < 60) return t('titlebar.minutesAgo', { count: min });
   const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h ago`;
-  return `${Math.floor(hr / 24)}d ago`;
+  if (hr < 24) return t('titlebar.hoursAgo', { count: hr });
+  return t('titlebar.daysAgo', { count: Math.floor(hr / 24) });
 }
 
 // Wrap a vault item as a runnable command for the normal-search preview.
@@ -98,9 +106,9 @@ export default function Titlebar(props: { showSearch: boolean; onLock: () => voi
   }
 
   const syncTitle = () => {
-    if (syncState() === 'syncing') return 'Syncing…';
-    if (syncState() === 'error') return 'Sync failed — click to retry';
-    return lastSync() === null ? 'Not synced yet — click to sync' : 'Synced — click to sync now';
+    if (syncState() === 'syncing') return t('titlebar.syncTitleSyncing');
+    if (syncState() === 'error') return t('titlebar.syncTitleError');
+    return lastSync() === null ? t('titlebar.syncTitleNever') : t('titlebar.syncTitleIdle');
   };
 
   // A coarse clock that ticks every 30s so the sync status' relative time
@@ -113,10 +121,10 @@ export default function Titlebar(props: { showSearch: boolean; onLock: () => voi
 
   // Visible sync status text, shown beside the cloud icon in the actions cluster.
   const syncLabel = () => {
-    if (syncState() === 'syncing') return 'Syncing…';
-    if (syncState() === 'error') return 'Sync failed';
+    if (syncState() === 'syncing') return t('titlebar.syncLabelSyncing');
+    if (syncState() === 'error') return t('titlebar.syncLabelError');
     const ts = lastSync();
-    return ts === null ? 'Not synced' : `Synced ${relTime(ts, now())}`;
+    return ts === null ? t('titlebar.syncLabelNever') : t('titlebar.syncLabelIdle', { rel: relTime(ts, now()) });
   };
 
   // Tracks the OS maximize state so the maximize button shows the right glyph
@@ -226,7 +234,7 @@ export default function Titlebar(props: { showSearch: boolean; onLock: () => voi
     switch (btn) {
       case 'minimize':
         return (
-          <button class="titlebar-btn" title="Minimize" onClick={() => void appWindow.minimize()}>
+          <button class="titlebar-btn" title={t('titlebar.minimize')} onClick={() => void appWindow.minimize()}>
             <Minus size={15} strokeWidth={1.75} />
           </button>
         );
@@ -234,7 +242,7 @@ export default function Titlebar(props: { showSearch: boolean; onLock: () => voi
         return (
           <button
             class="titlebar-btn"
-            title={maximized() ? 'Restore' : 'Maximize'}
+            title={maximized() ? t('titlebar.restore') : t('titlebar.maximize')}
             onClick={() => void appWindow.toggleMaximize()}
           >
             {maximized() ? (
@@ -248,7 +256,7 @@ export default function Titlebar(props: { showSearch: boolean; onLock: () => voi
         return (
           <button
             class="titlebar-btn titlebar-close"
-            title="Close"
+            title={t('titlebar.close')}
             onClick={() => void appWindow.close()}
           >
             <X size={16} strokeWidth={1.75} />
@@ -285,7 +293,7 @@ export default function Titlebar(props: { showSearch: boolean; onLock: () => voi
             </Show>
             <input
               ref={(el) => (searchInput = el)}
-              placeholder="Search vault — type / for commands"
+              placeholder={t('titlebar.searchPlaceholder')}
               value={query()}
               onInput={(e) => {
                 setQuery(e.currentTarget.value);
@@ -299,13 +307,13 @@ export default function Titlebar(props: { showSearch: boolean; onLock: () => voi
               {/* Keep mousedown from blurring the input before the click lands. */}
               <div class="titlebar-results" role="listbox" onMouseDown={(e) => e.preventDefault()}>
                 <Show when={showingRecents()}>
-                  <div class="titlebar-results-head">Recent</div>
+                  <div class="titlebar-results-head">{t('titlebar.recent')}</div>
                 </Show>
                 <Show
                   when={results().length > 0}
                   fallback={
                     <div class="titlebar-results-empty">
-                      {commandMode() ? 'No matching commands' : 'No matches'}
+                      {commandMode() ? t('titlebar.noMatchingCommands') : t('titlebar.noMatches')}
                     </div>
                   }
                 >
@@ -367,7 +375,7 @@ export default function Titlebar(props: { showSearch: boolean; onLock: () => voi
             <SyncIcon state={syncState()} lastSync={lastSync()} />
             <span class="titlebar-sync-label">{syncLabel()}</span>
           </button>
-          <button class="titlebar-btn" title={THEME_LABEL[theme()]} onClick={cycleTheme}>
+          <button class="titlebar-btn" title={themeLabel(theme())} onClick={cycleTheme}>
             <Switch fallback={<Monitor size={15} strokeWidth={1.75} />}>
               <Match when={theme() === 'light'}>
                 <Sun size={15} strokeWidth={1.75} />
@@ -377,7 +385,7 @@ export default function Titlebar(props: { showSearch: boolean; onLock: () => voi
               </Match>
             </Switch>
           </button>
-          <button class="titlebar-btn" title="Lock" onClick={() => props.onLock()}>
+          <button class="titlebar-btn" title={t('titlebar.lock')} onClick={() => props.onLock()}>
             <Lock size={15} strokeWidth={1.75} />
           </button>
         </div>

@@ -16,6 +16,7 @@ import {
   NAME_FILTER_KEY,
   setColumnFilter,
 } from '../state/columnFilters.ts';
+import { t } from '../lib/i18n.ts';
 
 export default function FilterRow() {
   return (
@@ -25,7 +26,7 @@ export default function FilterRow() {
         <input
           class="vault-filter-input"
           data-filter-key={NAME_FILTER_KEY}
-          placeholder="Filter name…"
+          placeholder={t('filter.namePlaceholder')}
           value={columnFilter(NAME_FILTER_KEY)}
           onInput={(e) => setColumnFilter(NAME_FILTER_KEY, e.currentTarget.value)}
         />
@@ -35,7 +36,7 @@ export default function FilterRow() {
               <input
                 class="vault-filter-input"
                 data-filter-key={columnKey(col)}
-                placeholder="Filter…"
+                placeholder={t('filter.placeholder')}
                 value={columnFilter(columnKey(col))}
                 onInput={(e) => setColumnFilter(columnKey(col), e.currentTarget.value)}
               />
@@ -48,7 +49,7 @@ export default function FilterRow() {
           <Show when={hasActiveFilters()}>
             <button
               class="ghost icon-btn vault-gear-btn"
-              title="Clear filters"
+              title={t('filter.clear')}
               onClick={() => clearColumnFilters()}
             >
               <X size={13} strokeWidth={1.75} />

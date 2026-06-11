@@ -10,6 +10,7 @@ import type { ItemDetail, LoginInput, UriInput } from '../../lib/types.ts';
 import { MATCH_OPTIONS } from '../../lib/uriMatching.ts';
 import { mapOcrToLogin } from '../../lib/ocrFill.ts';
 import { pushToast, toastError } from '../../state/toast.ts';
+import { t } from '../../lib/i18n.ts';
 import PasswordGenerator from '../PasswordGenerator.tsx';
 import { orNull } from './index.ts';
 
@@ -20,8 +21,8 @@ interface UriRow {
 
 // Lightweight password-strength heuristic (0–4) for the login editor's meter.
 // Not a security control — just feedback while typing.
-function passwordStrength(pw: string): { score: number; label: string } {
-  if (!pw) return { score: 0, label: '' };
+function passwordStrength(pw: string): { score: number } {
+  if (!pw) return { score: 0 };
   let score = 0;
   if (pw.length >= 8) score++;
   if (pw.length >= 14) score++;
@@ -29,7 +30,14 @@ function passwordStrength(pw: string): { score: number; label: string } {
   if (classes >= 2) score++;
   if (classes >= 3 && pw.length >= 10) score++;
   score = Math.min(score, 4);
-  return { score, label: ['', 'Weak', 'Fair', 'Good', 'Strong'][score] };
+  return { score };
+}
+
+// Translate a strength score (0–4) to its meter label at render time, so the
+// label stays reactive to a language flip. 0 → no label.
+function strengthLabel(score: number): string {
+  const key = ['', 'weak', 'fair', 'good', 'strong'][score];
+  return key ? t('fields.strength.' + key) : '';
 }
 
 export default function LoginFields(props: {
@@ -71,7 +79,7 @@ export default function LoginFields(props: {
     try {
       const uri = await ipc.scanTotpQr();
       setTotp(uri);
-      pushToast('success', 'TOTP key captured from screen.');
+      pushToast('success', t('fields.totpCaptured'));
     } catch (err) {
       toastError(err);
     } finally {
@@ -109,8 +117,8 @@ export default function LoginFields(props: {
         setUris((prev) => [...prev.filter((u) => u.uri.trim()), { uri: m.uri!, matchType: null }]);
         filled++;
       }
-      if (filled === 0) pushToast('error', 'Nothing usable recognized in that image.');
-      else pushToast('success', `Filled ${filled} field${filled === 1 ? '' : 's'} from the image.`);
+      if (filled === 0) pushToast('error', t('fields.ocrNothingRecognized'));
+      else pushToast('success', t('fields.filledFromImage', { count: filled }));
     } catch (err) {
       toastError(err);
     } finally {
@@ -134,20 +142,20 @@ export default function LoginFields(props: {
   return (
     <div class="ie-section">
       <div class="ie-section-title ie-title-row">
-        Login credentials
+        {t('fields.loginCredentials')}
         <Show when={ocrAvailable()}>
           <button
             class="ghost ie-add ie-scan-qr"
             disabled={ocrBusy()}
             onClick={() => void fillFromImage()}
-            title="Read username/website from an image file"
+            title={t('fields.fromImageLoginTooltip')}
           >
-            <ImageUp size={13} strokeWidth={1.75} /> From image
+            <ImageUp size={13} strokeWidth={1.75} /> {t('fields.fromImage')}
           </button>
         </Show>
       </div>
       <div class="field">
-        <label>Username</label>
+        <label>{t('common.username')}</label>
         <input
           value={username()}
           onInput={(e) => setUsername(e.currentTarget.value)}
@@ -162,7 +170,7 @@ export default function LoginFields(props: {
       </div>
 
       <div class="field">
-        <label>Password</label>
+        <label>{t('common.password')}</label>
         <div class="row ie-pw-row">
           <input
             class="ie-grow ie-mono"
@@ -173,7 +181,7 @@ export default function LoginFields(props: {
           />
           <button
             class="ghost icon-btn"
-            title={revealPw() ? 'Hide' : 'Reveal'}
+            title={revealPw() ? t('common.hide') : t('fields.reveal')}
             onClick={() => setRevealPw(!revealPw())}
           >
             {revealPw() ? <EyeOff size={14} /> : <Eye size={14} />}
@@ -193,19 +201,19 @@ export default function LoginFields(props: {
               <span />
               <span />
             </div>
-            <span class="ie-strength-label">{strength().label}</span>
+            <span class="ie-strength-label">{strengthLabel(strength().score)}</span>
           </div>
         </Show>
       </div>
 
       <div class="field">
-        <label>Authenticator key (TOTP)</label>
+        <label>{t('fields.authenticatorKey')}</label>
         <div class="row ie-totp-row">
           <input
             class="ie-grow"
             value={totp()}
             onInput={(e) => setTotp(e.currentTarget.value)}
-            placeholder="otpauth:// or secret"
+            placeholder={t('fields.totpPlaceholder')}
             autocomplete="off"
           />
           <button
@@ -213,19 +221,19 @@ export default function LoginFields(props: {
             class="ghost ie-add ie-scan-qr"
             disabled={scanningQr()}
             onClick={() => void scanTotpQr()}
-            title="Scan a TOTP QR code shown on your screen"
+            title={t('fields.scanQrTooltip')}
           >
             <QrCode size={13} strokeWidth={1.75} />
-            {scanningQr() ? 'Scanning…' : 'Scan QR'}
+            {scanningQr() ? t('fields.scanning') : t('fields.scanQr')}
           </button>
         </div>
       </div>
 
       <div class="field">
         <div class="ie-section-head">
-          <label>URIs</label>
+          <label>{t('fields.uris')}</label>
           <button class="ghost ie-add" onClick={addUri}>
-            <Plus size={13} strokeWidth={1.75} /> Add URI
+            <Plus size={13} strokeWidth={1.75} /> {t('fields.addUri')}
           </button>
         </div>
         <For each={uris()}>
@@ -255,7 +263,7 @@ export default function LoginFields(props: {
               </select>
               <button
                 class="ghost icon-btn"
-                title="Remove"
+                title={t('common.remove')}
                 onClick={() => removeUri(i())}
               >
                 <Trash2 size={14} />

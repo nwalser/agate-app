@@ -1,5 +1,6 @@
 import { createMemo, createSignal, For, Show } from 'solid-js';
 import { type Command, rankCommands } from '../lib/command.ts';
+import { t } from '../lib/i18n.ts';
 import './CommandPalette.css';
 
 export type { Command };
@@ -70,22 +71,22 @@ export default function CommandPalette(props: CommandPaletteProps) {
   return (
     <Show when={props.open}>
       <div class="cmdp-overlay" onClick={onOverlayClick}>
-        <div class="cmdp-panel" role="dialog" aria-label="Command palette" onKeyDown={onKeyDown}>
+        <div class="cmdp-panel" role="dialog" aria-label={t('commandPalette.dialogLabel')} onKeyDown={onKeyDown}>
           <input
             ref={focusInput}
             class="cmdp-input"
             type="text"
-            placeholder="Type a command…"
+            placeholder={t('commandPalette.placeholder')}
             value={query()}
             onInput={(e) => {
               setQuery(e.currentTarget.value);
               setSelected(0);
             }}
-            aria-label="Search commands"
+            aria-label={t('commandPalette.searchLabel')}
           />
           <Show
             when={ranked().length > 0}
-            fallback={<div class="cmdp-empty">No matching commands</div>}
+            fallback={<div class="cmdp-empty">{t('commandPalette.empty')}</div>}
           >
             <ul class="cmdp-list" role="listbox">
               <For each={ranked()}>

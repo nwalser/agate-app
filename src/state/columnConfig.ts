@@ -4,6 +4,9 @@
 // validating parse used at the localStorage boundary (no `any`). The live signal
 // and its mutators live in `columnStorage.ts`; `columns.ts` re-exports both.
 
+import { t } from '../lib/i18n.ts';
+import { isColumnIconId } from '../lib/columnIconIds.ts';
+
 /** Built-in columns the list knows how to render without configuration. */
 export type BuiltinColumnId =
   | 'username'
@@ -15,10 +18,13 @@ export type BuiltinColumnId =
   | 'security'
   | 'passkey';
 
-/** A visible column: a known built-in, or a custom field referenced by name. */
+/** A visible column: a known built-in, or a custom field referenced by name.
+ *  A custom column may carry a display `label` (a friendlier name than the raw
+ *  field) and an `icon` (a `lib/columnIcons` id) — both presentation-only: the
+ *  column's identity (and the value it reads) is always its `field`. */
 export type ColumnSpec =
   | { kind: 'builtin'; id: BuiltinColumnId }
-  | { kind: 'custom'; field: string };
+  | { kind: 'custom'; field: string; label?: string; icon?: string };
 
 /** Columns the list can sort by (all derivable without fetching item detail).
  *  `security` ranks rows by their offline-health status (passed into the list). */
@@ -54,17 +60,18 @@ export const GROUP_KEYS: GroupKey[] = [
 ];
 
 /** Labels for the "Group by" picker (the per-group header text is derived from
- *  the rows themselves — see `lib/grouping.ts`). */
+ *  the rows themselves — see `lib/grouping.ts`). Getters keep the
+ *  `GROUP_LABELS[key]` access shape while tracking the active locale. */
 export const GROUP_LABELS: Record<GroupKey, string> = {
-  name: 'Name',
-  username: 'Username',
-  website: 'Website',
-  folder: 'Folder',
-  type: 'Type',
-  totp: 'One-time code',
-  password: 'Password',
-  security: 'Security',
-  passkey: 'Passkey',
+  get name() { return t('column.name'); },
+  get username() { return t('column.username'); },
+  get website() { return t('column.website'); },
+  get folder() { return t('column.folder'); },
+  get type() { return t('column.type'); },
+  get totp() { return t('column.oneTimeCode'); },
+  get password() { return t('column.password'); },
+  get security() { return t('column.security'); },
+  get passkey() { return t('column.passkey'); },
 };
 
 /** What rows are grouped by: a builtin group key, or a custom field's value
@@ -134,26 +141,26 @@ interface ColumnMeta {
 export function builtinMeta(id: BuiltinColumnId): ColumnMeta {
   switch (id) {
     case 'username':
-      return { label: 'Username', sortable: true, secret: false, needsDetail: false };
+      return { label: t('column.username'), sortable: true, secret: false, needsDetail: false };
     case 'website':
-      return { label: 'Website', sortable: false, secret: false, needsDetail: true };
+      return { label: t('column.website'), sortable: false, secret: false, needsDetail: true };
     case 'folder':
-      return { label: 'Folder', sortable: true, secret: false, needsDetail: false };
+      return { label: t('column.folder'), sortable: true, secret: false, needsDetail: false };
     case 'type':
-      return { label: 'Type', sortable: true, secret: false, needsDetail: false };
+      return { label: t('column.type'), sortable: true, secret: false, needsDetail: false };
     case 'totp':
-      return { label: 'One-time code', sortable: false, secret: true, needsDetail: true };
+      return { label: t('column.oneTimeCode'), sortable: false, secret: true, needsDetail: true };
     case 'password':
-      return { label: 'Password', sortable: false, secret: true, needsDetail: true };
+      return { label: t('column.password'), sortable: false, secret: true, needsDetail: true };
     case 'security':
       // Rendered from the offline health report (passed into the list), not from
       // per-item detail — so no detail fetch, and not secret. Sortable: the list
       // ranks rows by their health status from the same report.
-      return { label: 'Security', sortable: true, secret: false, needsDetail: false };
+      return { label: t('column.security'), sortable: true, secret: false, needsDetail: false };
     case 'passkey':
       // Presence flag from the list row (`hasPasskey`) — an icon, not a value, so
       // not sortable/secret and no detail fetch.
-      return { label: 'Passkey', sortable: false, secret: false, needsDetail: false };
+      return { label: t('column.passkey'), sortable: false, secret: false, needsDetail: false };
   }
 }
 
@@ -163,7 +170,10 @@ export function columnKey(c: ColumnSpec): string {
 }
 
 export function columnLabel(c: ColumnSpec): string {
-  return c.kind === 'builtin' ? builtinMeta(c.id).label : c.field;
+  if (c.kind === 'builtin') return builtinMeta(c.id).label;
+  // A custom column shows its friendly label when set, else the raw field name.
+  const label = c.label?.trim();
+  return label ? label : c.field;
 }
 
 /** The sort key a column maps to, or null if it isn't sortable. */
@@ -309,7 +319,13 @@ function parseSpec(v: unknown): ColumnSpec | null {
   const o = v as Record<string, unknown>;
   if (o.kind === 'builtin' && isBuiltinId(o.id)) return { kind: 'builtin', id: o.id };
   if (o.kind === 'custom' && typeof o.field === 'string' && o.field.trim()) {
-    return { kind: 'custom', field: o.field };
+    const spec: ColumnSpec = { kind: 'custom', field: o.field };
+    // Presentation extras are optional + forgiving: a non-empty label and a KNOWN
+    // icon id survive; anything else is dropped (the column still works by field).
+    const label = typeof o.label === 'string' ? o.label.trim() : '';
+    if (label) spec.label = label;
+    if (isColumnIconId(o.icon)) spec.icon = o.icon;
+    return spec;
   }
   return null;
 }

@@ -50,6 +50,7 @@ import {
   visibleEntries,
 } from '../state/sidebar.ts';
 import { useDragReorder } from '../hooks/useDragReorder.ts';
+import { t } from '../lib/i18n.ts';
 import FolderTree from './FolderTree.tsx';
 import { ContextMenu, CtxItem, CtxSep } from './ContextMenu.tsx';
 import { SyncIcon, type SyncState } from './SyncStatus.tsx';
@@ -93,8 +94,8 @@ export default function VaultRailMenu(props: {
         active={props.view === 'vault' ? props.filter : { kind: 'all' }}
         onSelect={(f) => props.selectFilter(f)}
         onCreate={(account, fullName) => props.folderCreate(account, fullName)}
-        onRename={(account, renames) => props.folderApplyRenames(account, renames, 'Folder renamed.')}
-        onMove={(account, renames) => props.folderApplyRenames(account, renames, 'Folder moved.')}
+        onRename={(account, renames) => props.folderApplyRenames(account, renames, t('menu.folderRenamed'))}
+        onMove={(account, renames) => props.folderApplyRenames(account, renames, t('menu.folderMoved'))}
         onDelete={(account, folderIds, itemIds) => props.folderDelete(account, folderIds, itemIds)}
         onDropItems={(account, folderId, ids) => props.folderDropItems(account, folderId, ids)}
         defaultAccount={props.defaultAccount}
@@ -136,12 +137,12 @@ export default function VaultRailMenu(props: {
         <button
           class="vault-rail-btn"
           classList={{ active: props.view === 'sync' }}
-          title={props.sidebarCollapsed ? 'Sync' : props.syncTooltip}
+          title={props.sidebarCollapsed ? t('menu.sync') : props.syncTooltip}
           onClick={() => props.setView('sync')}
           onContextMenu={onCtx}
         >
           <SyncIcon state={props.syncState} lastSync={props.lastSync} />
-          <span>Sync</span>
+          <span>{t('menu.sync')}</span>
         </button>
       );
     }
@@ -211,7 +212,7 @@ export default function VaultRailMenu(props: {
     <nav class="vault-rail" classList={{ collapsed: props.sidebarCollapsed }}>
       <button
         class="vault-rail-collapse"
-        title={props.sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        title={props.sidebarCollapsed ? t('menu.expandSidebar') : t('menu.collapseSidebar')}
         onClick={() => props.toggleSidebar()}
       >
         <Show when={props.sidebarCollapsed} fallback={<PanelLeftClose size={16} strokeWidth={1.6} />}>
@@ -275,7 +276,7 @@ export default function VaultRailMenu(props: {
       {/* Push Settings to the bottom of the rail. */}
       <div class="vault-rail-spacer" />
       <div class="vault-rail-sep" />
-      <FilterButton label="Settings" icon={SettingsIcon} active={false} onClick={() => props.onOpenSettings()} />
+      <FilterButton label={t('menu.settings')} icon={SettingsIcon} active={false} onClick={() => props.onOpenSettings()} />
 
       <Show when={entryMenu()}>
         {(m) => {
@@ -289,21 +290,21 @@ export default function VaultRailMenu(props: {
           return (
             <ContextMenu x={m().x} y={m().y} onClose={close}>
               <CtxItem disabled={idx() <= 0} onClick={act(() => moveEntry(idx(), -1))}>
-                <ArrowUp size={14} /> Move up
+                <ArrowUp size={14} /> {t('menu.moveUp')}
               </CtxItem>
               <CtxItem
                 disabled={idx() < 0 || idx() >= sidebar().order.length - 1}
                 onClick={act(() => moveEntry(idx(), 1))}
               >
-                <ArrowDown size={14} /> Move down
+                <ArrowDown size={14} /> {t('menu.moveDown')}
               </CtxItem>
               <Show when={!isDividerId(id())}>
                 <CtxItem onClick={act(() => toggleHidden(id()))}>
-                  <EyeOff size={14} /> Hide
+                  <EyeOff size={14} /> {t('menu.hide')}
                 </CtxItem>
               </Show>
               <CtxItem onClick={act(() => addDivider(idx() + 1))}>
-                <Minus size={14} /> Add divider below
+                <Minus size={14} /> {t('menu.addDividerBelow')}
               </CtxItem>
               <Show when={isQueryId(id())}>
                 <CtxSep />
@@ -313,31 +314,31 @@ export default function VaultRailMenu(props: {
                     if (q) props.onRunQuery(q);
                   })}
                 >
-                  <Play size={14} /> Open view
+                  <Play size={14} /> {t('menu.openView')}
                 </CtxItem>
                 <Show when={props.activeViewId === id()}>
                   <CtxItem disabled={!props.viewDirty} onClick={act(() => props.onSaveView())}>
-                    <Save size={14} /> Update to current list
+                    <Save size={14} /> {t('menu.updateToCurrentList')}
                   </CtxItem>
                 </Show>
                 <CtxItem onClick={act(() => duplicateQuery(id()))}>
-                  <CopyPlus size={14} /> Duplicate view
+                  <CopyPlus size={14} /> {t('menu.duplicateView')}
                 </CtxItem>
                 <CtxItem onClick={act(() => props.onOpenSettings())}>
-                  <Pencil size={14} /> Edit view
+                  <Pencil size={14} /> {t('menu.editView')}
                 </CtxItem>
                 <CtxItem danger onClick={act(() => removeEntry(id()))}>
-                  <Trash2 size={14} /> Delete view
+                  <Trash2 size={14} /> {t('menu.deleteView')}
                 </CtxItem>
               </Show>
               <Show when={isDividerId(id())}>
                 <CtxItem danger onClick={act(() => removeEntry(id()))}>
-                  <Trash2 size={14} /> Remove divider
+                  <Trash2 size={14} /> {t('menu.removeDivider')}
                 </CtxItem>
               </Show>
               <CtxSep />
               <CtxItem onClick={act(() => props.onOpenSettings())}>
-                <SettingsIcon size={14} /> Sidebar settings…
+                <SettingsIcon size={14} /> {t('menu.sidebarSettings')}
               </CtxItem>
             </ContextMenu>
           );
@@ -399,7 +400,9 @@ function SecurityRailBadge(props: { report: VaultHealthReport | null }) {
         const count = () => r().atRisk.length;
         const color = () => railBandColor(r().band);
         const title = () =>
-          `Security score ${r().score}/100 · ${count()} at-risk item${count() === 1 ? '' : 's'}`;
+          count() === 1
+            ? t('menu.securityBadgeTitleOne', { score: r().score, count: count() })
+            : t('menu.securityBadgeTitleOther', { score: r().score, count: count() });
         return (
           <span
             class="vault-rail-badge"

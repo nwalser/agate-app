@@ -23,6 +23,7 @@ import type { RelevantBreach } from '../../lib/breachAggregation.ts';
 import { darkwebMonitor } from '../../state/security.ts';
 import { darkwebBusy, darkwebReport, relevantBreaches, runDarkwebScan } from '../../state/securityScans.ts';
 import { BreachDetails, DataClassChips, DisabledNotice } from './shared.tsx';
+import { t } from '../../lib/i18n.ts';
 
 /** A labelled, collapsible-by-emptiness list of emails not in the checked set. */
 function EmailNotice(props: { icon: JSX.Element; title: string; hint: string; emails: string[] }) {
@@ -63,13 +64,15 @@ function BreachRow(props: { entry: RelevantBreach }) {
         <span class="sec-breach-name">{b().name}</span>
         <Show when={b().breachDate}>{(d) => <span class="muted sec-breach-date">{d()}</span>}</Show>
         <Show when={b().verified}>
-          <span class="sec-breach-verified" title="Verified breach">
+          <span class="sec-breach-verified" title={t('security.verifiedBreach')}>
             <CheckCircle2 size={11} strokeWidth={2} />
           </span>
         </Show>
         <span class="spacer" />
         <span class="sec-affected">
-          {accounts().length} account{accounts().length === 1 ? '' : 's'}
+          {accounts().length === 1
+            ? t('security.accountsCount_one', { count: accounts().length })
+            : t('security.accountsCount_other', { count: accounts().length })}
         </span>
       </button>
 
@@ -106,27 +109,27 @@ export default function BreachMonitor() {
   return (
     <section class="sec-card">
       <div class="sec-card-head">
-        <h3><ShieldAlert size={14} strokeWidth={1.75} /> Breaches</h3>
+        <h3><ShieldAlert size={14} strokeWidth={1.75} /> {t('security.breaches')}</h3>
         <span class="spacer" />
         <button
           class="ghost sec-refresh"
           disabled={darkwebBusy() || !darkwebMonitor()}
           onClick={() => void runDarkwebScan()}
         >
-          <RefreshCw size={13} strokeWidth={1.75} class={darkwebBusy() ? 'spin' : ''} /> Refresh
+          <RefreshCw size={13} strokeWidth={1.75} class={darkwebBusy() ? 'spin' : ''} /> {t('security.refresh')}
         </button>
       </div>
 
-      <Show when={darkwebMonitor()} fallback={<DisabledNotice what="The dark-web monitor" />}>
+      <Show when={darkwebMonitor()} fallback={<DisabledNotice what={t('security.darkwebMonitorName')} />}>
         <Show when={darkwebBusy() && !darkwebReport()}>
-          <p class="sec-loading muted">Scanning your accounts for breaches…</p>
+          <p class="sec-loading muted">{t('security.scanningBreaches')}</p>
         </Show>
 
         <Show when={!darkwebReport() && !darkwebBusy()}>
           <div class="sec-empty-cta">
-            <p class="muted sec-empty">No scan results yet.</p>
+            <p class="muted sec-empty">{t('security.noScanResults')}</p>
             <button class="primary sec-run-btn" disabled={darkwebBusy()} onClick={() => void runDarkwebScan()}>
-              <RefreshCw size={13} strokeWidth={1.75} /> Run scan now
+              <RefreshCw size={13} strokeWidth={1.75} /> {t('security.runScanNow')}
             </button>
           </div>
         </Show>
@@ -138,17 +141,22 @@ export default function BreachMonitor() {
                 when={relevantBreaches().length > 0}
                 fallback={
                   <p class="sec-clean">
-                    <ShieldCheck size={14} strokeWidth={1.75} /> None of your accounts appear in known
-                    breaches.
+                    <ShieldCheck size={14} strokeWidth={1.75} /> {t('security.noBreachesFound')}
                   </p>
                 }
               >
                 <div class="sec-report-summary">
                   <span class="sec-report-bad">
-                    <strong>{relevantBreaches().length}</strong> breach{relevantBreaches().length === 1 ? '' : 'es'}
+                    <strong>{relevantBreaches().length}</strong>{' '}
+                    {relevantBreaches().length === 1
+                      ? t('security.breachWord_one')
+                      : t('security.breachWord_other')}
                   </span>
                   <span>
-                    <strong>{affectedAccounts()}</strong> of your account{affectedAccounts() === 1 ? '' : 's'} affected
+                    <strong>{affectedAccounts()}</strong>{' '}
+                    {affectedAccounts() === 1
+                      ? t('security.accountsAffectedSuffix_one')
+                      : t('security.accountsAffectedSuffix_other')}
                   </span>
                 </div>
                 <ul class="sec-dir-list">
@@ -159,21 +167,21 @@ export default function BreachMonitor() {
               {/* Coverage caveats — emails the scan couldn't fully cover this run. */}
               <EmailNotice
                 icon={<Lock size={12} strokeWidth={1.75} />}
-                title="Vaults not read — connection locked"
-                hint="Email still checked; vault contents weren't. Unlock the connection (may need 2FA), then refresh."
+                title={t('security.vaultsNotReadTitle')}
+                hint={t('security.vaultsNotReadHint')}
                 emails={r().lockedConnections}
               />
               <EmailNotice
                 icon={<Hourglass size={12} strokeWidth={1.75} />}
-                title="Not checked yet"
-                hint="Over this run's rate-limit budget. Refresh to check the next batch."
+                title={t('security.notCheckedYetTitle')}
+                hint={t('security.notCheckedYetHint')}
                 emails={r().pending}
               />
               <Show when={r().errored.length > 0}>
                 <h4 class="sec-group-label warn">
-                  <AlertTriangle size={12} strokeWidth={1.75} /> Lookup failed ({r().errored.length})
+                  <AlertTriangle size={12} strokeWidth={1.75} /> {t('security.lookupFailed')} ({r().errored.length})
                 </h4>
-                <p class="muted sec-group-hint">Transient — retried on the next scan.</p>
+                <p class="muted sec-group-hint">{t('security.lookupFailedHint')}</p>
                 <ul class="sec-notice-list">
                   <For each={r().errored}>
                     {(e) => (
@@ -189,7 +197,7 @@ export default function BreachMonitor() {
           )}
         </Show>
 
-        <p class="sec-attrib">Breach data from XposedOrNot.</p>
+        <p class="sec-attrib">{t('security.xposedAttribution')}</p>
       </Show>
     </section>
   );

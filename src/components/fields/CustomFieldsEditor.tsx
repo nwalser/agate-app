@@ -7,7 +7,14 @@ import { Link as LinkIcon, Plus, Trash2 } from 'lucide-solid';
 import type { FieldInput, ItemDetail } from '../../lib/types.ts';
 import { FIELD_KIND_TO_INT, fieldStringToLabel, type FieldKindLabel } from '../../lib/fieldKinds.ts';
 import type { LinkedOption } from '../../lib/itemFields.ts';
+import { t } from '../../lib/i18n.ts';
 import { orNull } from './index.ts';
+
+// Display label for a field-kind. The underlying value stays the English logic
+// key (drives FIELD_KIND_TO_INT); we only translate at the render site.
+function fieldKindLabel(k: FieldKindLabel): string {
+  return t('fieldKind.' + k.toLowerCase());
+}
 
 interface FieldRow {
   name: string;
@@ -75,13 +82,13 @@ export default function CustomFieldsEditor(props: {
   return (
     <div class="ie-section">
       <div class="ie-section-head">
-        <label>Custom fields</label>
+        <label>{t('fields.customFields')}</label>
         <button class="ghost ie-add" onClick={addField}>
-          <Plus size={13} strokeWidth={1.75} /> Add field
+          <Plus size={13} strokeWidth={1.75} /> {t('fields.addField')}
         </button>
       </div>
       <Show when={fields().length === 0}>
-        <p class="ie-empty-hint">No custom fields. Add text, hidden, boolean, or linked fields.</p>
+        <p class="ie-empty-hint">{t('fields.customFieldsEmpty')}</p>
       </Show>
       <For each={fields()}>
         {(f, i) => (
@@ -89,7 +96,7 @@ export default function CustomFieldsEditor(props: {
             <input
               class="ie-field-name"
               value={f.name}
-              placeholder="Field name"
+              placeholder={t('fields.fieldName')}
               onInput={(e) => updateField(i(), { name: e.currentTarget.value })}
             />
             <Switch>
@@ -104,7 +111,7 @@ export default function CustomFieldsEditor(props: {
                       })
                     }
                   />
-                  {f.value === 'true' ? 'True' : 'False'}
+                  {f.value === 'true' ? t('fields.true') : t('fields.false')}
                 </label>
               </Match>
               <Match when={f.kind === 'Linked'}>
@@ -128,7 +135,7 @@ export default function CustomFieldsEditor(props: {
                   class="ie-field-val"
                   type={f.kind === 'Hidden' ? 'password' : 'text'}
                   value={f.value}
-                  placeholder="Value"
+                  placeholder={t('fields.value')}
                   autocomplete="off"
                   onInput={(e) => updateField(i(), { value: e.currentTarget.value })}
                 />
@@ -141,16 +148,16 @@ export default function CustomFieldsEditor(props: {
                 changeFieldKind(i(), e.currentTarget.value as FieldKindLabel, f)
               }
             >
-              <option value="Text">Text</option>
-              <option value="Hidden">Hidden</option>
-              <option value="Boolean">Boolean</option>
+              <option value="Text">{fieldKindLabel('Text')}</option>
+              <option value="Hidden">{fieldKindLabel('Hidden')}</option>
+              <option value="Boolean">{fieldKindLabel('Boolean')}</option>
               <Show when={props.linkOptions.length > 0}>
-                <option value="Linked">Linked</option>
+                <option value="Linked">{fieldKindLabel('Linked')}</option>
               </Show>
             </select>
             <button
               class="ghost icon-btn"
-              title="Remove"
+              title={t('common.remove')}
               onClick={() => removeField(i())}
             >
               <Trash2 size={14} />

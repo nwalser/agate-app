@@ -6,6 +6,7 @@
 import { createSignal } from 'solid-js';
 import { Download, Upload } from 'lucide-solid';
 import { ipc } from '../lib/ipc.ts';
+import { t } from '../lib/i18n.ts';
 import type { ExportFormat } from '../lib/types.ts';
 import { activeVault } from '../state/ui.ts';
 import { pushToast, toastError } from '../state/toast.ts';
@@ -25,7 +26,7 @@ export default function ExportSettings() {
     setBusy(true);
     try {
       const path = await ipc.exportVault(format());
-      pushToast('success', `Vault exported to ${path}`);
+      pushToast('success', t('export.exportedTo', { path }));
     } catch (err) {
       toastError(err);
     } finally {
@@ -38,9 +39,12 @@ export default function ExportSettings() {
     try {
       const count = await ipc.importVault(activeVault());
       if (count > 0) {
-        pushToast('success', `Imported ${count} item${count === 1 ? '' : 's'}. They appear after the next sync.`);
+        pushToast(
+          'success',
+          count === 1 ? t('export.importedOne', { count }) : t('export.importedMany', { count }),
+        );
       } else {
-        pushToast('info', 'No items imported.');
+        pushToast('info', t('export.noItemsImported'));
       }
     } catch (err) {
       toastError(err);
@@ -52,31 +56,31 @@ export default function ExportSettings() {
   return (
     <section class="settings-section">
       <h3>
-        <Download size={14} strokeWidth={1.75} /> Export vault
+        <Download size={14} strokeWidth={1.75} /> {t('export.exportTitle')}
       </h3>
       <p class="muted settings-help">
-        Save every unlocked vault to a file in your Downloads folder.{' '}
-        <strong>The file is unencrypted</strong> — it contains all your passwords in plain text.
-        Keep it somewhere safe and delete it when you're done. Trashed items are not included.
+        {t('export.exportHelpBefore')}{' '}
+        <strong>{t('export.exportHelpEmphasis')}</strong>{' '}
+        {t('export.exportHelpAfter')}
       </p>
-      <Select ariaLabel="Export format" value={format()} options={FORMATS} onChange={(v) => setFormat(v)} />
+      <Select ariaLabel={t('export.formatAriaLabel')} value={format()} options={FORMATS} onChange={(v) => setFormat(v)} />
       <div class="settings-actions">
         <button class="primary" disabled={busy()} onClick={() => void exportNow()}>
-          {busy() ? 'Exporting…' : 'Export vault'}
+          {busy() ? t('export.exporting') : t('export.exportVault')}
         </button>
       </div>
 
       <h3 class="sec-subhead">
-        <Upload size={14} strokeWidth={1.75} /> Import
+        <Upload size={14} strokeWidth={1.75} /> {t('export.importTitle')}
       </h3>
       <p class="muted settings-help">
-        Import logins and notes from a Bitwarden-compatible <strong>CSV</strong> file into
-        {activeVault() ? ' the selected vault' : ' your first connection'}. Items appear after the
-        next sync.
+        {t('export.importHelpBefore')} <strong>CSV</strong>{' '}
+        {activeVault() ? t('export.importTargetSelected') : t('export.importTargetFirst')}{' '}
+        {t('export.importHelpAfter')}
       </p>
       <div class="settings-actions">
         <button disabled={importing()} onClick={() => void importNow()}>
-          {importing() ? 'Importing…' : 'Choose CSV file…'}
+          {importing() ? t('export.importing') : t('export.chooseCsvFile')}
         </button>
       </div>
     </section>

@@ -11,6 +11,7 @@ import type { ItemType } from './types.ts';
 import type { VaultFilter } from './search.ts';
 import { TYPE_FILTERS, type VaultView } from './vaultConfig.ts';
 import { typeIcon } from './vaultIcons.ts';
+import { t } from './i18n.ts';
 import { DEFAULT_VIEW_ICON, isViewIcon } from './viewIcons.ts';
 import {
   parseColumnConfig,
@@ -141,8 +142,12 @@ const TYPE_BY_ID: Record<string, ItemType> = {
   'type:sshKey': 'sshKey',
 };
 
-const TYPE_LABEL = new Map(TYPE_FILTERS.map((t) => [t.type, t.label] as const));
-const VALID_ITEM_TYPES = new Set<ItemType>(TYPE_FILTERS.map((t) => t.type));
+// Resolve a per-type rail label lazily (reads TYPE_FILTERS' getters at call time, so
+// the language stays reactive instead of being frozen at module load).
+function typeFilterLabel(type: ItemType): string {
+  return TYPE_FILTERS.find((f) => f.type === type)?.label ?? type;
+}
+const VALID_ITEM_TYPES = new Set<ItemType>(TYPE_FILTERS.map((f) => f.type));
 
 export function isItemType(v: unknown): v is ItemType {
   return typeof v === 'string' && VALID_ITEM_TYPES.has(v as ItemType);
@@ -165,26 +170,26 @@ export function isDividerId(v: unknown): v is string {
 export function entryMeta(id: SidebarBuiltinId): { label: string; icon: IconComponent } {
   switch (id) {
     case 'all':
-      return { label: 'All items', icon: File };
+      return { label: t('sidebar.allItems'), icon: File };
     case 'favorites':
-      return { label: 'Favorites', icon: Star };
+      return { label: t('sidebar.favorites'), icon: Star };
     case 'trash':
-      return { label: 'Trash', icon: Trash2 };
+      return { label: t('sidebar.trash'), icon: Trash2 };
     case 'folders':
-      return { label: 'Folders', icon: FolderClosed };
+      return { label: t('sidebar.folders'), icon: FolderClosed };
     case 'generator':
-      return { label: 'Generator', icon: Dices };
+      return { label: t('sidebar.generator'), icon: Dices };
     case 'sends':
-      return { label: 'Sends', icon: Send };
+      return { label: t('sidebar.sends'), icon: Send };
     case 'security':
-      return { label: 'Security', icon: Shield };
+      return { label: t('sidebar.security'), icon: Shield };
     case 'atRisk':
-      return { label: 'At risk', icon: AlertTriangle };
+      return { label: t('sidebar.atRisk'), icon: AlertTriangle };
     case 'sync':
-      return { label: 'Sync', icon: RefreshCw };
+      return { label: t('sidebar.sync'), icon: RefreshCw };
     default: {
-      const t = TYPE_BY_ID[id];
-      return { label: TYPE_LABEL.get(t) ?? t, icon: typeIcon(t) };
+      const type = TYPE_BY_ID[id];
+      return { label: typeFilterLabel(type), icon: typeIcon(type) };
     }
   }
 }
@@ -206,9 +211,9 @@ export function filterPageMeta(
     case 'atRisk':
       return entryMeta('atRisk');
     case 'type':
-      return { label: TYPE_LABEL.get(filter.itemType) ?? filter.itemType, icon: typeIcon(filter.itemType) };
+      return { label: typeFilterLabel(filter.itemType), icon: typeIcon(filter.itemType) };
     case 'folder':
-      return { label: folderName(filter.folderId) || 'No folder', icon: FolderClosed };
+      return { label: folderName(filter.folderId) || t('folder.noFolder'), icon: FolderClosed };
   }
 }
 

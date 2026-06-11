@@ -8,6 +8,7 @@ import { ipc } from '../../lib/ipc.ts';
 import type { IdentityInput, ItemDetail } from '../../lib/types.ts';
 import { mapOcrToIdentity } from '../../lib/ocrFill.ts';
 import { pushToast, toastError } from '../../state/toast.ts';
+import { t } from '../../lib/i18n.ts';
 import { orNull } from './index.ts';
 
 export default function IdentityFields(props: {
@@ -90,8 +91,8 @@ export default function IdentityFields(props: {
       fill(lastName(), m.lastName, setLastName);
       fill(email(), m.email, setEmail);
       fill(phone(), m.phone, setPhone);
-      if (filled === 0) pushToast('error', 'Nothing usable recognized in that image.');
-      else pushToast('success', `Filled ${filled} field${filled === 1 ? '' : 's'} from the image.`);
+      if (filled === 0) pushToast('error', t('fields.ocrNothingRecognized'));
+      else pushToast('success', t('fields.filledFromImage', { count: filled }));
     } catch (err) {
       toastError(err);
     } finally {
@@ -103,63 +104,63 @@ export default function IdentityFields(props: {
     <>
       <div class="ie-section">
         <div class="ie-section-title ie-title-row">
-          Personal details
+          {t('fields.personalDetails')}
           <Show when={ocrAvailable()}>
             <button
               class="ghost ie-add ie-scan-qr"
               disabled={ocrBusy()}
               onClick={() => void fillFromImage()}
-              title="Read name/email/phone from an image file"
+              title={t('fields.fromImageIdentityTooltip')}
             >
-              <ImageUp size={13} strokeWidth={1.75} /> From image
+              <ImageUp size={13} strokeWidth={1.75} /> {t('fields.fromImage')}
             </button>
           </Show>
         </div>
         <div class="ie-grid-3">
           <div class="field">
-            <label>Title</label>
+            <label>{t('fields.identityTitle')}</label>
             <input value={idTitle()} onInput={(e) => setIdTitle(e.currentTarget.value)} />
           </div>
           <div class="field">
-            <label>First name</label>
+            <label>{t('fields.firstName')}</label>
             <input value={firstName()} onInput={(e) => setFirstName(e.currentTarget.value)} />
           </div>
           <div class="field">
-            <label>Middle name</label>
+            <label>{t('fields.middleName')}</label>
             <input value={middleName()} onInput={(e) => setMiddleName(e.currentTarget.value)} />
           </div>
         </div>
         <div class="field">
-          <label>Last name</label>
+          <label>{t('fields.lastName')}</label>
           <input value={lastName()} onInput={(e) => setLastName(e.currentTarget.value)} />
         </div>
         <div class="ie-grid-2">
           <div class="field">
-            <label>Username</label>
+            <label>{t('common.username')}</label>
             <input value={idUsername()} onInput={(e) => setIdUsername(e.currentTarget.value)} />
           </div>
           <div class="field">
-            <label>Company</label>
+            <label>{t('fields.company')}</label>
             <input value={company()} onInput={(e) => setCompany(e.currentTarget.value)} />
           </div>
         </div>
         <div class="ie-grid-2">
           <div class="field">
-            <label>Email</label>
+            <label>{t('fields.email')}</label>
             <input value={email()} onInput={(e) => setEmail(e.currentTarget.value)} />
           </div>
           <div class="field">
-            <label>Phone</label>
+            <label>{t('fields.phone')}</label>
             <input value={phone()} onInput={(e) => setPhone(e.currentTarget.value)} />
           </div>
         </div>
         <div class="ie-grid-3">
           <div class="field">
-            <label>SSN</label>
+            <label>{t('fields.ssn')}</label>
             <input value={ssn()} onInput={(e) => setSsn(e.currentTarget.value)} autocomplete="off" />
           </div>
           <div class="field">
-            <label>Passport no.</label>
+            <label>{t('fields.passportNumber')}</label>
             <input
               value={passportNumber()}
               onInput={(e) => setPassportNumber(e.currentTarget.value)}
@@ -167,7 +168,7 @@ export default function IdentityFields(props: {
             />
           </div>
           <div class="field">
-            <label>License no.</label>
+            <label>{t('fields.licenseNumber')}</label>
             <input
               value={licenseNumber()}
               onInput={(e) => setLicenseNumber(e.currentTarget.value)}
@@ -177,36 +178,36 @@ export default function IdentityFields(props: {
         </div>
       </div>
       <div class="ie-section">
-        <div class="ie-section-title">Address</div>
+        <div class="ie-section-title">{t('fields.address')}</div>
         <div class="field">
-          <label>Address line 1</label>
+          <label>{t('fields.addressLine1')}</label>
           <input value={address1()} onInput={(e) => setAddress1(e.currentTarget.value)} />
         </div>
         <div class="field">
-          <label>Address line 2</label>
+          <label>{t('fields.addressLine2')}</label>
           <input value={address2()} onInput={(e) => setAddress2(e.currentTarget.value)} />
         </div>
         <div class="field">
-          <label>Address line 3</label>
+          <label>{t('fields.addressLine3')}</label>
           <input value={address3()} onInput={(e) => setAddress3(e.currentTarget.value)} />
         </div>
         <div class="ie-grid-2">
           <div class="field">
-            <label>City</label>
+            <label>{t('fields.city')}</label>
             <input value={city()} onInput={(e) => setCity(e.currentTarget.value)} />
           </div>
           <div class="field">
-            <label>State / region</label>
+            <label>{t('fields.stateRegion')}</label>
             <input value={stateRegion()} onInput={(e) => setStateRegion(e.currentTarget.value)} />
           </div>
         </div>
         <div class="ie-grid-2">
           <div class="field">
-            <label>Postal code</label>
+            <label>{t('fields.postalCode')}</label>
             <input value={postalCode()} onInput={(e) => setPostalCode(e.currentTarget.value)} />
           </div>
           <div class="field">
-            <label>Country</label>
+            <label>{t('fields.country')}</label>
             <input value={country()} onInput={(e) => setCountry(e.currentTarget.value)} />
           </div>
         </div>

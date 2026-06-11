@@ -6,6 +6,7 @@
 import { For } from 'solid-js';
 import { Star } from 'lucide-solid';
 import type { Folder } from '../../lib/types.ts';
+import { t } from '../../lib/i18n.ts';
 
 export function NameAndFolder(props: {
   name: string;
@@ -18,24 +19,24 @@ export function NameAndFolder(props: {
   return (
     <div class="ie-section">
       <div class="field">
-        <label>Name</label>
+        <label>{t('common.name')}</label>
         <input
           value={props.name}
           onInput={(e) => props.setName(e.currentTarget.value)}
-          placeholder="Name"
+          placeholder={t('common.name')}
           autofocus
         />
       </div>
 
       <div class="field">
-        <label>Folder</label>
+        <label>{t('fields.folder')}</label>
         <select
           value={props.folderId ?? ''}
           onChange={(e) =>
             props.setFolderId(e.currentTarget.value === '' ? null : e.currentTarget.value)
           }
         >
-          <option value="">No folder</option>
+          <option value="">{t('fields.noFolder')}</option>
           <For each={props.folders.filter((f) => f.id !== null && f.accountEmail === props.accountEmail)}>
             {(f) => <option value={f.id ?? ''}>{f.name}</option>}
           </For>
@@ -49,7 +50,7 @@ export function NotesField(props: { notes: string; setNotes: (v: string) => void
   return (
     <div class="ie-section">
       <div class="field">
-        <label>Notes</label>
+        <label>{t('fields.notes')}</label>
         <textarea
           class="ie-textarea"
           value={props.notes}
@@ -75,7 +76,7 @@ export function CommonToggles(props: {
         onClick={() => props.setFavorite(!props.favorite)}
       >
         <Star size={14} strokeWidth={1.75} class={props.favorite ? 'ie-star-on' : ''} />
-        Favorite
+        {t('fields.favorite')}
       </button>
       <label class="ie-check">
         <input
@@ -83,7 +84,7 @@ export function CommonToggles(props: {
           checked={props.reprompt}
           onChange={(e) => props.setReprompt(e.currentTarget.checked)}
         />
-        Require master password to view
+        {t('fields.requireMasterPassword')}
       </label>
     </div>
   );

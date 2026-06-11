@@ -5,6 +5,7 @@ import TrayApp from './tray/TrayApp.tsx';
 import { toastError } from './state/toast.ts';
 import { initSecurity } from './state/security.ts';
 import { initTheme } from './state/theme.ts';
+import { maybeInitLanguageFromSystem } from './lib/i18n.ts';
 import './styles.css';
 
 // This bundle boots both webviews: the main window renders <App/>, the tray
@@ -13,6 +14,10 @@ const isTrayPopup = getCurrentWindow().label === 'tray';
 
 // Paint the persisted theme before first render so there's no dark→light flash.
 initTheme();
+
+// First-run system-locale detection. Best-effort and async — render immediately;
+// a language flip after detection re-renders every t()/tm() consumer reactively.
+void maybeInitLanguageFromSystem();
 
 // Start the periodic security monitors (dark-web + exposed-password checks). They
 // self-gate on their Settings toggles and the unlocked state, so this is a no-op

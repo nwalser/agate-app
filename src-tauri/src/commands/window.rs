@@ -23,6 +23,14 @@ pub fn show_main_window(app: tauri::AppHandle) {
     crate::tray::reveal_main(&app);
 }
 
+/// The host OS's preferred UI locale (e.g. "de-DE"), used once on first run to
+/// pick a default language. Falls back to "en" when the platform reports none.
+/// Pure host query — no state, never fails.
+#[tauri::command]
+pub fn get_system_locale() -> String {
+    sys_locale::get_locale().unwrap_or_else(|| "en".to_string())
+}
+
 /// Hide the tray quick-access popup (Escape key). Scoped to the calling
 /// window and a no-op for any window other than the popup.
 #[tauri::command]
