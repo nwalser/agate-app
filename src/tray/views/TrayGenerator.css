@@ -1,0 +1,210 @@
+/* Tray generator view — fills the 380px popup column. Header mirrors the
+   add-form header in TrayApp.css (same height/border rhythm); the body scrolls.
+   Design tokens only; everything is scoped under .tray-gen because the tray
+   webview does not load the main window's Vault/Settings stylesheets. */
+
+.tray-gen {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Header (back · icon · title), same rhythm as .tray-add-head ─────────── */
+
+.tray-gen-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+
+.tray-gen-title {
+  flex: 1;
+  font-size: 12px;
+  color: var(--foreground);
+}
+
+.tray-gen-back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--muted-foreground);
+  padding: 4px;
+  border-radius: var(--radius-sm);
+}
+
+.tray-gen-back:hover {
+  background: var(--card-hover);
+  color: var(--foreground);
+}
+
+/* ── Body ───────────────────────────────────────────────────────────────── */
+
+.tray-gen-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+}
+
+/* ── Mode pill (password / passphrase / username) ───────────────────────── */
+
+.tray-gen-mode {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.tray-gen-mode-btn {
+  flex: 1;
+  border: none;
+  background: transparent;
+  padding: 5px 6px;
+  border-radius: var(--radius-sm);
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.tray-gen-mode-btn:hover {
+  color: var(--foreground);
+}
+
+.tray-gen-mode-btn.active {
+  background: var(--surface-2);
+  color: var(--foreground);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+/* Username sub-mode reuses the pill, trimmed tight above its input. */
+.tray-gen-submode {
+  margin-bottom: 2px;
+}
+
+/* ── Output: the generated value + regenerate / copy ────────────────────── */
+
+.tray-gen-output {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 10px 8px 10px 12px;
+  min-height: 28px;
+}
+
+.tray-gen-value {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  letter-spacing: 0.4px;
+  word-break: break-all;
+  line-height: 1.5;
+}
+
+.tray-gen-output-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+  align-self: flex-start;
+}
+
+.tray-gen-iconbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--muted-foreground);
+  padding: 5px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.tray-gen-iconbtn:hover:not(:disabled) {
+  background: var(--card-hover);
+  color: var(--foreground);
+}
+
+/* ── Options ────────────────────────────────────────────────────────────── */
+
+.tray-gen-options {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tray-gen-field label {
+  display: block;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  margin-bottom: 5px;
+}
+
+/* The global input skin (styles.css) adds padding/border meant for text inputs;
+   strip it for the range sliders and tint the thumb with the accent token. */
+.tray-gen-field input[type='range'] {
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  accent-color: var(--primary);
+}
+
+.tray-gen-sep {
+  width: 80px;
+}
+
+.tray-gen-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+/* Inline checkbox label (the global `label` rule is block + bottom margin). */
+.tray-gen-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 0;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--foreground);
+  cursor: pointer;
+}
+
+.tray-gen-check input[type='checkbox'] {
+  width: auto;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--primary);
+}
+
+.tray-gen-hint {
+  font-size: 11.5px;
+  margin: 6px 0 0;
+}
+
+.tray-gen-hint code {
+  font-size: 11px;
+}

@@ -9,7 +9,6 @@ const DEFAULT_STATUS: SessionStatus = {
   appUnlockConfigured: false,
   unlocked: false,
   helloConfigured: false,
-  darkwebConsent: false,
   connectionCount: 0,
   liveCount: 0,
 };

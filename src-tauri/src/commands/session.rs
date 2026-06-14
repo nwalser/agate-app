@@ -16,7 +16,6 @@ pub async fn get_session_status(state: State<'_>) -> AgateResult<SessionStatus> 
         app_unlock_configured: cfg.app_unlock_configured,
         unlocked,
         hello_configured: cfg.hello_configured,
-        darkweb_consent: cfg.darkweb_consent,
         connection_count: cfg.accounts.len(),
         live_count,
     })

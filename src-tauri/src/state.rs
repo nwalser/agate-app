@@ -10,31 +10,52 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use bitwarden_collections::collection::Collection;
 use bitwarden_pm::PasswordManagerClient;
-use bitwarden_vault::{Cipher, Folder as VaultFolder};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use zeroize::Zeroizing;
 
-use crate::dto::{AiAuditEntry, AiGrant, AutofillMode, BreachRecord, ServerConfig};
+use crate::dto::{AutofillMode, ConnectionKind, ServerConfig};
 use crate::error::{AgateError, AgateResult, ErrorKind};
-
-/// Cap on the in-memory MCP access audit log (newest kept, oldest dropped).
-const AI_AUDIT_CAP: usize = 200;
+use crate::providers::{BitwardenConnection, LiveConnection};
 
 /// A known connection for the unlock-all set + add-connection prefill
-/// (non-secret: server + email only).
+/// (non-secret: provider kind + server + email only).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccountRef {
+    /// Which provider backs this connection. Missing in pre-provider configs →
+    /// `bitwarden` (every connection was one).
+    #[serde(default)]
+    pub kind: ConnectionKind,
     pub server: ServerConfig,
+    /// The connection id: the account email for Bitwarden, the database file
+    /// path for KeePass (kept under this name for config back-compat).
     pub email: String,
-    /// Persist this connection's master password (sealed under the VMK) so it
-    /// auto-unlocks whenever the app is unlocked. When false the password is never
+    /// KeePass only: absolute path of the key file, when one is required.
+    /// Non-secret (a path, not key material) — the key file itself must exist
+    /// at unlock time.
+    #[serde(default)]
+    pub keyfile: Option<String>,
+    /// Persist this connection's secret (sealed under the VMK) so it
+    /// auto-unlocks whenever the app is unlocked. When false the secret is never
     /// stored and the connection must be unlocked manually each session. Defaults
     /// true so existing configs keep their auto-unlock behaviour.
     #[serde(default = "default_true")]
     pub store_credentials: bool,
+}
+
+impl AccountRef {
+    /// Human label for the connection: the server name for Bitwarden, the
+    /// database file name (stem) for KeePass.
+    pub fn label(&self) -> String {
+        match self.kind {
+            ConnectionKind::Bitwarden => crate::server::server_label(&self.server),
+            ConnectionKind::Keepass => std::path::Path::new(&self.email)
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| self.email.clone()),
+        }
+    }
 }
 
 fn default_true() -> bool {
@@ -59,37 +80,8 @@ pub struct PersistedConfig {
     /// Windows Hello unlock is enabled (app-wide).
     #[serde(default)]
     pub hello_configured: bool,
-    /// The user opted in to the dark-web monitor (emails leave the device to a
-    /// third-party breach API). Default false; a non-secret preference.
-    #[serde(default)]
-    pub darkweb_consent: bool,
-    /// Rotating start index for the dark-web vault scan. When the vault holds more
-    /// emails than one run's rate-budget cap, the scan walks a window from here and
-    /// advances it each run so every email is eventually covered rather than the
-    /// tail being permanently dropped. Non-secret; default 0.
-    #[serde(default)]
-    pub darkweb_scan_offset: usize,
     #[serde(default)]
     pub accounts: Vec<AccountRef>,
-    /// Closing the main window keeps Agate running in the system tray instead
-    /// of quitting. Off by default — close means quit unless the user opts in
-    /// (Settings → Appearance → Startup).
-    #[serde(default)]
-    pub close_to_tray: bool,
-    /// An autostart (login) launch shows only the tray icon — the main window
-    /// stays hidden until summoned from the tray. Manual launches always show
-    /// the window. Off by default.
-    #[serde(default)]
-    pub start_in_tray: bool,
-    /// The local MCP (AI access) server is switched on. Off by default — the
-    /// feature is opt-in and exposes vault items to an external AI client.
-    #[serde(default)]
-    pub ai_server_enabled: bool,
-    /// The allowlist: the only items the MCP server will ever reveal. Non-secret
-    /// (owning account + opaque cipher id). Empty by default — nothing is exposed
-    /// until the user explicitly grants an item.
-    #[serde(default)]
-    pub ai_grants: Vec<AiGrant>,
     /// Whether — and how — Agate watches other apps' login fields to offer
     /// autofill (Off / Hotkey / Watch). Off by default: an opt-in feature that
     /// inspects other windows, so it stays disabled until the user chooses a mode.
@@ -98,11 +90,34 @@ pub struct PersistedConfig {
 }
 
 impl PersistedConfig {
-    /// Record/update a connection in the list (dedup by email).
-    pub fn upsert_account(&mut self, server: ServerConfig, email: &str, store_credentials: bool) {
+    /// Record/update a connection in the list (dedup by email/id).
+    pub fn upsert_account(
+        &mut self,
+        kind: ConnectionKind,
+        server: ServerConfig,
+        email: &str,
+        store_credentials: bool,
+    ) {
+        self.upsert_account_with_keyfile(kind, server, email, store_credentials, None);
+    }
+
+    /// `upsert_account` carrying a KeePass key-file path.
+    pub fn upsert_account_with_keyfile(
+        &mut self,
+        kind: ConnectionKind,
+        server: ServerConfig,
+        email: &str,
+        store_credentials: bool,
+        keyfile: Option<String>,
+    ) {
         self.accounts.retain(|a| a.email != email);
-        self.accounts
-            .push(AccountRef { server, email: email.to_string(), store_credentials });
+        self.accounts.push(AccountRef {
+            kind,
+            server,
+            email: email.to_string(),
+            keyfile,
+            store_credentials,
+        });
     }
 
     /// The server recorded for `email`, if the connection is known.
@@ -115,33 +130,9 @@ impl PersistedConfig {
         self.accounts.iter().find(|a| a.email == email)
     }
 
-    /// Forget a connection: drop its account record AND its AI allowlist grants.
-    /// Grants are capability state tied to the connection — leaving them behind
-    /// would silently re-expose the same items if the account is re-added later.
+    /// Forget a connection: drop its account record.
     pub fn remove_account(&mut self, email: &str) {
         self.accounts.retain(|a| a.email != email);
-        self.ai_grants.retain(|g| g.account_email != email);
-    }
-
-    /// Is this `(account, item)` on the AI allowlist?
-    pub fn is_ai_granted(&self, account_email: &str, item_id: &str) -> bool {
-        self.ai_grants
-            .iter()
-            .any(|g| g.account_email == account_email && g.item_id == item_id)
-    }
-
-    /// Add (`granted` = true) or remove (`granted` = false) an item from the AI
-    /// allowlist. Idempotent: adding twice is a no-op, removing an absent grant is
-    /// a no-op.
-    pub fn set_ai_grant(&mut self, account_email: &str, item_id: &str, granted: bool) {
-        let present = self.is_ai_granted(account_email, item_id);
-        if granted && !present {
-            self.ai_grants
-                .push(AiGrant { account_email: account_email.to_string(), item_id: item_id.to_string() });
-        } else if !granted && present {
-            self.ai_grants
-                .retain(|g| !(g.account_email == account_email && g.item_id == item_id));
-        }
     }
 }
 
@@ -157,30 +148,9 @@ impl PersistedConfig {
             device_id: uuid::Uuid::new_v4().to_string(),
             app_unlock_configured: false,
             hello_configured: false,
-            darkweb_consent: false,
-            darkweb_scan_offset: 0,
             accounts: Vec::new(),
-            close_to_tray: false,
-            start_in_tray: false,
-            ai_server_enabled: false,
-            ai_grants: Vec::new(),
             autofill_mode: AutofillMode::Off,
         }
-    }
-}
-
-/// One live, unlocked connection: its SDK client plus the last sync's encrypted
-/// ciphers and folders, both decrypted on demand (by `list_items` / `list_folders`).
-pub struct LiveConnection {
-    pub client: PasswordManagerClient,
-    pub ciphers: Vec<Cipher>,
-    pub folders: Vec<VaultFolder>,
-    pub collections: Vec<Collection>,
-}
-
-impl LiveConnection {
-    pub fn new(client: PasswordManagerClient) -> Self {
-        Self { client, ciphers: Vec::new(), folders: Vec::new(), collections: Vec::new() }
     }
 }
 
@@ -191,17 +161,28 @@ pub struct Session {
     /// held only while unlocked so newly added connections can be sealed without
     /// re-prompting the app password. Zeroized when dropped/cleared.
     pub vmk: Option<Zeroizing<[u8; 32]>>,
-    /// Unlocked connections, keyed by account email.
+    /// Unlocked connections, keyed by connection id (the account email for
+    /// Bitwarden; KeePass will key by file identity).
     pub connections: HashMap<String, LiveConnection>,
     /// Default account for "new item" / folder context (one of `connections`).
     pub active_email: Option<String>,
 }
 
 impl Session {
-    /// A fresh handle to a connection's client (the inner SDK `Client` is cheap to
-    /// clone — `Arc`-backed, sharing the unlocked key store).
+    /// A fresh handle to a BITWARDEN connection's SDK client (the inner `Client`
+    /// is cheap to clone — `Arc`-backed, sharing the unlocked key store). `None`
+    /// when the connection is absent or not a Bitwarden one.
     pub fn client_for(&self, email: &str) -> Option<PasswordManagerClient> {
-        self.connections.get(email).map(|c| PasswordManagerClient(c.client.0.clone()))
+        self.connections
+            .get(email)
+            .and_then(LiveConnection::bitwarden)
+            .map(|b| PasswordManagerClient(b.client.0.clone()))
+    }
+
+    /// Insert/replace a live Bitwarden connection.
+    pub fn insert_bitwarden(&mut self, email: String, client: PasswordManagerClient) {
+        self.connections
+            .insert(email, LiveConnection::Bitwarden(BitwardenConnection::new(client)));
     }
 
     /// Number of live connections.
@@ -222,12 +203,6 @@ impl Session {
 pub struct AppState {
     pub config: Mutex<PersistedConfig>,
     pub session: Mutex<Session>,
-    /// Cached HIBP public breach directory (large, CDN-cached, non-secret). Fetched
-    /// once per process the first time the breach directory is opened. See darkweb.rs.
-    pub breach_directory: Mutex<Option<Vec<BreachRecord>>>,
-    /// In-memory MCP access audit log (newest last, capped). Never persisted —
-    /// access timing + item names are sensitive, so it lives only for the session.
-    pub ai_audit: Mutex<Vec<AiAuditEntry>>,
     /// Autofill runtime: the single pending detection awaiting the user's pick.
     /// A std `Mutex` (not tokio) because the Windows focus-hook callback that sets
     /// it is synchronous; locks are brief and never held across an await.
@@ -243,8 +218,6 @@ impl AppState {
         Self {
             config: Mutex::new(config),
             session: Mutex::new(Session::default()),
-            breach_directory: Mutex::new(None),
-            ai_audit: Mutex::new(Vec::new()),
             autofill: std::sync::Mutex::new(crate::autofill::AutofillShared::default()),
             config_path,
         }
@@ -266,16 +239,6 @@ impl AppState {
             return Err(e);
         }
         Ok(out)
-    }
-
-    /// Append one entry to the in-memory MCP audit log, trimming to the cap.
-    pub async fn push_ai_audit(&self, entry: AiAuditEntry) {
-        let mut log = self.ai_audit.lock().await;
-        log.push(entry);
-        let len = log.len();
-        if len > AI_AUDIT_CAP {
-            log.drain(0..len - AI_AUDIT_CAP);
-        }
     }
 }
 
@@ -337,16 +300,6 @@ mod tests {
     }
 
     #[test]
-    fn close_to_tray_defaults_off_for_old_and_fresh_configs() {
-        // A pre-feature config.json has no `close_to_tray` key — it must
-        // deserialize to off (close keeps meaning quit until the user opts in).
-        let old: PersistedConfig =
-            serde_json::from_str(r#"{"device_id":"d"}"#).expect("minimal config parses");
-        assert!(!old.close_to_tray);
-        assert!(!cfg().close_to_tray);
-    }
-
-    #[test]
     fn autofill_mode_defaults_off_for_old_and_fresh_configs() {
         // A pre-feature config.json has no `autofill_mode` key — it must
         // deserialize to Off (the feature watches other windows, so it stays
@@ -358,62 +311,14 @@ mod tests {
     }
 
     #[test]
-    fn start_in_tray_defaults_off_for_old_and_fresh_configs() {
-        // Same backward-compat contract: a login launch keeps showing the
-        // window until the user opts in to tray-only starts.
-        let old: PersistedConfig =
-            serde_json::from_str(r#"{"device_id":"d"}"#).expect("minimal config parses");
-        assert!(!old.start_in_tray);
-        assert!(!cfg().start_in_tray);
-    }
-
-    #[test]
-    fn ai_grant_round_trip() {
+    fn remove_account_drops_only_that_account() {
         let mut c = cfg();
-        assert!(!c.is_ai_granted("a@b.com", "item-1"), "nothing is granted by default");
-
-        c.set_ai_grant("a@b.com", "item-1", true);
-        assert!(c.is_ai_granted("a@b.com", "item-1"));
-        assert_eq!(c.ai_grants.len(), 1);
-
-        c.set_ai_grant("a@b.com", "item-1", false);
-        assert!(!c.is_ai_granted("a@b.com", "item-1"));
-        assert!(c.ai_grants.is_empty());
-    }
-
-    #[test]
-    fn ai_grant_is_idempotent_and_scoped_per_account() {
-        let mut c = cfg();
-        c.set_ai_grant("a@b.com", "item-1", true);
-        c.set_ai_grant("a@b.com", "item-1", true); // duplicate add is a no-op
-        assert_eq!(c.ai_grants.len(), 1, "granting twice must not duplicate");
-
-        // Same item id under a different connection is a distinct grant.
-        c.set_ai_grant("other@b.com", "item-1", true);
-        assert_eq!(c.ai_grants.len(), 2);
-        assert!(c.is_ai_granted("other@b.com", "item-1"));
-        assert!(!c.is_ai_granted("a@b.com", "item-2"), "a different item is not granted");
-
-        // Removing an absent grant is a no-op.
-        c.set_ai_grant("a@b.com", "missing", false);
-        assert_eq!(c.ai_grants.len(), 2);
-    }
-
-    #[test]
-    fn remove_account_drops_its_ai_grants() {
-        let mut c = cfg();
-        c.upsert_account(ServerConfig::default(), "a@b.com", true);
-        c.upsert_account(ServerConfig::default(), "other@b.com", true);
-        c.set_ai_grant("a@b.com", "item-1", true);
-        c.set_ai_grant("other@b.com", "item-2", true);
+        c.upsert_account(ConnectionKind::Bitwarden, ServerConfig::default(), "a@b.com", true);
+        c.upsert_account(ConnectionKind::Bitwarden, ServerConfig::default(), "other@b.com", true);
 
         c.remove_account("a@b.com");
 
         assert!(c.account_for("a@b.com").is_none());
-        assert!(
-            !c.is_ai_granted("a@b.com", "item-1"),
-            "grants must not survive connection removal — re-adding the account would silently re-expose them"
-        );
-        assert!(c.is_ai_granted("other@b.com", "item-2"), "other accounts keep their grants");
+        assert!(c.account_for("other@b.com").is_some(), "other accounts survive");
     }
 }

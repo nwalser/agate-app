@@ -8,23 +8,15 @@
 //! Split into cohesive submodules and re-exported flat, so every existing
 //! `crate::dto::X` / `use crate::dto::{...}` across the crate keeps compiling.
 
-mod ai;
-mod audit;
 mod auth;
 mod autofill;
-mod cleanup;
 mod generator;
 mod vault;
-mod window;
 
-pub use ai::*;
-pub use audit::*;
 pub use auth::*;
 pub use autofill::*;
-pub use cleanup::*;
 pub use generator::*;
 pub use vault::*;
-pub use window::*;
 
 #[cfg(test)]
 mod typegen;

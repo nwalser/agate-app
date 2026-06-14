@@ -15,7 +15,6 @@ export type BuiltinColumnId =
   | 'type'
   | 'totp'
   | 'password'
-  | 'security'
   | 'passkey';
 
 /** A visible column: a known built-in, or a custom field referenced by name.
@@ -26,14 +25,13 @@ export type ColumnSpec =
   | { kind: 'builtin'; id: BuiltinColumnId }
   | { kind: 'custom'; field: string; label?: string; icon?: string };
 
-/** Columns the list can sort by (all derivable without fetching item detail).
- *  `security` ranks rows by their offline-health status (passed into the list). */
-export type SortKey = 'name' | 'username' | 'folder' | 'type' | 'security';
+/** Columns the list can sort by (all derivable without fetching item detail). */
+export type SortKey = 'name' | 'username' | 'folder' | 'type';
 export type SortDir = 'asc' | 'desc';
 
 /** Columns the list can group rows under. Restricted to values available without
  *  fetching per-row item detail (so grouping never forces a bulk decrypt): the
- *  Name initial, Username, Website host, Folder, Type, Security, and the
+ *  Name initial, Username, Website host, Folder, Type, and the
  *  TOTP/Password/Passkey PRESENCE flags — secret columns group by has/has-not,
  *  never by value. Drives the group-header rows. */
 export type GroupKey =
@@ -44,7 +42,6 @@ export type GroupKey =
   | 'type'
   | 'totp'
   | 'password'
-  | 'security'
   | 'passkey';
 
 export const GROUP_KEYS: GroupKey[] = [
@@ -55,7 +52,6 @@ export const GROUP_KEYS: GroupKey[] = [
   'type',
   'totp',
   'password',
-  'security',
   'passkey',
 ];
 
@@ -70,7 +66,6 @@ export const GROUP_LABELS: Record<GroupKey, string> = {
   get type() { return t('column.type'); },
   get totp() { return t('column.oneTimeCode'); },
   get password() { return t('column.password'); },
-  get security() { return t('column.security'); },
   get passkey() { return t('column.passkey'); },
 };
 
@@ -120,7 +115,6 @@ export const ALL_BUILTINS: BuiltinColumnId[] = [
   'type',
   'totp',
   'password',
-  'security',
   'passkey',
 ];
 
@@ -152,11 +146,6 @@ export function builtinMeta(id: BuiltinColumnId): ColumnMeta {
       return { label: t('column.oneTimeCode'), sortable: false, secret: true, needsDetail: true };
     case 'password':
       return { label: t('column.password'), sortable: false, secret: true, needsDetail: true };
-    case 'security':
-      // Rendered from the offline health report (passed into the list), not from
-      // per-item detail — so no detail fetch, and not secret. Sortable: the list
-      // ranks rows by their health status from the same report.
-      return { label: t('column.security'), sortable: true, secret: false, needsDetail: false };
     case 'passkey':
       // Presence flag from the list row (`hasPasskey`) — an icon, not a value, so
       // not sortable/secret and no detail fetch.
@@ -182,7 +171,6 @@ export function sortKeyOf(c: ColumnSpec): SortKey | null {
   if (c.id === 'username') return 'username';
   if (c.id === 'folder') return 'folder';
   if (c.id === 'type') return 'type';
-  if (c.id === 'security') return 'security';
   return null;
 }
 
@@ -244,9 +232,6 @@ export function columnTrack(c: ColumnSpec): Track {
       return { template: 'minmax(0, 0.8fr)', min: 110 };
     case 'password':
       return { template: 'minmax(0, 1fr)', min: 120 };
-    case 'security':
-      // A single right-aligned status badge (icon) — a tight track is plenty.
-      return { template: 'minmax(0, 72px)', min: 72 };
     case 'passkey':
       // A single presence icon — tight track.
       return { template: 'minmax(0, 72px)', min: 72 };

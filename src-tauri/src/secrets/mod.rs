@@ -44,14 +44,13 @@ mod kdf;
 mod keychain;
 
 // Flat re-export: every existing `crate::secrets::X` keeps resolving unchanged.
-pub use aad::{app_unlock_aad, cred_aad, scan_cache_aad};
+pub use aad::{app_unlock_aad, cred_aad};
 pub use envelope::{open_with_key, seal_with_key};
 pub use kdf::{derive_auk, fresh_pepper, fresh_salt};
 pub use keychain::{
-    delete_ai_token, delete_cred, delete_device_pepper, delete_hello_blob, delete_key,
-    delete_scan_cache, load_ai_token, load_app_unlock, load_cred, load_device_pepper,
-    load_hello_blob, load_scan_cache, store_ai_token, store_app_unlock, store_cred,
-    store_device_pepper, store_hello_blob, store_scan_cache,
+    delete_cred, delete_device_pepper, delete_hello_blob, delete_key, load_app_unlock,
+    load_cred, load_device_pepper, load_hello_blob, store_app_unlock, store_cred,
+    store_device_pepper, store_hello_blob,
 };
 
 /// In-memory keychain backend for integration tests (compiled out of releases).
@@ -66,20 +65,12 @@ pub const BLOB_VERSION: u32 = 2;
 pub const APP_UNLOCK_KEY: &str = "app-unlock";
 /// Fixed keychain entry name for the (DPAPI-wrapped) Hello-released AUK.
 pub const HELLO_AUK_KEY: &str = "hello-auk";
-/// Fixed keychain entry name for the cached breach/exposed scan results, sealed
-/// under the VMK (the results carry the user's emails + which breaches they're in
-/// — PII, so they're encrypted at rest like every other secret, never plaintext).
-pub const SCAN_CACHE_KEY: &str = "scan-cache";
 /// Fixed keychain entry name for the device pepper — a random secret that mixes
 /// into the AUK derivation when the user binds unlock to this machine. Because the
 /// keychain entry is OS-protected (DPAPI / Keychain / secret-service) to this user
 /// on this machine, a copied `app-unlock` blob can't be unlocked elsewhere even
 /// with the right app password.
 pub const DEVICE_PEPPER_KEY: &str = "device-pepper";
-/// Fixed keychain entry name for the local MCP server's bearer token. The token
-/// gates the loopback AI-access endpoint, so it is a capability secret: stored in
-/// the OS keychain (never `config.json`), generated on first enable.
-pub const AI_TOKEN_KEY: &str = "ai-mcp-token";
 
 /// Keychain entry name for a connection's sealed master password.
 pub fn cred_key(email: &str) -> String {
@@ -115,15 +106,28 @@ pub struct AppUnlockBlob {
     pub sealed_vmk: SealedBlob,
 }
 
-/// A connection's persisted credentials, sealed under the AUK into `cred:<email>`.
+/// A connection's persisted credentials, sealed under the VMK into `cred:<email>`.
 /// `master_password` is zeroized on drop; the `Drop` impl forbids moving it out,
 /// so callers clone it for the one-shot SDK login (the SDK's own copy is outside
 /// our control and is the documented unavoidable residue).
+///
+/// `kind` routes the unlock: a Bitwarden credential re-logs-in with the master
+/// password; a KeePass credential will carry the database password instead.
+/// Missing in pre-provider blobs → `bitwarden` (every sealed credential was one).
 #[derive(Serialize, Deserialize)]
 pub struct StoredConnection {
+    #[serde(default)]
+    pub kind: crate::dto::ConnectionKind,
     pub server: ServerConfig,
     pub email: String,
+    /// Bitwarden: the account's master password. KeePass: the database password.
     pub master_password: String,
+    /// KeePass only: absolute path of the .kdbx database file.
+    #[serde(default)]
+    pub path: Option<String>,
+    /// KeePass only: absolute path of the key file, when the composite key has one.
+    #[serde(default)]
+    pub keyfile: Option<String>,
 }
 
 impl Drop for StoredConnection {

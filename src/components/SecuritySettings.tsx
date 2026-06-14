@@ -1,10 +1,4 @@
-import { ClipboardCopy, Lock, ShieldAlert } from 'lucide-solid';
-import {
-  darkwebMonitor,
-  exposedCheck,
-  setDarkwebMonitor,
-  setExposedCheck,
-} from '../state/security.ts';
+import { ClipboardCopy, Lock } from 'lucide-solid';
 import {
   CLIPBOARD_CLEAR_OPTIONS,
   clipboardClearSeconds,
@@ -37,39 +31,11 @@ function timeoutLabel(minutes: AutoLockMinutes): string {
     : t('securitySettings.minutesMany', { minutes });
 }
 
-/**
- * Security-monitoring + lock + clipboard section of the combined Security page.
- * The local audit checks (AuditSettings) and Export/Import follow it on the page —
- * see Settings.tsx, which composes the three under one `.settings-page`.
- */
+/** Lock + clipboard hygiene settings (the Security page). */
 export default function SecuritySettings() {
   return (
     <section class="settings-section">
         <h3>
-          <ShieldAlert size={14} strokeWidth={1.75} /> {t('securitySettings.title')}
-        </h3>
-        <p class="muted settings-help">{t('securitySettings.help')}</p>
-
-        <ToggleRow
-          label={t('securitySettings.exposedCheck')}
-          desc={t('securitySettings.exposedCheckDesc')}
-          checked={exposedCheck()}
-          onChange={(v) => setExposedCheck(v)}
-        />
-        <ToggleRow
-          label={t('securitySettings.darkwebMonitor')}
-          desc={
-            <>
-              {t('securitySettings.darkwebDescBefore')}{' '}
-              <strong>{t('securitySettings.darkwebDescEmphasis')}</strong>{' '}
-              {t('securitySettings.darkwebDescAfter')}
-            </>
-          }
-          checked={darkwebMonitor()}
-          onChange={(v) => void setDarkwebMonitor(v)}
-        />
-
-        <h3 class="sec-subhead">
           <Lock size={14} strokeWidth={1.75} /> {t('securitySettings.vaultTimeout')}
         </h3>
         <p class="muted settings-help">

@@ -23,12 +23,6 @@ pub fn cred_aad(email: &str) -> Vec<u8> {
     format!("{KEYRING_SERVICE}|v{BLOB_VERSION}|cred|{email}").into_bytes()
 }
 
-/// AAD for the sealed scan-result cache — binds it to the version + blob type, so a
-/// swapped or rolled-back cache fails the tag instead of opening.
-pub fn scan_cache_aad() -> Vec<u8> {
-    format!("{KEYRING_SERVICE}|v{BLOB_VERSION}|scan-cache").into_bytes()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

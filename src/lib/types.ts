@@ -19,24 +19,6 @@ export type {
   SessionStatus,
   ConnectionSummary,
   UnlockOutcome,
-  // ---- custom-titlebar window controls ----
-  ControlsSide,
-  WindowControl,
-  WindowControlsLayout,
-  // ---- security audit / dark-web monitor ----
-  HealthBand,
-  ItemAudit,
-  VaultHealthReport,
-  ExposedResult,
-  BreachRecord,
-  AccountBreaches,
-  EmailError,
-  DarkWebReport,
-  // ---- vault cleanup (link health) ----
-  LinkStatusKind,
-  LinkStatus,
-  LinkHealthItem,
-  LinkCheckReport,
   // ---- vault read shapes ----
   ItemType,
   VaultItem,
@@ -46,16 +28,9 @@ export type {
   CustomField,
   ItemDetail,
   PasskeyCredential,
-  Attachment,
-  SendSummary,
-  SendExpiry,
-  SendCreateInput,
-  SendFileCreateInput,
-  SendCreated,
   Collection,
   TotpCode,
   Folder,
-  ExportFormat,
   // ---- generator options ----
   PasswordGenOptions,
   PassphraseGenOptions,
@@ -69,10 +44,6 @@ export type {
   SshKeyInput,
   FieldInput,
   ItemInput,
-  // ---- AI access (local MCP server) ----
-  AiGrant,
-  AiServerStatus,
-  AiAuditEntry,
   // ---- autofill (watch other apps' login fields + fill the matching login) ----
   AutofillMode,
   AutofillContext,

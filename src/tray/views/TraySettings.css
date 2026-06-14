@@ -1,0 +1,122 @@
+/* Tray settings view — full app settings in the 380px popup, scoped under
+   .tray-settings. The tray webview loads styles.css (tokens + base controls) and
+   SettingsControls.css (via the shared controls), but NOT Settings.css — so the
+   main settings pages' section chrome (.settings-section / h3 / .settings-help /
+   .settings-actions) is replicated here, scoped, with the same values. The
+   embedded shared SecuritySettings relies on those exact class names.
+   Design tokens only — no color literals. */
+
+.tray-settings {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
+}
+
+/* ── Section chrome (mirrors Settings.css, scoped) ───────────────────────── */
+
+.tray-settings .settings-section {
+  margin-bottom: 18px;
+}
+
+/* Small-caps muted heading over a hairline, same as the main settings pages. */
+.tray-settings .settings-section h3 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted-foreground);
+}
+
+.tray-settings .settings-section h3 svg {
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+
+/* Sub-heading inside a section (Language, Clipboard, …). SecuritySettings.css
+   ships the same rule unscoped; restated here so this view never depends on
+   another component's stylesheet staying loaded. */
+.tray-settings .sec-subhead {
+  margin-top: 20px;
+}
+
+.tray-settings .settings-help {
+  font-size: 11.5px;
+  margin: 0 0 10px;
+}
+
+/* Trailing actions sit on the right seam, as on the main pages. */
+.tray-settings .settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* ── Buttons with a leading icon (the main pages' .gen-btn) ──────────────── */
+
+.tray-settings .tray-settings-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.tray-settings .spin {
+  animation: tray-settings-spin 0.8s linear infinite;
+}
+
+@keyframes tray-settings-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── Updates section ─────────────────────────────────────────────────────── */
+
+.tray-settings .tray-settings-uptodate {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--success);
+  font-size: 12px;
+  margin: 0 0 4px;
+}
+
+.tray-settings .tray-settings-update-available {
+  color: var(--success);
+  font-size: 12.5px;
+  margin: 0 0 12px;
+}
+
+.tray-settings .tray-settings-last-checked {
+  font-size: 11px;
+  margin: 10px 0 0;
+}
+
+.tray-settings .tray-settings-foot {
+  text-align: center;
+  font-size: 11px;
+  margin: 10px 0 0;
+}
+
+/* ── Danger zone ─────────────────────────────────────────────────────────── */
+
+.tray-settings .tray-settings-danger h3,
+.tray-settings .tray-settings-danger h3 svg {
+  color: var(--destructive);
+  border-bottom-color: color-mix(in srgb, var(--destructive) 35%, transparent);
+}
+
+/* Inline confirm step: the warning reads as part of the destructive action. */
+.tray-settings .tray-settings-confirm {
+  font-size: 12.5px;
+  color: var(--destructive);
+  margin: 0;
+}

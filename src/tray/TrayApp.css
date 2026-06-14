@@ -459,27 +459,60 @@
   flex-shrink: 0;
 }
 
-.tray-hint {
-  font-size: 11px;
-  color: var(--subtle-foreground);
-}
-
-.tray-open {
+.tray-footer-nav {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 2px;
+}
+
+.tray-footer-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: transparent;
   border: none;
   color: var(--muted-foreground);
-  font-size: 12.5px;
   padding: 6px 8px;
   border-radius: var(--radius);
   cursor: pointer;
 }
 
-.tray-open:hover {
+.tray-footer-btn:hover {
   background: var(--card-hover);
   color: var(--foreground);
+}
+
+/* ── Sub-view header (back + title) ─────────────────────────────────────── */
+
+.tray-subhead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.tray-subhead-back {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--muted-foreground);
+  padding: 4px;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.tray-subhead-back:hover {
+  background: var(--card-hover);
+  color: var(--foreground);
+}
+
+.tray-subhead-title {
+  font-size: 13px;
+  font-weight: 600;
 }
 
 /* ── Loading / empty / locked states ───────────────────────────────────── */

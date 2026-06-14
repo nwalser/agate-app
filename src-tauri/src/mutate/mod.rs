@@ -19,3 +19,46 @@ pub use writes::{
 
 // Folder writes, also driven from `lib.rs`.
 pub use folders::{create_folder, delete_folder, rename_folder};
+
+use crate::dto::ConnectionKind;
+use crate::error::{AgateError, AgateResult};
+use crate::providers::KeepassConnection;
+use crate::state::AppState;
+
+/// Which provider a write should hit, resolved from the live connection.
+pub(crate) enum WriteRoute {
+    Bitwarden,
+    Keepass,
+}
+
+/// Resolve the write route for a connection (typed error when it isn't live).
+pub(crate) async fn route_for(state: &AppState, account_email: &str) -> AgateResult<WriteRoute> {
+    let session = state.session.lock().await;
+    let conn = session
+        .connections
+        .get(account_email)
+        .ok_or_else(AgateError::not_authenticated)?;
+    Ok(match conn.kind() {
+        ConnectionKind::Bitwarden => WriteRoute::Bitwarden,
+        ConnectionKind::Keepass => WriteRoute::Keepass,
+    })
+}
+
+/// Run one KeePass write. The provider mutates the in-memory database and
+/// atomically saves the file, so it needs `&mut` — the session lock is held
+/// across the (blocking) write; `block_in_place` keeps the multi-threaded
+/// runtime healthy while the KDF + file I/O run.
+pub(crate) async fn keepass_write<R>(
+    state: &AppState,
+    account_email: &str,
+    f: impl FnOnce(&mut KeepassConnection) -> AgateResult<R>,
+) -> AgateResult<R> {
+    let mut session = state.session.lock().await;
+    let k = session
+        .connections
+        .get_mut(account_email)
+        .ok_or_else(AgateError::not_authenticated)?
+        .keepass_mut()
+        .ok_or_else(|| AgateError::internal("write routed to the wrong provider"))?;
+    tokio::task::block_in_place(|| f(k))
+}

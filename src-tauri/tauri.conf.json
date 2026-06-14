@@ -12,18 +12,6 @@
   "app": {
     "windows": [
       {
-        "title": "Agate",
-        "width": 1040,
-        "height": 720,
-        "minWidth": 720,
-        "minHeight": 520,
-        "resizable": true,
-        "visible": false,
-        "titleBarStyle": "Overlay",
-        "hiddenTitle": true,
-        "dragDropEnabled": false
-      },
-      {
         "label": "tray",
         "title": "Agate quick access",
         "width": 380,

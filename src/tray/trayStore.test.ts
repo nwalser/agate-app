@@ -13,6 +13,7 @@ import type {
   VaultItem,
 } from '../lib/types.ts';
 import {
+  buildEditInput,
   copyActionForKey,
   createTrayStore,
   draftFromContext,
@@ -52,7 +53,6 @@ const unlockedStatus: SessionStatus = {
   appUnlockConfigured: true,
   unlocked: true,
   helloConfigured: false,
-  darkwebConsent: false,
   connectionCount: 1,
   liveCount: 1,
 };
@@ -803,5 +803,210 @@ describe('createTrayStore state retention', () => {
     await store.refresh();
     expect(store.filtered()).toEqual([]);
     expect(store.query()).toBe('a');
+  });
+});
+
+describe('buildEditInput', () => {
+  // A login detail carrying everything the compact form can't touch — the edit
+  // must preserve all of it.
+  const rich = () =>
+    makeDetail({
+      id: 'i1',
+      name: 'GitHub',
+      accountEmail: 'me@x.com',
+      favorite: true,
+      reprompt: true,
+      notes: 'keep me',
+      folderId: 'fold-1',
+      organizationId: 'org-1',
+      login: makeLoginDetail({
+        username: 'neo',
+        password: 'old-pw',
+        totp: 'JBSWY3DPEHPK3PXP',
+        hasTotp: true,
+        autofillOnPageLoad: true,
+        uris: [
+          { uri: 'https://github.com', matchType: 3 },
+          { uri: 'https://gist.github.com', matchType: null },
+        ],
+      }),
+      fields: [
+        { name: 'PIN', value: '1234', fieldType: 'hidden', linkedId: null },
+        { name: 'flag', value: 'true', fieldType: 'boolean', linkedId: null },
+      ],
+    });
+
+  it('overrides only name/username/password/first-uri and preserves everything else', () => {
+    const input = buildEditInput(rich(), {
+      name: '  GitHub Work  ',
+      username: '  morpheus  ',
+      password: 'new-pw',
+      uri: 'https://github.com/login',
+    });
+    expect(input.id).toBe('i1');
+    expect(input.itemType).toBe('login');
+    expect(input.name).toBe('GitHub Work');
+    expect(input.login?.username).toBe('morpheus');
+    expect(input.login?.password).toBe('new-pw');
+    // First URI is replaced but keeps its matchType; the extra URI is untouched.
+    expect(input.login?.uris).toEqual([
+      { uri: 'https://github.com/login', matchType: 3 },
+      { uri: 'https://gist.github.com', matchType: null },
+    ]);
+    // Preserved, can't-edit-here fields.
+    expect(input.login?.totp).toBe('JBSWY3DPEHPK3PXP');
+    expect(input.login?.autofillOnPageLoad).toBe(true);
+    expect(input.notes).toBe('keep me');
+    expect(input.favorite).toBe(true);
+    expect(input.reprompt).toBe(true);
+    expect(input.folderId).toBe('fold-1');
+    expect(input.organizationId).toBe('org-1');
+    // Custom fields survive, with the string kind mapped back to its int code
+    // (hidden=1, boolean=2) — not collapsed to Text.
+    expect(input.fields).toEqual([
+      { name: 'PIN', value: '1234', fieldType: 1, linkedId: null },
+      { name: 'flag', value: 'true', fieldType: 2, linkedId: null },
+    ]);
+  });
+
+  it('empty username/password become null (not empty strings)', () => {
+    const input = buildEditInput(rich(), { name: 'X', username: '   ', password: '', uri: 'x' });
+    expect(input.login?.username).toBeNull();
+    expect(input.login?.password).toBeNull();
+  });
+
+  it('clearing the URI drops the first URI but keeps the rest', () => {
+    const input = buildEditInput(rich(), { name: 'X', username: 'u', password: 'p', uri: '   ' });
+    expect(input.login?.uris).toEqual([{ uri: 'https://gist.github.com', matchType: null }]);
+  });
+
+  it('adds a first URI when the original had none', () => {
+    const detail = makeDetail({ id: 'i1', name: 'X', login: makeLoginDetail({ uris: [] }) });
+    const input = buildEditInput(detail, { name: 'X', username: '', password: '', uri: 'site.com' });
+    expect(input.login?.uris).toEqual([{ uri: 'site.com', matchType: null }]);
+  });
+});
+
+describe('createTrayStore edit-login', () => {
+  it('enterEdit fetches the detail, seeds the draft and locks the account', async () => {
+    const deps = makeDeps();
+    deps.ipc.itemDetail.mockResolvedValueOnce(
+      makeDetail({
+        id: 'i1',
+        name: 'GitHub',
+        accountEmail: 'me@x.com',
+        login: makeLoginDetail({
+          username: 'neo',
+          password: 's3cret',
+          uris: [{ uri: 'https://github.com', matchType: null }],
+        }),
+      }),
+    );
+    const store = createTrayStore(deps);
+    await store.enterEdit(makeItem({ id: 'i1', name: 'GitHub', accountEmail: 'me@x.com' }));
+    expect(deps.ipc.itemDetail).toHaveBeenCalledWith('me@x.com', 'i1');
+    expect(store.addMode()).toBe(true);
+    expect(store.editing()?.id).toBe('i1');
+    expect(store.draft()).toEqual({
+      name: 'GitHub',
+      username: 'neo',
+      password: 's3cret',
+      uri: 'https://github.com',
+    });
+    // Account is fixed to the item's owner — no account picker on edit.
+    expect(store.accounts()).toEqual(['me@x.com']);
+    expect(store.account()).toBe('me@x.com');
+  });
+
+  it('enterEdit on a reprompt item defers to the main window: no fetch, no form', async () => {
+    const deps = makeDeps();
+    const store = createTrayStore(deps);
+    const item = makeItem({ id: 'i1', name: 'X', reprompt: true });
+    await store.enterEdit(item);
+    expect(deps.onRepromptBlocked).toHaveBeenCalledWith(item);
+    expect(deps.ipc.itemDetail).not.toHaveBeenCalled();
+    expect(store.addMode()).toBe(false);
+    expect(store.editing()).toBeNull();
+  });
+
+  it('enterEdit ignores non-login items (the compact form only edits logins)', async () => {
+    const deps = makeDeps();
+    const store = createTrayStore(deps);
+    await store.enterEdit(makeItem({ id: 'i1', name: 'Note', itemType: 'secureNote' }));
+    expect(deps.ipc.itemDetail).not.toHaveBeenCalled();
+    expect(store.addMode()).toBe(false);
+  });
+
+  it('save() in edit mode writes the id back to the owning account, refreshes and closes', async () => {
+    const deps = makeDeps();
+    deps.ipc.itemDetail.mockResolvedValueOnce(
+      makeDetail({
+        id: 'i1',
+        name: 'GitHub',
+        accountEmail: 'me@x.com',
+        login: makeLoginDetail({ username: 'neo', password: 'old', totp: 'SEED' }),
+      }),
+    );
+    const store = createTrayStore(deps);
+    await store.refresh();
+    await store.enterEdit(makeItem({ id: 'i1', name: 'GitHub', accountEmail: 'me@x.com' }));
+    store.setDraft({ password: 'rotated' });
+    const listCallsBefore = deps.ipc.listItems.mock.calls.length;
+
+    await expect(store.save()).resolves.toBe(true);
+    expect(deps.ipc.saveItem).toHaveBeenCalledWith(
+      'me@x.com',
+      expect.objectContaining({
+        id: 'i1',
+        itemType: 'login',
+        login: expect.objectContaining({ password: 'rotated', totp: 'SEED' }),
+      }),
+    );
+    expect(store.addMode()).toBe(false);
+    expect(store.editing()).toBeNull();
+    expect(deps.ipc.listItems.mock.calls.length).toBeGreaterThan(listCallsBefore);
+  });
+
+  it('a failed edit surfaces onError and keeps the form (and editing) open', async () => {
+    const deps = makeDeps();
+    deps.ipc.itemDetail.mockResolvedValueOnce(makeDetail({ id: 'i1', name: 'X' }));
+    deps.ipc.saveItem.mockRejectedValueOnce(new Error('offline'));
+    const store = createTrayStore(deps);
+    await store.enterEdit(makeItem({ id: 'i1', name: 'X', accountEmail: 'tester@example.com' }));
+    await expect(store.save()).resolves.toBe(false);
+    expect(deps.onError).toHaveBeenCalledOnce();
+    expect(store.addMode()).toBe(true);
+    expect(store.editing()?.id).toBe('i1');
+  });
+
+  it('save() without editing falls through to the create path (id: null)', async () => {
+    const deps = makeDeps();
+    const store = createTrayStore(deps);
+    await store.refresh();
+    await store.enterAdd();
+    store.setDraft({ name: 'New' });
+    await expect(store.save()).resolves.toBe(true);
+    expect(deps.ipc.saveItem).toHaveBeenCalledWith('me@x.com', expect.objectContaining({ id: null }));
+  });
+
+  it('exitAdd clears edit state too', async () => {
+    const deps = makeDeps();
+    deps.ipc.itemDetail.mockResolvedValueOnce(makeDetail({ id: 'i1', name: 'X' }));
+    const store = createTrayStore(deps);
+    await store.enterEdit(makeItem({ id: 'i1', name: 'X' }));
+    store.exitAdd();
+    expect(store.editing()).toBeNull();
+    expect(store.addMode()).toBe(false);
+  });
+
+  it('opening add after an edit is not stuck in edit mode', async () => {
+    const deps = makeDeps();
+    deps.ipc.itemDetail.mockResolvedValueOnce(makeDetail({ id: 'i1', name: 'X' }));
+    const store = createTrayStore(deps);
+    await store.enterEdit(makeItem({ id: 'i1', name: 'X' }));
+    store.exitAdd();
+    await store.enterAdd();
+    expect(store.editing()).toBeNull();
+    expect(store.addMode()).toBe(true);
   });
 });

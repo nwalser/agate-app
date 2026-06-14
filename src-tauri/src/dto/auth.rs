@@ -54,11 +54,25 @@ pub enum LoginResult {
 }
 
 /// One configured connection for the unlock screen, settings, and the
+/// Closed set of vault providers a connection can speak. Serialized lowercase
+/// into `config.json` and over IPC; a missing value deserializes to `bitwarden`
+/// (every pre-provider connection was one).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(specta::Type))]
+#[serde(rename_all = "camelCase")]
+pub enum ConnectionKind {
+    #[default]
+    Bitwarden,
+    Keepass,
+}
+
 /// add-connection quick-pick. Non-secret (server + email only).
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionSummary {
+    /// Which provider backs this connection.
+    pub kind: ConnectionKind,
     pub email: String,
     pub server_label: String,
     /// The full server config, so the add-connection form can prefill it.
@@ -112,9 +126,6 @@ pub struct SessionStatus {
     pub unlocked: bool,
     /// Windows Hello unlock has been enabled (app-wide; Windows only).
     pub hello_configured: bool,
-    /// The user has opted in to the dark-web monitor (sends emails to a third
-    /// party). Default false; gates the network email-breach lookups.
-    pub darkweb_consent: bool,
     /// Number of configured connections (whether or not currently unlocked).
     pub connection_count: usize,
     /// Number of connections currently unlocked this session.

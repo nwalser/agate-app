@@ -1,16 +1,15 @@
 // Idle vault timeout. While the app is unlocked, lock every connection after the
-// configured idle period passes with no user activity, and — if enabled — the
-// moment the window is minimized/hidden. User activity (move, click, key, wheel,
-// touch) resets the idle timer. The timer is torn down whenever the app locks or
-// the timeout is set to "never", so a locked app holds no live timer.
+// configured idle period passes with no user activity. User activity (move,
+// click, key, wheel, touch) resets the idle timer. The timer is torn down
+// whenever the app locks or the timeout is set to "never", so a locked app holds
+// no live timer. (Lock-on-popup-hide lives in TrayApp — visibilitychange.)
 //
-// Pure frontend: it drives the existing lock path (App's `lock()` → ipc.lock()).
+// Pure frontend: it drives the existing lock path (TrayApp's doLock → ipc.lock).
 // Mirrors the threat model in CLAUDE.md — the master password is persisted
 // sealed, so a long-idle unlocked session is exactly what this bounds.
 
 import { createEffect, onCleanup } from 'solid-js';
-import { getCurrentWindow } from '@tauri-apps/api/window';
-import { autoLockMinutes, lockOnMinimize } from '../state/autolock.ts';
+import { autoLockMinutes } from '../state/autolock.ts';
 
 // Activity that counts as "the user is here". Passive listeners so scrolling and
 // pointer movement stay smooth.
@@ -49,26 +48,6 @@ export function useAutoLock(deps: { unlocked: () => boolean; lock: () => void })
     onCleanup(() => {
       if (timer) clearTimeout(timer);
       for (const ev of ACTIVITY_EVENTS) window.removeEventListener(ev, onActivity);
-    });
-  });
-
-  // Lock on minimize/hide, independent of the idle timer. Tauri fires a resize
-  // when the window minimizes; check the minimized state and lock if so.
-  createEffect(() => {
-    if (!deps.unlocked() || !lockOnMinimize()) return;
-    const appWindow = getCurrentWindow();
-    const pending = appWindow.onResized(() => {
-      appWindow
-        .isMinimized()
-        .then((min) => {
-          if (min) deps.lock();
-        })
-        .catch(() => {
-          // ignore: minimize-state query failed; idle timeout still guards
-        });
-    });
-    onCleanup(() => {
-      void pending.then((un) => un());
     });
   });
 }

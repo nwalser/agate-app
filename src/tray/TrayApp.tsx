@@ -5,24 +5,26 @@
 //
 // Lifecycle: the popup is shown/hidden by the Rust tray module — every show
 // focuses the window, so `focus` doubles as "refresh session + items and grab
-// the search box". The popup is PINNED: always-on-top, never hides on focus
-// loss — only the tray icon (toggle), Escape, or a close request hide it, and
-// hiding keeps everything (query, scroll, selection, items): reopening must
-// feel like the popup never went away. Because it can stay visible while the
+// the search box". The popup hides on focus loss (a click anywhere outside it),
+// plus the tray icon (toggle), Escape, or a close request — EXCEPT while the
+// add/edit-login form is open, which PINS it (`ipc.setTrayPinned`, mirroring
+// `store.addMode`) so a stray click can't discard a half-typed login. Hiding
+// keeps everything (query, scroll, selection, items): reopening must feel like
+// the popup never went away. Because the pinned form can stay visible while the
 // main window locks/unlocks, it also refreshes on the backend's
 // `agate://session-changed` broadcast, dropping items the moment the session
 // locks.
 
-import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from 'solid-js';
+import { createEffect, createMemo, createSignal, For, Match, on, onCleanup, onMount, Show, Switch } from 'solid-js';
 import { Dynamic } from 'solid-js/web';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { PhysicalPosition, PhysicalSize } from '@tauri-apps/api/dpi';
 import { listen } from '@tauri-apps/api/event';
 import {
   AppWindow,
+  ArrowLeft,
   Eye,
   EyeOff,
-  ExternalLink,
   Fingerprint,
   Globe,
   Info,
@@ -30,12 +32,16 @@ import {
   LockKeyhole,
   LockOpen,
   LogIn,
+  Pencil,
   Plus,
   RefreshCw,
   Search,
+  Settings as SettingsIcon,
   ShieldAlert,
   Timer,
   UserRound,
+  Users,
+  Wand2,
   X,
 } from 'lucide-solid';
 import ToastHost from '../components/Toast.tsx';
@@ -50,8 +56,16 @@ import { pushToast, toastError } from '../state/toast.ts';
 import { syncThemeFromStorage } from '../state/theme.ts';
 import { recordRecent } from '../state/recentItems.ts';
 import { readColumnConfig } from '../state/columnConfig.ts';
+import { clearGeneratorHistory } from '../state/generatorHistory.ts';
+import { lockOnMinimize } from '../state/autolock.ts';
+import { useAutoLock } from '../hooks/useAutoLock.ts';
 import { UNLOCK_BEAT_MS } from '../lib/unlockBeat.ts';
 import type { VaultItem } from '../lib/types.ts';
+import TrayOnboarding from './views/TrayOnboarding.tsx';
+import TrayVaults from './views/TrayVaults.tsx';
+import TraySettings from './views/TraySettings.tsx';
+import TrayGenerator from './views/TrayGenerator.tsx';
+import TrayDetail from './views/TrayDetail.tsx';
 import {
   copyActionForKey,
   createTrayStore,
@@ -61,6 +75,10 @@ import {
   type FillRow,
 } from './trayStore.ts';
 import './TrayApp.css';
+
+/** The popup's top-level views. `list` is home; the others render over it with a
+ *  back header and pin the popup against click-outside-to-hide. */
+type TrayView = 'list' | 'detail' | 'generator' | 'vaults' | 'settings';
 
 /** Human label for a zxcvbn score (0–4), for the add-form's strength meter. */
 function strengthLabel(score: number): string {
@@ -79,21 +97,37 @@ function strengthLabel(score: number): string {
 }
 
 export default function TrayApp() {
+  const [view, setView] = createSignal<TrayView>('list');
+  const [detailItem, setDetailItem] = createSignal<VaultItem | null>(null);
+
+  /** Open the full detail view for one item (row click, or a reprompt-blocked
+   *  copy — the detail view owns the app-password gate). */
+  function openDetail(item: VaultItem) {
+    setDetailItem(item);
+    setView('detail');
+  }
+
   const store = createTrayStore({
     ipc,
     copy: copyWithAutoClear,
-    // Copies count as "used" for the main window's titlebar recents (shared
-    // localStorage). The popup's own list order deliberately ignores recency —
-    // rows must not jump right after a copy.
+    // Copies count as "used" for the recents ranking (shared localStorage). The
+    // popup's own list order deliberately ignores recency — rows must not jump
+    // right after a copy.
     onUsed: (item) => recordRecent(item.id),
     onError: toastError,
-    // The reprompt gate (master-password re-entry) lives in the main window;
-    // the popup never bypasses it and never re-implements it.
-    onRepromptBlocked: () => pushToast('info', t('tray.repromptBlocked')),
-    // Same deferral for 2FA: the popup unlocks what it can; 2FA-enforced
-    // connections are finished in the main window's unlock screen.
-    onTwoFactorPending: (emails) =>
-      pushToast('info', t('tray.twoFactorPending', { emails: emails.join(', ') })),
+    // A reprompt-protected copy routes to the detail view, whose app-password
+    // gate (RepromptGate) is the ONE reprompt path. The fill flow has no item
+    // to open — it just explains itself.
+    onRepromptBlocked: (item) => {
+      if (item) openDetail(item);
+      else pushToast('info', t('tray.repromptBlocked'));
+    },
+    // Connections still needing 2FA after an unlock are finished in the Vaults
+    // view — take the user straight there.
+    onTwoFactorPending: (emails) => {
+      pushToast('info', t('tray.twoFactorPending', { emails: emails.join(', ') }));
+      setView('vaults');
+    },
   });
   const [selected, setSelected] = createSignal(0);
   const [password, setPassword] = createSignal('');
@@ -135,7 +169,34 @@ export default function TrayApp() {
   const [extUnlocking, setExtUnlocking] = createSignal(false);
   const isUnlocking = () => store.unlocking() || extUnlocking();
 
-  const openApp = () => void ipc.showMainWindow().catch(toastError);
+  /** Lock everything: backend lock, drop session-only buffers, back to home. */
+  async function doLock() {
+    try {
+      await ipc.lock();
+      clearGeneratorHistory(); // session-only secrets die with the session
+      setView('list');
+      setDetailItem(null);
+      await store.refresh();
+    } catch (err) {
+      toastError(err);
+    }
+  }
+
+  // Idle vault timeout (Settings → Security). The minimize arm is meaningless
+  // for the popup; lock-on-hide below covers "the popup went away".
+  useAutoLock({ unlocked: store.unlocked, lock: () => void doLock() });
+
+  // Optional hard mode: lock the moment the popup hides (Settings → Security).
+  // visibilitychange (not blur) so a pinned-but-unfocused popup stays unlocked.
+  onMount(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden' && lockOnMinimize() && store.unlocked()) {
+        void doLock();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    onCleanup(() => document.removeEventListener('visibilitychange', onVisibility));
+  });
 
   /** The app a fill would land in (window title, else process name). */
   const fillTargetLabel = () => {
@@ -180,6 +241,20 @@ export default function TrayApp() {
     void setPopupHeight(custom ? fillPopupHeight(count) : DEFAULT_POPUP_H);
   });
 
+  // Pin the popup against click-outside-to-hide while any form-bearing surface
+  // is up: the add/edit-login form, every non-list view (settings, vaults,
+  // generator, detail — half-typed input must survive a stray click), and the
+  // first-run onboarding. Only the plain list (and the locked unlock form)
+  // hides on focus loss. The backend owns the actual hide (it watches the OS
+  // focus event) — here we just mirror the pin flag.
+  createEffect(() => {
+    const pinned =
+      store.addMode() ||
+      view() !== 'list' ||
+      (store.ready() && !store.unlocked() && !store.appUnlockConfigured());
+    void ipc.setTrayPinned(pinned).catch(toastError);
+  });
+
   // No match for the detected app → show the brief note, then auto-dismiss.
   let emptyHideTimer: ReturnType<typeof setTimeout> | undefined;
   createEffect(() => {
@@ -215,6 +290,14 @@ export default function TrayApp() {
     nameEl?.focus();
   }
 
+  /** Open the edit form for an existing login (reprompt / non-login items defer
+   *  to the main window — enterEdit no-ops and leaves the list view up). */
+  async function openEdit(item: VaultItem) {
+    setRevealPw(false);
+    await store.enterEdit(item);
+    if (store.addMode()) nameEl?.focus();
+  }
+
   /** From a detected-but-unmatched autofill target: drop the detection and open
    *  the add form seeded with that app's website + a guessed name, so a missing
    *  login is captured in one step instead of being a dead end. */
@@ -227,9 +310,10 @@ export default function TrayApp() {
     nameEl?.focus();
   }
 
-  async function saveNewLogin() {
-    if (await store.saveNew()) {
-      pushToast('success', t('tray.loginSaved'));
+  async function saveLogin() {
+    const wasEdit = store.editing() !== null;
+    if (await store.save()) {
+      pushToast('success', wasEdit ? t('tray.loginUpdated') : t('tray.loginSaved'));
       searchEl?.focus();
     }
   }
@@ -278,7 +362,10 @@ export default function TrayApp() {
     if (e.key === 'Escape') {
       if (store.fillMode()) cancelFill();
       else if (store.addMode()) store.exitAdd();
-      else void ipc.hideTrayWindow().catch(toastError);
+      else if (view() !== 'list') {
+        setView('list');
+        setDetailItem(null);
+      } else void ipc.hideTrayWindow().catch(toastError);
       return;
     }
     if (!store.unlocked()) return;
@@ -305,9 +392,9 @@ export default function TrayApp() {
       return;
     }
 
-    // Add form: it owns the keyboard (Enter submits natively) — only Escape
-    // (handled above) is global, mirroring the locked unlock form.
-    if (store.addMode()) return;
+    // Add form + sub-views own their keyboard (Enter submits natively) — only
+    // Escape (handled above) is global, mirroring the locked unlock form.
+    if (store.addMode() || view() !== 'list') return;
 
     const list = store.filtered();
     switch (e.key) {
@@ -390,6 +477,7 @@ export default function TrayApp() {
       class="tray-row"
       classList={{ selected: index() === selected() }}
       onMouseEnter={() => setSelected(index())}
+      onClick={() => openDetail(item)}
     >
       <span class="tray-type-icon">
         <Show
@@ -416,7 +504,8 @@ export default function TrayApp() {
           title={`${item.accountLabel} · ${item.accountEmail}`}
         />
       </Show>
-      <span class="tray-actions">
+      {/* Action clicks must not bubble into the row's open-detail click. */}
+      <span class="tray-actions" onClick={(e) => e.stopPropagation()}>
         <Show when={item.itemType === 'login'}>
           <Show when={item.username}>
             <CopyButton
@@ -440,6 +529,9 @@ export default function TrayApp() {
               onCopy={() => store.copyTotp(item)}
             />
           </Show>
+          <button title={t('tray.editLogin')} onClick={() => void openEdit(item)}>
+            <Pencil size={14} />
+          </button>
         </Show>
       </span>
     </li>
@@ -484,6 +576,16 @@ export default function TrayApp() {
         <Show
           when={store.unlocked()}
           fallback={
+            <Show
+              when={store.appUnlockConfigured()}
+              fallback={
+                <TrayOnboarding
+                  onDone={() => {
+                    void store.refresh().then(() => setView('vaults'));
+                  }}
+                />
+              }
+            >
             <div class="tray-locked">
               {/* Same account-palette aurora the main Unlock screen weaves behind
                   its unlocking animation, popup-scaled — shown only while an
@@ -501,56 +603,43 @@ export default function TrayApp() {
                   <div class="tray-unlock-progress-bar" />
                 </div>
               </Show>
-              {/* Unlock in place once app-unlock is configured; before
-                  onboarding the popup can only hand off to the main window. */}
-              <Show
-                when={store.appUnlockConfigured()}
-                fallback={
-                  <button class="tray-unlock-btn" onClick={openApp}>
-                    <ExternalLink size={14} /> {t('tray.openAgate')}
-                  </button>
-                }
+              <form
+                class="tray-unlock-form"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void unlockWithPassword();
+                }}
               >
-                <form
-                  class="tray-unlock-form"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    void unlockWithPassword();
-                  }}
+                <input
+                  ref={passwordEl}
+                  type="password"
+                  aria-label={t('unlock.appPassword')}
+                  placeholder={t('tray.appPasswordPlaceholder')}
+                  autocomplete="current-password"
+                  value={password()}
+                  disabled={isUnlocking()}
+                  onInput={(e) => setPassword(e.currentTarget.value)}
+                />
+                <button
+                  type="submit"
+                  class="tray-unlock-btn"
+                  disabled={isUnlocking() || !password()}
                 >
-                  <input
-                    ref={passwordEl}
-                    type="password"
-                    aria-label={t('unlock.appPassword')}
-                    placeholder={t('tray.appPasswordPlaceholder')}
-                    autocomplete="current-password"
-                    value={password()}
-                    disabled={isUnlocking()}
-                    onInput={(e) => setPassword(e.currentTarget.value)}
-                  />
-                  <button
-                    type="submit"
-                    class="tray-unlock-btn"
-                    disabled={isUnlocking() || !password()}
-                  >
-                    <LockOpen size={14} />
-                    {isUnlocking() ? t('tray.unlocking') : t('tray.unlock')}
-                  </button>
-                </form>
-                <Show when={store.helloConfigured()}>
-                  <button
-                    class="tray-hello-btn"
-                    disabled={isUnlocking()}
-                    onClick={() => void unlockWithHello()}
-                  >
-                    <Fingerprint size={14} /> {t('tray.unlockWithHello')}
-                  </button>
-                </Show>
-                <button class="tray-open" onClick={openApp}>
-                  <ExternalLink size={14} /> {t('tray.openAgate')}
+                  <LockOpen size={14} />
+                  {isUnlocking() ? t('tray.unlocking') : t('tray.unlock')}
+                </button>
+              </form>
+              <Show when={store.helloConfigured()}>
+                <button
+                  class="tray-hello-btn"
+                  disabled={isUnlocking()}
+                  onClick={() => void unlockWithHello()}
+                >
+                  <Fingerprint size={14} /> {t('tray.unlockWithHello')}
                 </button>
               </Show>
             </div>
+            </Show>
           }
         >
           <Show
@@ -559,49 +648,115 @@ export default function TrayApp() {
               <Show
                 when={store.addMode()}
                 fallback={
-                  <>
-                    <div class="tray-search">
-                      <Search size={14} />
-                      <input
-                        ref={searchEl}
-                        placeholder={t('tray.searchPlaceholder')}
-                        value={store.query()}
-                        onInput={(e) => {
-                          store.setQuery(e.currentTarget.value);
-                          setSelected(0);
-                        }}
-                      />
-                      <button
-                        class="tray-add-btn"
-                        title={t('tray.addLogin')}
-                        onClick={() => void openAdd()}
-                      >
-                        <Plus size={15} />
-                      </button>
-                    </div>
-                    <ul class="tray-list" ref={listEl}>
-                      <For
-                        each={store.filtered()}
-                        fallback={<li class="tray-status">{t('tray.noMatches')}</li>}
-                      >
-                        {row}
-                      </For>
-                    </ul>
-                    <footer class="tray-footer">
-                      <span class="tray-hint">{t('tray.footerHint')}</span>
-                      <button class="tray-open" onClick={openApp}>
-                        <ExternalLink size={14} /> {t('tray.openAgate')}
-                      </button>
-                    </footer>
-                  </>
+                  <Switch>
+                    <Match when={view() === 'detail' && detailItem()}>
+                      {(item) => (
+                        <TrayDetail
+                          item={item()}
+                          onBack={() => {
+                            setView('list');
+                            setDetailItem(null);
+                          }}
+                          onEdit={(it) => {
+                            setView('list');
+                            setDetailItem(null);
+                            void openEdit(it);
+                          }}
+                          onChanged={() => void store.refresh()}
+                        />
+                      )}
+                    </Match>
+                    <Match when={view() === 'generator'}>
+                      <TrayGenerator onBack={() => setView('list')} />
+                    </Match>
+                    <Match when={view() === 'vaults'}>
+                      <TrayVaults onBack={() => setView('list')} />
+                    </Match>
+                    <Match when={view() === 'settings'}>
+                      <div class="tray-subhead">
+                        <button
+                          class="tray-subhead-back"
+                          title={t('common.back')}
+                          onClick={() => setView('list')}
+                        >
+                          <ArrowLeft size={15} />
+                        </button>
+                        <span class="tray-subhead-title">{t('settings.title')}</span>
+                      </div>
+                      <TraySettings onBack={() => setView('list')} />
+                    </Match>
+                    <Match when={view() === 'list'}>
+                      <div class="tray-search">
+                        <Search size={14} />
+                        <input
+                          ref={searchEl}
+                          placeholder={t('tray.searchPlaceholder')}
+                          value={store.query()}
+                          onInput={(e) => {
+                            store.setQuery(e.currentTarget.value);
+                            setSelected(0);
+                          }}
+                        />
+                        <button
+                          class="tray-add-btn"
+                          title={t('tray.addLogin')}
+                          onClick={() => void openAdd()}
+                        >
+                          <Plus size={15} />
+                        </button>
+                      </div>
+                      <ul class="tray-list" ref={listEl}>
+                        <For
+                          each={store.filtered()}
+                          fallback={<li class="tray-status">{t('tray.noMatches')}</li>}
+                        >
+                          {row}
+                        </For>
+                      </ul>
+                      <footer class="tray-footer">
+                        <div class="tray-footer-nav">
+                          <button
+                            class="tray-footer-btn"
+                            title={t('generator.title')}
+                            onClick={() => setView('generator')}
+                          >
+                            <Wand2 size={15} />
+                          </button>
+                          <button
+                            class="tray-footer-btn"
+                            title={t('trayVaults.title')}
+                            onClick={() => setView('vaults')}
+                          >
+                            <Users size={15} />
+                          </button>
+                          <button
+                            class="tray-footer-btn"
+                            title={t('settings.title')}
+                            onClick={() => setView('settings')}
+                          >
+                            <SettingsIcon size={15} />
+                          </button>
+                        </div>
+                        <button class="tray-footer-btn tray-footer-lock" title={t('tray.lock')} onClick={() => void doLock()}>
+                          <LockKeyhole size={15} />
+                        </button>
+                      </footer>
+                    </Match>
+                  </Switch>
                 }
               >
-                {/* Add-login form: quick capture with generation, dedupe hints
-                    and a reused-password callout. Anything richer (folders,
-                    custom fields, …) belongs to the main window's editor. */}
+                {/* Add/edit-login form: quick capture (or a quick edit of the
+                    four exposed fields) with generation, dedupe hints and a
+                    reused-password callout. Anything richer (folders, custom
+                    fields, …) belongs to the main window's editor; an edit here
+                    preserves those untouched (see buildEditInput). */}
                 <div class="tray-add-head">
-                  <Plus size={14} />
-                  <span class="tray-add-title">{t('tray.newLogin')}</span>
+                  <Show when={store.editing()} fallback={<Plus size={14} />}>
+                    <Pencil size={14} />
+                  </Show>
+                  <span class="tray-add-title">
+                    {store.editing() ? t('tray.editLogin') : t('tray.newLogin')}
+                  </span>
                   <button
                     class="tray-fill-cancel"
                     title={t('common.cancel')}
@@ -614,7 +769,7 @@ export default function TrayApp() {
                   class="tray-add-form"
                   onSubmit={(e) => {
                     e.preventDefault();
-                    void saveNewLogin();
+                    void saveLogin();
                   }}
                 >
                   <input
@@ -662,7 +817,10 @@ export default function TrayApp() {
                       </span>
                     </div>
                   </Show>
-                  <Show when={store.reuseCount() > 0}>
+                  {/* Dedupe hints are for capturing NEW logins; on an edit the
+                      item's own stored password would always read as "reused",
+                      so hide the callout. */}
+                  <Show when={!store.editing() && store.reuseCount() > 0}>
                     <div class="tray-add-callout warn">
                       <ShieldAlert size={13} />
                       <span>{t('tray.passwordReused', { count: store.reuseCount() })}</span>
@@ -694,7 +852,7 @@ export default function TrayApp() {
                       }}
                     />
                   </div>
-                  <Show when={store.similar().length > 0}>
+                  <Show when={!store.editing() && store.similar().length > 0}>
                     <div class="tray-add-callout info">
                       <div class="tray-add-callout-head">
                         <Info size={13} />
@@ -738,8 +896,14 @@ export default function TrayApp() {
                       store.saving() || !store.draft().name.trim() || store.accounts().length === 0
                     }
                   >
-                    <Plus size={14} />
-                    {store.saving() ? t('tray.saving') : t('tray.saveLogin')}
+                    <Show when={store.editing()} fallback={<Plus size={14} />}>
+                      <Pencil size={14} />
+                    </Show>
+                    {store.saving()
+                      ? t('tray.saving')
+                      : store.editing()
+                        ? t('tray.saveChanges')
+                        : t('tray.saveLogin')}
                   </button>
                 </form>
               </Show>

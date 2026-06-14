@@ -3,27 +3,14 @@
 
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import type {
-  AccountBreaches,
-  AiAuditEntry,
-  AiGrant,
-  AiServerStatus,
   AutofillMode,
   AutofillPending,
   AutofillStatus,
-  BreachRecord,
   Collection,
   ConnectionSummary,
-  DarkWebReport,
-  ExportFormat,
-  ExposedResult,
   Folder,
-  SendSummary,
-  SendCreateInput,
-  SendFileCreateInput,
-  SendCreated,
   ItemDetail,
   ItemInput,
-  LinkCheckReport,
   LoginResult,
   PassphraseGenOptions,
   PasswordGenOptions,
@@ -33,11 +20,8 @@ import type {
   TwoFactorInput,
   UnlockOutcome,
   UsernameGenOptions,
-  VaultHealthReport,
   VaultItem,
-  WindowControlsLayout,
 } from './types.ts';
-import { auditConfigPayload } from '../state/auditConfig.ts';
 
 // ── Test-only IPC seam (webdriver e2e) ───────────────────────────────────────
 // Every wrapper below calls the local `invoke`, which routes through a swappable
@@ -84,15 +68,17 @@ export const ipc = {
   /** Host OS UI locale (e.g. "de-DE") for first-run language detection. */
   getSystemLocale: (): Promise<string> => invoke('get_system_locale'),
 
-  /** Reveal + focus the main window (tray popup's "Open Agate" button). */
-  showMainWindow: (): Promise<void> => invoke('show_main_window'),
-
   /** Hide the tray quick-access popup (Escape key; no-op elsewhere). */
   hideTrayWindow: (): Promise<void> => invoke('hide_tray_window'),
 
   /** Re-show + refocus the tray popup after a focus-stealing flow (the Windows
    *  Hello consent dialog) auto-hid it. No-op outside the popup window. */
   showTrayWindow: (): Promise<void> => invoke('show_tray_window'),
+
+  /** Pin (or release) the tray popup against click-outside-to-hide. While the
+   *  add/edit-login form is open the popup must NOT hide on focus loss, so a
+   *  stray click can't discard a half-typed login. */
+  setTrayPinned: (pinned: boolean): Promise<void> => invoke('set_tray_pinned', { pinned }),
 
   setServerConfig: (server: ServerConfig): Promise<void> =>
     invoke('set_server_config', { server }),
@@ -164,6 +150,30 @@ export const ipc = {
 
   removeConnection: (email: string): Promise<void> => invoke('remove_connection', { email }),
 
+  // ---- KeePass connections ----
+
+  /** Native picker for a .kdbx database file; null when cancelled. */
+  pickKeepassDatabase: (): Promise<string | null> => invoke('pick_keepass_database'),
+
+  /** Native picker for a key file (any type); null when cancelled. */
+  pickKeepassKeyfile: (): Promise<string | null> => invoke('pick_keepass_keyfile'),
+
+  /** Open + add a KeePass database as a connection. The path doubles as the
+   *  connection id. `keyfile` is optional; `storeCredentials` seals the database
+   *  password under the VMK so it auto-unlocks with the app. */
+  addKeepassConnection: (
+    path: string,
+    password: string,
+    keyfile: string | null,
+    storeCredentials: boolean,
+  ): Promise<void> =>
+    invoke('add_keepass_connection', { path, password, keyfile, storeCredentials }),
+
+  /** Unlock one KeePass connection on demand (manual-unlock connections). The
+   *  key file, when configured, is read from the connection record. */
+  unlockKeepassConnection: (path: string, password: string): Promise<void> =>
+    invoke('unlock_keepass_connection', { path, password }),
+
   setActiveConnection: (email: string): Promise<void> =>
     invoke('set_active_connection', { email }),
 
@@ -183,42 +193,11 @@ export const ipc = {
    *  picker (so a custom-field column is chosen, not blind-typed). */
   listCustomFields: (): Promise<string[]> => invoke('list_custom_field_names'),
 
-  /** List Bitwarden Sends (ephemeral shares) across all unlocked connections. */
-  listSends: (): Promise<SendSummary[]> => invoke('list_sends'),
-
-  /** Create a text Send and return its public share link. */
-  createSend: (input: SendCreateInput): Promise<SendCreated> =>
-    invoke('create_send', { input }),
-
-  /** Create a file Send: opens a native picker, encrypts + uploads the chosen
-   *  file, and returns its share link — or null if the user cancels the picker. */
-  createFileSend: (input: SendFileCreateInput): Promise<SendCreated | null> =>
-    invoke('create_file_send', { input }),
-
-  /** Revoke (delete) one Send. */
-  deleteSend: (accountEmail: string, sendId: string): Promise<void> =>
-    invoke('delete_send', { accountEmail, sendId }),
-
-  /** Download + decrypt one attachment to the Downloads folder; returns the path. */
-  downloadAttachment: (accountEmail: string, itemId: string, attachmentId: string): Promise<string> =>
-    invoke('download_attachment', { accountEmail, itemId, attachmentId }),
-
   itemDetail: (accountEmail: string, id: string): Promise<ItemDetail> =>
     invoke('item_detail', { accountEmail, id }),
 
   itemTotp: (accountEmail: string, id: string): Promise<TotpCode> =>
     invoke('item_totp', { accountEmail, id }),
-
-  /** Capture the screen and decode a TOTP setup QR into its otpauth:// URI. */
-  scanTotpQr: (): Promise<string> => invoke('scan_totp_qr'),
-
-  /** Whether OCR (scan card / fill from image) is available on this platform. */
-  ocrAvailable: (): Promise<boolean> => invoke('ocr_available'),
-  /** Capture every monitor and return the recognized text lines (may contain
-   *  secrets — never log them). */
-  ocrCaptureScreen: (): Promise<string[]> => invoke('ocr_capture_screen'),
-  /** Pick an image file and return its recognized text lines (null = cancelled). */
-  ocrCaptureFile: (): Promise<string[] | null> => invoke('ocr_capture_file'),
 
   generatePassword: (options: PasswordGenOptions): Promise<string> =>
     invoke('generate_password', { options }),
@@ -239,14 +218,6 @@ export const ipc = {
 
   generateUsername: (options: UsernameGenOptions): Promise<string> =>
     invoke('generate_username', { options }),
-
-  /** Export all unlocked vaults to a JSON/CSV file in Downloads; returns the path. */
-  exportVault: (format: ExportFormat): Promise<string> =>
-    invoke('export_vault', { format }),
-
-  /** Import items from a user-picked CSV into a connection; returns the count created. */
-  importVault: (accountEmail: string | null): Promise<number> =>
-    invoke('import_vault', { accountEmail }),
 
   // ---- vault write operations ----
 
@@ -277,61 +248,11 @@ export const ipc = {
   deleteFolder: (accountEmail: string, id: string): Promise<void> =>
     invoke('delete_folder', { accountEmail, id }),
 
-  // ---- window chrome ----
-
-  windowControlsLayout: (): Promise<WindowControlsLayout> => invoke('window_controls_layout'),
-
   // ---- startup (launch at login) ----
-
-  /** Whether closing the main window keeps Agate running in the tray. */
-  getCloseToTray: (): Promise<boolean> => invoke('get_close_to_tray'),
-
-  setCloseToTray: (enabled: boolean): Promise<void> => invoke('set_close_to_tray', { enabled }),
 
   getAutostart: (): Promise<boolean> => invoke('get_autostart'),
 
   setAutostart: (enabled: boolean): Promise<void> => invoke('set_autostart', { enabled }),
-
-  /** Whether an autostart launch opens tray-icon-only (main window hidden). */
-  getStartInTray: (): Promise<boolean> => invoke('get_start_in_tray'),
-
-  setStartInTray: (enabled: boolean): Promise<void> => invoke('set_start_in_tray', { enabled }),
-
-  // ---- security audit ----
-
-  // Always sends the current audit config so every audit surface (Security
-  // center, the list's Security column, the sidebar badge) honours which checks
-  // are enabled + their thresholds, without each caller threading it through.
-  auditOffline: (): Promise<VaultHealthReport> =>
-    invoke('audit_offline', { config: auditConfigPayload() }),
-
-  auditExposed: (): Promise<ExposedResult[]> => invoke('audit_exposed'),
-
-  // ---- vault cleanup (link health) ----
-
-  // On-demand only: pings every login URL and flags the dead ones. Never runs in
-  // the background (it reveals the vault's domain list to every site it probes).
-  linkCheckVault: (): Promise<LinkCheckReport> => invoke('link_check_vault'),
-
-  // ---- dark-web / breach monitor ----
-
-  setDarkwebConsent: (enabled: boolean): Promise<void> =>
-    invoke('set_darkweb_consent', { enabled }),
-
-  darkwebScanEmail: (email: string): Promise<AccountBreaches> =>
-    invoke('darkweb_scan_email', { email }),
-
-  darkwebScanVault: (): Promise<DarkWebReport> => invoke('darkweb_scan_vault'),
-
-  breachDirectory: (): Promise<BreachRecord[]> => invoke('breach_directory'),
-
-  // Encrypted scan-result cache (sealed under the VMK in the keychain — see
-  // src-tauri/src/scancache.rs). `payload` is an opaque JSON string owned by
-  // state/securityScans.ts; load returns null when there's no (openable) cache.
-  cacheSecurityScans: (payload: string): Promise<void> =>
-    invoke('cache_security_scans', { payload }),
-
-  loadSecurityScans: (): Promise<string | null> => invoke('load_security_scans'),
 
   // ---- Windows Hello unlock ----
 
@@ -348,22 +269,6 @@ export const ipc = {
   checkUpdate: (): Promise<string | null> => invoke('check_update'),
 
   runUpdate: (): Promise<void> => invoke('run_update'),
-
-  // ---- AI access (local MCP server) ----
-
-  aiServerStatus: (): Promise<AiServerStatus> => invoke('ai_server_status'),
-
-  aiSetServerEnabled: (enabled: boolean): Promise<AiServerStatus> =>
-    invoke('ai_set_server_enabled', { enabled }),
-
-  aiListGrants: (): Promise<AiGrant[]> => invoke('ai_list_grants'),
-
-  aiSetGrant: (accountEmail: string, itemId: string, granted: boolean): Promise<void> =>
-    invoke('ai_set_grant', { accountEmail, itemId, granted }),
-
-  aiClearGrants: (): Promise<void> => invoke('ai_clear_grants'),
-
-  aiAuditLog: (): Promise<AiAuditEntry[]> => invoke('ai_audit_log'),
 
   // ---- autofill (watch other apps' login fields + fill the matching login) ----
 

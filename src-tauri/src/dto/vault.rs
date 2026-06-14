@@ -3,17 +3,6 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Closed set of vault-export file formats (frontend → backend).
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
-#[cfg_attr(test, derive(specta::Type))]
-#[serde(rename_all = "camelCase")]
-pub enum ExportFormat {
-    /// Pretty JSON: an array of full item details (Agate's own shape).
-    Json,
-    /// Bitwarden-compatible CSV (login-centric columns).
-    Csv,
-}
-
 /// Closed set of Bitwarden item types.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(test, derive(specta::Type))]
@@ -151,8 +140,6 @@ pub struct ItemDetail {
     pub creation_date: String,
     /// Collections this item belongs to (IDs; resolve to names via list_collections).
     pub collection_ids: Vec<String>,
-    /// File attachments on this item (metadata; download via download_attachment).
-    pub attachments: Vec<Attachment>,
     /// Stored passkeys (FIDO2 credentials) on this login — display metadata only.
     pub passkeys: Vec<PasskeyCredential>,
 }
@@ -183,110 +170,6 @@ pub struct PasskeyCredential {
     pub key_algorithm: String,
     /// Creation timestamp (RFC 3339).
     pub creation_date: String,
-}
-
-/// One file attachment on an item (metadata only — bytes are fetched + decrypted
-/// on demand by `download_attachment`). The encryption key/URL stay in the backend.
-#[derive(Debug, Clone, Serialize)]
-#[cfg_attr(test, derive(specta::Type))]
-#[serde(rename_all = "camelCase")]
-pub struct Attachment {
-    pub id: String,
-    pub file_name: Option<String>,
-    /// Human-readable size, e.g. "12 KB" (from the SDK).
-    pub size_name: Option<String>,
-}
-
-/// A Bitwarden Send (ephemeral share) summary for the Sends manager. Named
-/// `SendSummary` to avoid colliding with the `Send` marker trait. Listing covers
-/// the manager's rows; create uses `SendCreateInput`, revoke uses the id.
-#[derive(Debug, Clone, Serialize)]
-#[cfg_attr(test, derive(specta::Type))]
-#[serde(rename_all = "camelCase")]
-pub struct SendSummary {
-    pub id: String,
-    pub name: String,
-    /// "text" or "file".
-    pub send_type: String,
-    pub disabled: bool,
-    pub has_password: bool,
-    pub access_count: u32,
-    pub max_access_count: Option<u32>,
-    /// When the Send is auto-deleted (RFC 3339).
-    pub deletion_date: String,
-    /// Optional expiry (RFC 3339).
-    pub expiration_date: Option<String>,
-    pub account_email: String,
-    pub account_label: String,
-}
-
-/// How long a new Send lives before it is auto-deleted (frontend → backend). A
-/// closed set so the backend computes the deletion timestamp from a trusted clock,
-/// rather than accepting an arbitrary date from the UI.
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
-#[cfg_attr(test, derive(specta::Type))]
-#[serde(rename_all = "camelCase")]
-pub enum SendExpiry {
-    OneHour,
-    OneDay,
-    TwoDays,
-    ThreeDays,
-    SevenDays,
-    ThirtyDays,
-}
-
-/// Create-a-Send input (frontend → backend). Text Sends only for now; file Sends
-/// need the separate upload flow. An optional `password` gates access (password
-/// auth); otherwise the Send is open to anyone with the link.
-#[derive(Debug, Clone, Deserialize)]
-#[cfg_attr(test, derive(specta::Type))]
-#[serde(rename_all = "camelCase")]
-pub struct SendCreateInput {
-    /// Which unlocked connection owns the new Send.
-    pub account_email: String,
-    pub name: String,
-    /// The shared text payload.
-    pub text: String,
-    /// Hide the text by default (recipient must click to reveal).
-    pub hidden: bool,
-    pub expiry: SendExpiry,
-    /// Cap on how many times the Send can be opened (None = unlimited).
-    pub max_access_count: Option<u32>,
-    /// Optional access password. SECRET — never logged.
-    pub password: Option<String>,
-    /// Hide the sender's email from recipients.
-    pub hide_email: bool,
-}
-
-/// Create-a-file-Send input (frontend → backend). The file itself is chosen via a
-/// native picker in the backend (no path crosses IPC), so this carries only the
-/// Send's settings — the same options as a text Send minus the text body.
-#[derive(Debug, Clone, Deserialize)]
-#[cfg_attr(test, derive(specta::Type))]
-#[serde(rename_all = "camelCase")]
-pub struct SendFileCreateInput {
-    /// Which unlocked connection owns the new Send.
-    pub account_email: String,
-    pub name: String,
-    pub expiry: SendExpiry,
-    /// Cap on how many times the Send can be opened (None = unlimited).
-    pub max_access_count: Option<u32>,
-    /// Optional access password. SECRET — never logged.
-    pub password: Option<String>,
-    /// Hide the sender's email from recipients.
-    pub hide_email: bool,
-}
-
-/// Result of creating a Send: the public share link to hand out, plus the identity
-/// the list needs to show it.
-#[derive(Debug, Clone, Serialize)]
-#[cfg_attr(test, derive(specta::Type))]
-#[serde(rename_all = "camelCase")]
-pub struct SendCreated {
-    pub id: String,
-    pub name: String,
-    /// Public access URL — includes the decryption key in the URL fragment.
-    pub url: String,
 }
 
 /// A decrypted collection (a shared-vault grouping). Per-connection in the

@@ -7,7 +7,7 @@ use bitwarden_vault::{
 };
 
 use crate::dto::{
-    Attachment, CustomField, CustomFieldType, ItemDetail, ItemType, LoginDetail, LoginUri,
+    CustomField, CustomFieldType, ItemDetail, ItemType, LoginDetail, LoginUri,
     PasswordHistoryEntry, VaultItem,
 };
 
@@ -51,7 +51,7 @@ pub(super) fn cipher_type_to_dto(t: CipherType) -> ItemType {
     }
 }
 
-pub(super) fn view_to_list_item(
+pub(crate) fn view_to_list_item(
     view: &CipherView,
     account_email: &str,
     account_label: &str,
@@ -157,21 +157,6 @@ pub fn view_to_detail(view: &CipherView, account_email: &str, account_label: &st
         revision_date: view.revision_date.to_rfc3339(),
         creation_date: view.creation_date.to_rfc3339(),
         collection_ids: view.collection_ids.iter().map(|c| c.to_string()).collect(),
-        attachments: view
-            .attachments
-            .as_ref()
-            .map(|atts| {
-                atts.iter()
-                    .filter_map(|a| {
-                        a.id.clone().map(|id| Attachment {
-                            id,
-                            file_name: a.file_name.clone(),
-                            size_name: a.size_name.clone(),
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default(),
         // Passkeys are decrypted separately (needs a KeyStoreContext on the view);
         // `item_detail` fills this in. Defaults to none here.
         passkeys: Vec::new(),

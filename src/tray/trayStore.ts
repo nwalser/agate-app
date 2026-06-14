@@ -17,11 +17,15 @@
 import { createSignal } from 'solid-js';
 import type { ipc as realIpc } from '../lib/ipc.ts';
 import { hostOf } from '../state/favicons.ts';
+import { FIELD_KIND_TO_INT, fieldStringToLabel } from '../lib/fieldKinds.ts';
 import type {
   AutofillContext,
   AutofillPending,
+  FieldInput,
+  ItemDetail,
   ItemInput,
   UnlockOutcome,
+  UriInput,
   VaultItem,
 } from '../lib/types.ts';
 
@@ -157,6 +161,55 @@ const ADD_GEN_OPTIONS = {
   special: true,
   avoidAmbiguous: false,
 };
+
+/** Build a lossless EDIT payload for a LOGIN from its current detail. The compact
+ *  popup form exposes only four fields (name / username / password / first URI);
+ *  this overrides exactly those and carries everything else through unchanged —
+ *  TOTP, notes, custom fields, extra URIs, folder, org, favorite, reprompt,
+ *  autofill-on-load — so a quick edit never silently wipes the richer data the
+ *  main editor owns. Only logins are editable here, so non-login payloads are
+ *  null on a login detail and stay that way. Pure, unit-tested. */
+export function buildEditInput(original: ItemDetail, draft: AddDraft): ItemInput {
+  const login = original.login;
+  const restUris: UriInput[] = (login?.uris ?? [])
+    .slice(1)
+    .map((u) => ({ uri: u.uri, matchType: u.matchType }));
+  const firstUri = draft.uri.trim();
+  // Replace the first URI in place (keeping its match type) when one is given;
+  // an emptied field drops just the first URI, never the rest.
+  const uris: UriInput[] = firstUri
+    ? [{ uri: firstUri, matchType: login?.uris[0]?.matchType ?? null }, ...restUris]
+    : restUris;
+  // CustomField.fieldType is a lowercase string on the read side; map it back to
+  // the FieldInput int code (Number('hidden') would be NaN → silent data loss).
+  const fields: FieldInput[] = original.fields.map((f) => ({
+    name: f.name,
+    value: f.value,
+    fieldType: FIELD_KIND_TO_INT[fieldStringToLabel(f.fieldType)],
+    linkedId: f.linkedId,
+  }));
+  return {
+    id: original.id,
+    itemType: 'login',
+    name: draft.name.trim(),
+    folderId: original.folderId,
+    organizationId: original.organizationId,
+    favorite: original.favorite,
+    reprompt: original.reprompt,
+    notes: original.notes,
+    login: {
+      username: draft.username.trim() || null,
+      password: draft.password || null,
+      totp: login?.totp ?? null,
+      uris,
+      autofillOnPageLoad: login?.autofillOnPageLoad ?? null,
+    },
+    card: original.card,
+    identity: original.identity,
+    sshKey: original.sshKey,
+    fields,
+  };
+}
 
 /** Existing logins that look like the draft — same website host (strongest),
  *  exact name, or a name containing/contained by the draft's (fragments under
@@ -415,6 +468,9 @@ export function createTrayStore(deps: TrayStoreDeps) {
   // ── Add-login form ──────────────────────────────────────────────────────────
 
   const [addMode, setAddMode] = createSignal(false);
+  // The item being edited (its full detail), or null when the form is a fresh
+  // "add". Drives the edit-vs-create branch in save() and the form's labels.
+  const [editing, setEditing] = createSignal<ItemDetail | null>(null);
   const [draft, setDraftSignal] = createSignal<AddDraft>(EMPTY_DRAFT);
   const [account, setAccount] = createSignal('');
   const [accounts, setAccounts] = createSignal<string[]>([]);
@@ -432,6 +488,7 @@ export function createTrayStore(deps: TrayStoreDeps) {
    *  can override with a richer `prefill` — e.g. `draftFromContext` when the
    *  form is opened from a detected-but-unmatched autofill target. */
   async function enterAdd(prefill?: Partial<AddDraft>): Promise<void> {
+    setEditing(null);
     setDraftSignal({ ...EMPTY_DRAFT, name: query().trim(), ...prefill });
     setReuseCount(0);
     setStrength(null);
@@ -448,8 +505,36 @@ export function createTrayStore(deps: TrayStoreDeps) {
     }
   }
 
+  /** Open the form to EDIT an existing login: fetch its detail, seed the draft
+   *  from it, and pin the account to the item's owner (no account picker on an
+   *  edit). Only logins are editable in the compact form — other types, and
+   *  reprompt-protected items (the popup never bypasses the master-password
+   *  gate, same as the copy path), defer to the main window. */
+  async function enterEdit(item: VaultItem): Promise<void> {
+    if (item.itemType !== 'login') return;
+    if (!passReprompt(item)) return;
+    try {
+      const detail = await deps.ipc.itemDetail(item.accountEmail, item.id);
+      setEditing(detail);
+      setDraftSignal({
+        name: detail.name,
+        username: detail.login?.username ?? '',
+        password: detail.login?.password ?? '',
+        uri: detail.login?.uris[0]?.uri ?? '',
+      });
+      setAccounts([item.accountEmail]);
+      setAccount(item.accountEmail);
+      setReuseCount(0);
+      setStrength(null);
+      setAddMode(true);
+    } catch (err) {
+      deps.onError(err);
+    }
+  }
+
   function exitAdd(): void {
     setAddMode(false);
+    setEditing(null);
     setDraftSignal(EMPTY_DRAFT);
     setReuseCount(0);
     setStrength(null);
@@ -537,6 +622,33 @@ export function createTrayStore(deps: TrayStoreDeps) {
     }
   }
 
+  /** Persist edits to the login currently being edited, preserving every field
+   *  the compact form can't touch (see buildEditInput). Writes back to the
+   *  item's owning account, then refreshes and closes the form. */
+  async function saveEdit(): Promise<boolean> {
+    const original = editing();
+    const d = draft();
+    if (!original || !d.name.trim()) return false;
+    setSaving(true);
+    try {
+      await deps.ipc.saveItem(original.accountEmail, buildEditInput(original, d));
+      await refresh();
+      exitAdd();
+      return true;
+    } catch (err) {
+      deps.onError(err);
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  /** Submit the form: route to the edit or create path by whether an item is
+   *  being edited. The single entry point the view calls. */
+  function save(): Promise<boolean> {
+    return editing() ? saveEdit() : saveNew();
+  }
+
   /** The fill-mode rows: the ranked candidates for the detected target. Empty when
    *  nothing matched — the popup then shows a brief "no password found" message
    *  rather than the full vault. */
@@ -574,8 +686,9 @@ export function createTrayStore(deps: TrayStoreDeps) {
     exitFill,
     fill,
     fillRows,
-    // add-login form
+    // add / edit form
     addMode,
+    editing,
     draft,
     setDraft,
     account,
@@ -585,11 +698,14 @@ export function createTrayStore(deps: TrayStoreDeps) {
     reuseCount,
     strength,
     enterAdd,
+    enterEdit,
     exitAdd,
     generateDraftPassword,
     similar,
     checkReuse,
     saveNew,
+    saveEdit,
+    save,
   };
 }
 

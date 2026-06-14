@@ -15,8 +15,8 @@ use base64::Engine;
 use zeroize::Zeroizing;
 
 use super::{
-    b64, cred_key, AppUnlockBlob, SealedBlob, AI_TOKEN_KEY, APP_UNLOCK_KEY, DEVICE_PEPPER_KEY,
-    HELLO_AUK_KEY, KEYRING_SERVICE, SCAN_CACHE_KEY,
+    b64, cred_key, AppUnlockBlob, SealedBlob, APP_UNLOCK_KEY, DEVICE_PEPPER_KEY,
+    HELLO_AUK_KEY, KEYRING_SERVICE,
 };
 use crate::error::{AgateError, AgateResult, ErrorKind};
 
@@ -150,31 +150,6 @@ pub fn delete_hello_blob() -> AgateResult<()> {
     delete_key(HELLO_AUK_KEY)
 }
 
-/// Store the sealed scan-result cache (breach/exposed results, sealed under the
-/// VMK by the caller).
-pub fn store_scan_cache(blob: &SealedBlob) -> AgateResult<()> {
-    let json = serde_json::to_string(blob)
-        .map_err(|e| AgateError::internal(format!("serialize scan cache: {e}")))?;
-    store_string(SCAN_CACHE_KEY, &json)
-}
-
-/// Load the sealed scan-result cache. `Ok(None)` == no cache yet; a parse failure
-/// is a loud `Keychain` error (corrupt), never silently treated as absent.
-pub fn load_scan_cache() -> AgateResult<Option<SealedBlob>> {
-    match load_string(SCAN_CACHE_KEY)? {
-        Some(json) => {
-            let blob = serde_json::from_str(&json)
-                .map_err(|e| AgateError::new(ErrorKind::Keychain, format!("corrupt scan cache: {e}")))?;
-            Ok(Some(blob))
-        }
-        None => Ok(None),
-    }
-}
-
-pub fn delete_scan_cache() -> AgateResult<()> {
-    delete_key(SCAN_CACHE_KEY)
-}
-
 /// Store the device pepper (base64). Machine binding ties the keychain entry to
 /// this user/machine, so the wrapped VMK can't be derived on another device.
 pub fn store_device_pepper(pepper: &[u8]) -> AgateResult<()> {
@@ -197,20 +172,6 @@ pub fn load_device_pepper() -> AgateResult<Option<Zeroizing<Vec<u8>>>> {
 
 pub fn delete_device_pepper() -> AgateResult<()> {
     delete_key(DEVICE_PEPPER_KEY)
-}
-
-/// Store the MCP server's bearer token (an opaque capability secret).
-pub fn store_ai_token(token: &str) -> AgateResult<()> {
-    store_string(AI_TOKEN_KEY, token)
-}
-
-/// Load the MCP server's bearer token. `Ok(None)` == none generated yet.
-pub fn load_ai_token() -> AgateResult<Option<String>> {
-    load_string(AI_TOKEN_KEY)
-}
-
-pub fn delete_ai_token() -> AgateResult<()> {
-    delete_key(AI_TOKEN_KEY)
 }
 
 // ---- test backend (compiled out of every shipping build) ----

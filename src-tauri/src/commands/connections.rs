@@ -78,6 +78,76 @@ pub async fn unlock_connection(
     res
 }
 
+/// Native picker for a .kdbx database file; `None` when cancelled. The picker
+/// blocks its own thread — keep it off the async runtime's workers.
+#[tauri::command]
+pub async fn pick_keepass_database(app: tauri::AppHandle) -> AgateResult<Option<String>> {
+    pick_file(app, Some(("KeePass database", &["kdbx"]))).await
+}
+
+/// Native picker for a key file (any extension); `None` when cancelled.
+#[tauri::command]
+pub async fn pick_keepass_keyfile(app: tauri::AppHandle) -> AgateResult<Option<String>> {
+    pick_file(app, None).await
+}
+
+async fn pick_file(
+    app: tauri::AppHandle,
+    filter: Option<(&'static str, &'static [&'static str])>,
+) -> AgateResult<Option<String>> {
+    use tauri_plugin_dialog::DialogExt;
+    tokio::task::spawn_blocking(move || {
+        let mut dialog = app.dialog().file();
+        if let Some((name, exts)) = filter {
+            dialog = dialog.add_filter(name, exts);
+        }
+        dialog
+            .blocking_pick_file()
+            .and_then(|f| f.into_path().ok())
+            .map(|p| p.to_string_lossy().into_owned())
+    })
+    .await
+    .map_err(|_| crate::error::AgateError::internal("file picker was interrupted"))
+}
+
+#[tauri::command]
+pub async fn add_keepass_connection(
+    app: tauri::AppHandle,
+    state: State<'_>,
+    path: String,
+    password: String,
+    keyfile: Option<String>,
+    store_credentials: bool,
+) -> AgateResult<()> {
+    let res = connections::add_keepass_connection(
+        &state,
+        path,
+        Zeroizing::new(password),
+        keyfile,
+        store_credentials,
+    )
+    .await;
+    if res.is_ok() {
+        super::emit_session_changed(&app);
+    }
+    res
+}
+
+#[tauri::command]
+pub async fn unlock_keepass_connection(
+    app: tauri::AppHandle,
+    state: State<'_>,
+    path: String,
+    password: String,
+) -> AgateResult<()> {
+    let res =
+        connections::unlock_keepass_connection(&state, path, Zeroizing::new(password)).await;
+    if res.is_ok() {
+        super::emit_session_changed(&app);
+    }
+    res
+}
+
 #[tauri::command]
 pub async fn send_email_code(
     state: State<'_>,

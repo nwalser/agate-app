@@ -1,17 +1,22 @@
-//! System-tray icon + the quick-access popup window.
+//! System-tray icon + the quick-access popup window — the app's ONLY window.
 //!
-//! Left-click toggles the popup (the second window, label `tray`, declared in
-//! `tauri.conf.json`) placed next to the click and clamped onto the monitor;
-//! the tray menu keeps explicit Show / Quit entries. The popup is pinned: it
-//! stays always-on-top and never hides on focus loss — only the tray icon
-//! (toggle), Escape, or a close request dismiss it (see `on_window_event` in
-//! `lib.rs`). Because it can stay visible across a lock/unlock in the main
-//! window, the command layer broadcasts `agate://session-changed` (see
-//! `commands/mod.rs`) and the popup re-reads session state on it (plus on
-//! every show), so it never renders a stale unlocked list after a lock.
+//! Left-click toggles the popup (label `tray`, declared in `tauri.conf.json`)
+//! placed next to the click and clamped onto the monitor; the tray menu keeps
+//! explicit Open / Quit entries. The popup hides as soon as it loses focus (a
+//! click anywhere outside it) — plus the tray icon (toggle), Escape, or a close
+//! request — EXCEPT while a form view pins it (`TrayPopup::set_pinned`, driven
+//! by TrayApp) so a stray click can't discard half-typed input. The focus-loss
+//! hide lives in `on_window_event` (`lib.rs`) → `on_popup_focus_lost`. The
+//! command layer broadcasts `agate://session-changed` (see `commands/mod.rs`)
+//! and the popup re-reads session state on it (plus on every show), so it never
+//! renders a stale unlocked list after a lock.
 //!
 //! Linux caveat: appindicator trays deliver no left-click events, so only the
 //! menu works there — the popup is effectively Windows/macOS.
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -19,6 +24,78 @@ use tauri::{Emitter, Manager};
 
 /// Gap between the popup and the click point / monitor edges (physical px).
 const POPUP_MARGIN: i32 = 8;
+
+/// How long after a focus-loss auto-hide a tray click counts as the *same*
+/// gesture, so the toggle leaves the popup hidden instead of re-opening it.
+const AUTO_HIDE_DEBOUNCE: Duration = Duration::from_millis(200);
+
+/// Managed (one per install, via `app.manage` in `setup`) coordination for the
+/// popup's click-outside-to-hide behaviour — see the module docs.
+#[derive(Default)]
+pub struct TrayPopup {
+    /// True while the add/edit-login form is open — the one view kept up on a
+    /// focus loss, so a click elsewhere can't throw away a half-typed login.
+    pinned: AtomicBool,
+    /// When `on_popup_focus_lost` last auto-hid the popup. A tray-icon click
+    /// blurs the popup (hide) and *then* fires the toggle a beat later; this
+    /// timestamp lets the toggle tell that gesture apart from a fresh open, so it
+    /// doesn't re-show what the same click just hid.
+    last_auto_hidden: Mutex<Option<Instant>>,
+}
+
+impl TrayPopup {
+    /// Pin (form open) or release (form closed) the popup against the focus-loss
+    /// auto-hide. Driven by TrayApp via the `set_tray_pinned` command.
+    pub fn set_pinned(&self, pinned: bool) {
+        self.pinned.store(pinned, Ordering::Relaxed);
+    }
+
+    fn is_pinned(&self) -> bool {
+        self.pinned.load(Ordering::Relaxed)
+    }
+
+    fn mark_auto_hidden(&self) {
+        // Recover a poisoned lock rather than panic in a UI path.
+        *self.last_auto_hidden.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
+    }
+
+    /// True iff a focus-loss auto-hide happened within `AUTO_HIDE_DEBOUNCE` — the
+    /// current tray click is that same blur, so the toggle should leave the popup
+    /// hidden. Consumes the timestamp so it only suppresses one open.
+    fn took_recent_auto_hide(&self) -> bool {
+        let mut slot = self.last_auto_hidden.lock().unwrap_or_else(|e| e.into_inner());
+        match *slot {
+            Some(at) if at.elapsed() < AUTO_HIDE_DEBOUNCE => {
+                *slot = None;
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
+/// Hide the popup when it loses focus (a click anywhere outside it), unless the
+/// add/edit-login form pins it open. Records the hide so the tray-icon click that
+/// caused the blur doesn't immediately re-open it (see `toggle_popup`). Called
+/// from `on_window_event` on `WindowEvent::Focused(false)`.
+pub fn on_popup_focus_lost(window: &tauri::Window) {
+    let app = window.app_handle();
+    let popup = app.state::<TrayPopup>();
+    // Form open — keep it up; a stray click must not discard a draft login.
+    if popup.is_pinned() {
+        return;
+    }
+    // Only an actually-visible popup can lose focus into hiding; guard against
+    // spurious blur events so we never arm a debounce we didn't act on.
+    if !window.is_visible().unwrap_or(false) {
+        return;
+    }
+    // A focus loss ends any autofill prompt the popup was showing (mirrors the
+    // close-request path).
+    crate::autofill::clear_pending_for(app);
+    let _ = window.hide();
+    popup.mark_auto_hidden();
+}
 
 /// Emitted to the popup the instant it is shown, so it re-reads session + items
 /// deterministically. The popup also refreshes on the OS focus event, but
@@ -28,24 +105,14 @@ const POPUP_MARGIN: i32 = 8;
 /// signal does not depend on focus, so the refresh always fires on show.
 const TRAY_SHOWN_EVENT: &str = "agate://tray-shown";
 
-/// Bring the main window to the front (tray menu "Show", a second app launch,
-/// and the popup's "Open Agate" button).
-pub fn reveal_main(app: &tauri::AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
-    }
-}
-
-/// Build the system-tray icon: Show / Quit menu; left-click toggles the popup.
+/// Build the system-tray icon: Open / Quit menu; left-click toggles the popup.
 pub fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let Some(icon) = app.default_window_icon().cloned() else {
         log::warn!("no default window icon; skipping tray");
         return Ok(());
     };
 
-    let show = MenuItem::with_id(app, "show", "Show Agate", true, None::<&str>)?;
+    let show = MenuItem::with_id(app, "show", "Open Agate", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show, &quit])?;
 
@@ -55,7 +122,7 @@ pub fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
-            "show" => reveal_main(app),
+            "show" => show_popup_near_tray(app),
             "quit" => app.exit(0),
             _ => {}
         })
@@ -77,10 +144,8 @@ pub fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 /// Show the popup next to the tray click, or hide it if it's already open.
 fn toggle_popup(app: &tauri::AppHandle, cursor: tauri::PhysicalPosition<f64>) {
     let Some(popup) = app.get_webview_window("tray") else {
-        // The window is declared in tauri.conf.json, so this is config drift —
-        // fall back to the main window rather than swallowing the click.
-        log::warn!("tray popup window missing; revealing the main window instead");
-        reveal_main(app);
+        // The window is declared in tauri.conf.json, so this is config drift.
+        log::error!("tray popup window missing; the click has nowhere to go");
         return;
     };
     // A tray-icon open/close is never an autofill flow — drop any pending
@@ -88,6 +153,12 @@ fn toggle_popup(app: &tauri::AppHandle, cursor: tauri::PhysicalPosition<f64>) {
     crate::autofill::clear_pending_for(app);
     if popup.is_visible().unwrap_or(false) {
         let _ = popup.hide();
+        return;
+    }
+    // The same click re-opening us may have just blurred + auto-hidden the popup
+    // (the tray icon sits outside it, so the click is a focus loss too); honor
+    // that as toggle-OFF rather than flickering it straight back open.
+    if app.state::<TrayPopup>().took_recent_auto_hide() {
         return;
     }
     place_and_show(app, &popup, (cursor.x, cursor.y));
@@ -98,8 +169,7 @@ fn toggle_popup(app: &tauri::AppHandle, cursor: tauri::PhysicalPosition<f64>) {
 /// reusing the same work-area clamping as a tray click.
 pub fn show_popup_near_tray(app: &tauri::AppHandle) {
     let Some(popup) = app.get_webview_window("tray") else {
-        log::warn!("tray popup window missing; revealing the main window instead");
-        reveal_main(app);
+        log::error!("tray popup window missing; nothing to show");
         return;
     };
     place_and_show(app, &popup, tray_anchor_point(app, &popup));
@@ -192,7 +262,33 @@ fn popup_position(
 
 #[cfg(test)]
 mod tests {
-    use super::popup_position;
+    use super::{popup_position, TrayPopup};
+
+    #[test]
+    fn traypopup_pin_defaults_off_and_toggles() {
+        let p = TrayPopup::default();
+        assert!(!p.is_pinned());
+        p.set_pinned(true);
+        assert!(p.is_pinned());
+        p.set_pinned(false);
+        assert!(!p.is_pinned());
+    }
+
+    #[test]
+    fn took_recent_auto_hide_is_false_without_a_mark() {
+        let p = TrayPopup::default();
+        assert!(!p.took_recent_auto_hide());
+    }
+
+    #[test]
+    fn took_recent_auto_hide_fires_once_then_resets() {
+        let p = TrayPopup::default();
+        p.mark_auto_hidden();
+        // Just marked → within the debounce → suppress this re-open...
+        assert!(p.took_recent_auto_hide());
+        // ...but only once: the next tray click is a real open.
+        assert!(!p.took_recent_auto_hide());
+    }
 
     // A 2560x1440 monitor whose bottom 48px are the Windows taskbar — the work
     // area the OS reports stops at y=1392.

@@ -21,13 +21,12 @@ use rand::RngCore;
 use zeroize::Zeroizing;
 
 use crate::auth::{self, LoginOutcome};
-use crate::dto::{TwoFactorInput, TwoFactorKind, UnlockOutcome, UnlockStatus};
+use crate::dto::{ConnectionKind, TwoFactorInput, TwoFactorKind, UnlockOutcome, UnlockStatus};
 use crate::error::{AgateError, AgateResult, ErrorKind};
 use crate::secrets::{
     self, AppUnlockBlob, StoredConnection, ARGON_M_COST, ARGON_P_COST, ARGON_T_COST, BLOB_VERSION,
 };
-use crate::server;
-use crate::state::{AppState, LiveConnection};
+use crate::state::AppState;
 
 /// Minimum length for the single app password. It guards every connection, so
 /// keep it meaningfully strong without being hostile.
@@ -240,22 +239,28 @@ pub(crate) async fn finish_unlock(
     let accounts = state.config.lock().await.accounts.clone();
     let mut outcomes = Vec::with_capacity(accounts.len());
     for acct in &accounts {
-        // Manual-unlock connections have no stored password — leave them locked for
+        // Manual-unlock connections have no stored secret — leave them locked for
         // the user to unlock on demand, rather than failing to load a sealed cred.
         let status = if !acct.store_credentials {
             UnlockStatus::ManualUnlock
         } else {
-            match unlock_one(state, &acct.email, &vmk).await {
-                Ok(()) => UnlockStatus::Unlocked,
-                Err(UnlockOneError::TwoFactor(providers)) => {
-                    UnlockStatus::TwoFactorRequired { providers }
-                }
-                Err(UnlockOneError::Failed(message)) => UnlockStatus::Failed { message },
+            match acct.kind {
+                ConnectionKind::Bitwarden => match unlock_one(state, &acct.email, &vmk).await {
+                    Ok(()) => UnlockStatus::Unlocked,
+                    Err(UnlockOneError::TwoFactor(providers)) => {
+                        UnlockStatus::TwoFactorRequired { providers }
+                    }
+                    Err(UnlockOneError::Failed(message)) => UnlockStatus::Failed { message },
+                },
+                ConnectionKind::Keepass => match unlock_one_keepass(state, &acct.email, &vmk).await {
+                    Ok(()) => UnlockStatus::Unlocked,
+                    Err(message) => UnlockStatus::Failed { message },
+                },
             }
         };
         outcomes.push(UnlockOutcome {
             email: acct.email.clone(),
-            server_label: server::server_label(&acct.server),
+            server_label: acct.label(),
             status,
         });
     }
@@ -293,17 +298,41 @@ async fn unlock_one(state: &AppState, email: &str, vmk: &[u8; 32]) -> Result<(),
     let pw = Zeroizing::new(conn.master_password.clone());
     match auth::login_password(state, &conn.server, &conn.email, pw, None).await {
         Ok(LoginOutcome::Success(client)) => {
-            state
-                .session
-                .lock()
-                .await
-                .connections
-                .insert(email.to_string(), LiveConnection::new(client));
+            state.session.lock().await.insert_bitwarden(email.to_string(), client);
             Ok(())
         }
         Ok(LoginOutcome::TwoFactorRequired(providers)) => Err(UnlockOneError::TwoFactor(providers)),
         Err(e) => Err(UnlockOneError::Failed(e.message)),
     }
+}
+
+/// Unlock one KeePass connection from its sealed credentials: open the database
+/// with the stored password (+ key file) off the async runtime, then add it live.
+/// No network, no 2FA — the only failure mode is a missing/corrupt/changed file
+/// or key, reported as a message.
+async fn unlock_one_keepass(state: &AppState, id: &str, vmk: &[u8; 32]) -> Result<(), String> {
+    let stored = load_connection(id, vmk).map_err(|e| e.message)?;
+    let path = stored.path.clone().unwrap_or_else(|| stored.email.clone());
+    let keyfile = stored.keyfile.clone();
+    let pw = Zeroizing::new(stored.master_password.clone());
+    let conn = tokio::task::spawn_blocking(move || {
+        crate::providers::KeepassConnection::open(
+            std::path::Path::new(&path),
+            pw.as_str(),
+            keyfile.as_deref().map(std::path::Path::new),
+        )
+    })
+    .await
+    .map_err(|_| "database open was interrupted".to_string())?
+    .map_err(|e| e.message)?;
+
+    state
+        .session
+        .lock()
+        .await
+        .connections
+        .insert(id.to_string(), crate::providers::LiveConnection::Keepass(conn));
+    Ok(())
 }
 
 /// Open one connection's sealed credentials with the VMK.
@@ -333,7 +362,7 @@ pub async fn unlock_connection_2fa(
         LoginOutcome::Success(client) => {
             {
                 let mut session = state.session.lock().await;
-                session.connections.insert(email.clone(), LiveConnection::new(client));
+                session.insert_bitwarden(email.clone(), client);
                 if session.active_email.is_none() {
                     session.active_email = Some(email);
                 }
@@ -423,9 +452,12 @@ mod tests {
         // Seal a connection credential under the live VMK and read it back.
         let vmk = current_vmk(&state).await.expect("vmk held after configure");
         let stored = StoredConnection {
+            kind: crate::dto::ConnectionKind::Bitwarden,
             server: crate::dto::ServerConfig::Us,
             email: "alice@example.com".to_string(),
             master_password: "hunter2hunter2".to_string(),
+            path: None,
+            keyfile: None,
         };
         seal_connection(&vmk, &stored).expect("seal cred");
         let loaded = load_connection("alice@example.com", &vmk).expect("open cred");

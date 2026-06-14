@@ -11,11 +11,10 @@ use zeroize::Zeroizing;
 
 use crate::appunlock;
 use crate::auth::{self, LoginOutcome};
-use crate::dto::{ConnectionSummary, LoginResult, ServerConfig, TwoFactorInput};
+use crate::dto::{ConnectionKind, ConnectionSummary, LoginResult, ServerConfig, TwoFactorInput};
 use crate::error::{AgateError, AgateResult};
 use crate::secrets::{self, StoredConnection};
-use crate::server;
-use crate::state::{AppState, LiveConnection};
+use crate::state::AppState;
 
 /// List configured connections, marking which are currently unlocked.
 pub async fn list_connections(state: &AppState) -> AgateResult<Vec<ConnectionSummary>> {
@@ -25,8 +24,9 @@ pub async fn list_connections(state: &AppState) -> AgateResult<Vec<ConnectionSum
     Ok(accounts
         .iter()
         .map(|a| ConnectionSummary {
+            kind: a.kind,
             email: a.email.clone(),
-            server_label: server::server_label(&a.server),
+            server_label: a.label(),
             server: a.server.clone(),
             unlocked: live.contains(&a.email),
             store_credentials: a.store_credentials,
@@ -60,9 +60,12 @@ pub async fn add_connection(
             // Seal first (when storing); only record the connection once persisted.
             if store_credentials {
                 let stored = StoredConnection {
+                    kind: ConnectionKind::Bitwarden,
                     server: server.clone(),
                     email: email.clone(),
                     master_password: (*password).clone(),
+                    path: None,
+                    keyfile: None,
                 };
                 appunlock::seal_connection(&vmk, &stored)?;
             } else {
@@ -72,7 +75,7 @@ pub async fn add_connection(
 
             if let Err(e) = state
                 .update_config(|cfg| {
-                    cfg.upsert_account(server.clone(), &email, store_credentials);
+                    cfg.upsert_account(ConnectionKind::Bitwarden, server.clone(), &email, store_credentials);
                     cfg.server = server.clone();
                 })
                 .await
@@ -86,7 +89,7 @@ pub async fn add_connection(
             }
             {
                 let mut session = state.session.lock().await;
-                session.connections.insert(email.clone(), LiveConnection::new(client));
+                session.insert_bitwarden(email.clone(), client);
                 if session.active_email.is_none() {
                     session.active_email = Some(email.clone());
                 }
@@ -135,20 +138,25 @@ pub async fn update_connection(
             LoginOutcome::Success(client) => {
                 if store_credentials {
                     let stored = StoredConnection {
+                        kind: ConnectionKind::Bitwarden,
                         server: server.clone(),
                         email: email.clone(),
                         master_password: (*pw).clone(),
+                        path: None,
+                        keyfile: None,
                     };
                     appunlock::seal_connection(&vmk, &stored)?;
                 } else {
                     secrets::delete_cred(&email)?;
                 }
                 state
-                    .update_config(|cfg| cfg.upsert_account(server.clone(), &email, store_credentials))
+                    .update_config(|cfg| {
+                        cfg.upsert_account(ConnectionKind::Bitwarden, server.clone(), &email, store_credentials)
+                    })
                     .await?;
                 {
                     let mut session = state.session.lock().await;
-                    session.connections.insert(email.clone(), LiveConnection::new(client));
+                    session.insert_bitwarden(email.clone(), client);
                     if session.active_email.is_none() {
                         session.active_email = Some(email.clone());
                     }
@@ -175,7 +183,9 @@ pub async fn update_connection(
     // Config transaction first (rollback-able), keychain delete after — see
     // remove_connection for the ordering rationale.
     state
-        .update_config(|cfg| cfg.upsert_account(existing.server.clone(), &email, store_credentials))
+        .update_config(|cfg| {
+            cfg.upsert_account(existing.kind, existing.server.clone(), &email, store_credentials)
+        })
         .await?;
     if !store_credentials {
         // Turning storage off: forget the sealed password (the live session stays).
@@ -207,13 +217,119 @@ pub async fn unlock_connection(
         LoginOutcome::TwoFactorRequired(providers) => Ok(LoginResult::TwoFactorRequired { providers }),
         LoginOutcome::Success(client) => {
             let mut session = state.session.lock().await;
-            session.connections.insert(email.clone(), LiveConnection::new(client));
+            session.insert_bitwarden(email.clone(), client);
             if session.active_email.is_none() {
                 session.active_email = Some(email);
             }
             Ok(LoginResult::Success)
         }
     }
+}
+
+/// Add a KeePass database as a connection. Opens (and thereby verifies) the
+/// database first; when `store_credentials` is set, seals the database password
+/// under the VMK so it auto-unlocks with the app. The file path doubles as the
+/// connection id (`email` in the config record, for back-compat).
+pub async fn add_keepass_connection(
+    state: &AppState,
+    path: String,
+    password: Zeroizing<String>,
+    keyfile: Option<String>,
+    store_credentials: bool,
+) -> AgateResult<()> {
+    let vmk = appunlock::current_vmk(state)
+        .await
+        .map_err(|_| AgateError::bad_request("Set an app password before adding a connection."))?;
+
+    let conn = open_keepass(path.clone(), password.clone(), keyfile.clone()).await?;
+
+    if store_credentials {
+        let stored = StoredConnection {
+            kind: ConnectionKind::Keepass,
+            server: ServerConfig::default(),
+            email: path.clone(),
+            master_password: (*password).clone(),
+            path: Some(path.clone()),
+            keyfile: keyfile.clone(),
+        };
+        appunlock::seal_connection(&vmk, &stored)?;
+    } else {
+        // Manual-unlock connection: make sure no stale sealed password lingers.
+        secrets::delete_cred(&path)?;
+    }
+
+    if let Err(e) = state
+        .update_config(|cfg| {
+            cfg.upsert_account_with_keyfile(
+                ConnectionKind::Keepass,
+                ServerConfig::default(),
+                &path,
+                store_credentials,
+                keyfile.clone(),
+            );
+        })
+        .await
+    {
+        // Compensate: the config rolled back, so a just-sealed database
+        // password must not stay orphaned in the keychain.
+        if store_credentials {
+            let _ = secrets::delete_cred(&path); // ignore: best-effort compensation
+        }
+        return Err(e);
+    }
+    {
+        let mut session = state.session.lock().await;
+        session.connections.insert(path.clone(), crate::providers::LiveConnection::Keepass(conn));
+        if session.active_email.is_none() {
+            session.active_email = Some(path);
+        }
+    }
+    Ok(())
+}
+
+/// Unlock one KeePass connection on demand with its database password (manual
+/// connections, or retrying a failed one). The key file path comes from the
+/// connection record; the password is not persisted here.
+pub async fn unlock_keepass_connection(
+    state: &AppState,
+    path: String,
+    password: Zeroizing<String>,
+) -> AgateResult<()> {
+    let acct = state
+        .config
+        .lock()
+        .await
+        .account_for(&path)
+        .cloned()
+        .ok_or_else(|| AgateError::bad_request("No such connection."))?;
+    if acct.kind != ConnectionKind::Keepass {
+        return Err(AgateError::bad_request("Not a KeePass connection."));
+    }
+
+    let conn = open_keepass(path.clone(), password, acct.keyfile.clone()).await?;
+    let mut session = state.session.lock().await;
+    session.connections.insert(path.clone(), crate::providers::LiveConnection::Keepass(conn));
+    if session.active_email.is_none() {
+        session.active_email = Some(path);
+    }
+    Ok(())
+}
+
+/// Open a KeePass database off the async runtime (the KDF is CPU-bound).
+async fn open_keepass(
+    path: String,
+    password: Zeroizing<String>,
+    keyfile: Option<String>,
+) -> AgateResult<crate::providers::KeepassConnection> {
+    tokio::task::spawn_blocking(move || {
+        crate::providers::KeepassConnection::open(
+            std::path::Path::new(&path),
+            password.as_str(),
+            keyfile.as_deref().map(std::path::Path::new),
+        )
+    })
+    .await
+    .map_err(|_| AgateError::internal("database open was interrupted"))?
 }
 
 /// Structural equality for two server configs (no `PartialEq` derive on the DTO).
@@ -297,12 +413,6 @@ pub async fn logout(state: &AppState) -> AgateResult<()> {
         .update_config(|cfg| {
             cfg.app_unlock_configured = false;
             cfg.hello_configured = false;
-            cfg.darkweb_consent = false;
-            // The MCP server's allowlist + opt-in are capability state — drop them
-            // on logout. The bound listener stays up but fails closed (disabled +
-            // locked).
-            cfg.ai_server_enabled = false;
-            cfg.ai_grants.clear();
         })
         .await?;
 
@@ -312,11 +422,11 @@ pub async fn logout(state: &AppState) -> AgateResult<()> {
     let _ = secrets::delete_key(secrets::APP_UNLOCK_KEY);
     let _ = secrets::delete_hello_blob();
     let _ = secrets::delete_device_pepper(); // ignore: best-effort teardown
-    let _ = secrets::delete_scan_cache(); // ignore: best-effort teardown
-    let _ = secrets::delete_ai_token(); // ignore: best-effort teardown of the MCP token
+    // Legacy entries written by removed features (security-scan cache, MCP AI
+    // token) — keep wiping them so old installs don't leave orphans behind.
+    let _ = secrets::delete_key("scan-cache"); // ignore: best-effort teardown
+    let _ = secrets::delete_key("ai-mcp-token"); // ignore: best-effort teardown
 
     state.session.lock().await.clear_secrets();
-    *state.breach_directory.lock().await = None;
-    *state.ai_audit.lock().await = Vec::new();
     Ok(())
 }

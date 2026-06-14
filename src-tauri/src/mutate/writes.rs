@@ -217,6 +217,9 @@ pub async fn save_item(state: &AppState, account_email: &str, input: ItemInput) 
     if input.name.trim().is_empty() {
         return Err(AgateError::bad_request("Name is required."));
     }
+    if let super::WriteRoute::Keepass = super::route_for(state, account_email).await? {
+        return super::keepass_write(state, account_email, |k| k.save_item(&input)).await;
+    }
     let client = client_for(state, account_email).await?;
 
     match &input.id {
@@ -265,6 +268,10 @@ pub async fn save_item(state: &AppState, account_email: &str, input: ItemInput) 
 
 /// Duplicate an item into a new personal cipher named "… - Clone".
 pub async fn clone_item(state: &AppState, account_email: &str, id: &str) -> AgateResult<()> {
+    if let super::WriteRoute::Keepass = super::route_for(state, account_email).await? {
+        // The KeePass provider has no clone primitive; niche enough to defer.
+        return Err(AgateError::bad_request("Cloning is not supported for KeePass vaults yet."));
+    }
     let client = client_for(state, account_email).await?;
     let existing = decrypt_one(state, account_email, id).await?;
 
@@ -281,6 +288,9 @@ pub async fn clone_item(state: &AppState, account_email: &str, id: &str) -> Agat
 
 /// Toggle favorite on one item (full edit so it works without edit-permission tricks).
 pub async fn set_favorite(state: &AppState, account_email: &str, id: &str, favorite: bool) -> AgateResult<()> {
+    if let super::WriteRoute::Keepass = super::route_for(state, account_email).await? {
+        return super::keepass_write(state, account_email, |k| k.set_favorite(id, favorite)).await;
+    }
     let client = client_for(state, account_email).await?;
     let existing = decrypt_one(state, account_email, id).await?;
     let mut v = serde_json::to_value(&existing).map_err(build_err)?;
@@ -296,6 +306,12 @@ pub async fn move_items(
     ids: Vec<String>,
     folder_id: Option<String>,
 ) -> AgateResult<()> {
+    if let super::WriteRoute::Keepass = super::route_for(state, account_email).await? {
+        return super::keepass_write(state, account_email, |k| {
+            k.move_items(&ids, folder_id.as_deref())
+        })
+        .await;
+    }
     let client = client_for(state, account_email).await?;
     let cipher_ids: Vec<CipherId> = ids.iter().map(|s| parse_id(s)).collect::<AgateResult<_>>()?;
     let folder = parse_opt_id::<bitwarden_vault::FolderId>(&folder_id)?;
@@ -315,6 +331,10 @@ pub async fn delete_items(
     ids: Vec<String>,
     permanent: bool,
 ) -> AgateResult<()> {
+    if let super::WriteRoute::Keepass = super::route_for(state, account_email).await? {
+        return super::keepass_write(state, account_email, |k| k.delete_items(&ids, permanent))
+            .await;
+    }
     let client = client_for(state, account_email).await?;
     let cipher_ids: Vec<CipherId> = ids.iter().map(|s| parse_id(s)).collect::<AgateResult<_>>()?;
     let ciphers = client.vault().ciphers();
@@ -328,6 +348,9 @@ pub async fn delete_items(
 
 /// Restore soft-deleted items from trash in one account.
 pub async fn restore_items(state: &AppState, account_email: &str, ids: Vec<String>) -> AgateResult<()> {
+    if let super::WriteRoute::Keepass = super::route_for(state, account_email).await? {
+        return super::keepass_write(state, account_email, |k| k.restore_items(&ids)).await;
+    }
     let client = client_for(state, account_email).await?;
     let cipher_ids: Vec<CipherId> = ids.iter().map(|s| parse_id(s)).collect::<AgateResult<_>>()?;
     client

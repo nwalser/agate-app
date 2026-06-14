@@ -28,21 +28,14 @@ tauri-plugin-opener = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
-tauri-plugin-window-state = "2"
-# Native open-file dialog for vault import (called from Rust; no JS capability
-# needed). Save/export writes to Downloads directly, so this is import-only.
+# Native open-file dialog for picking a .kdbx database (called from Rust; no JS
+# capability needed).
 tauri-plugin-dialog = "2"
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Host OS UI locale for first-run language detection (get_system_locale).
 sys-locale = "0.3"
-# Decode user-picked image files for the OCR "fill from image" path (the SDK
-# already pulls `image` in transitively; promoting it costs ~nothing).
-image = "0.25"
-# Robust CSV reader for vault import (quoted fields, embedded newlines). Export
-# writes CSV by hand; import needs a real parser.
-csv = "1"
 thiserror = "2"
 log = "0.4"
 tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros", "time"] }
@@ -57,16 +50,6 @@ aes-gcm = "0.10"
 rand = "0.8"
 zeroize = { version = "1", features = ["derive"] }
 base64 = "0.22"
-# Constant-time equality for the MCP bearer-token check (already in-tree via
-# aes-gcm; made explicit so the auth gate can use it directly).
-subtle = "2"
-
-# Scan a TOTP setup QR off the screen: capture every monitor (xcap) and decode
-# any otpauth:// QR (rqrr). See qrscan.rs. We feed rqrr greyscale bytes via its
-# closure constructor, so there's no coupling to the `image` crate version the
-# SDK already pulls in.
-xcap = "0.9"
-rqrr = "0.10"
 
 # Bitwarden official SDK (sdk-internal). GPLv3. Pinned by rev because the
 # password-manager SDK is explicitly unstable ("changes without warning").
@@ -78,10 +61,16 @@ bitwarden-sync = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef8
 bitwarden-generators = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e" }
 bitwarden-api-api = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e" }
 bitwarden-collections = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e" }
-bitwarden-send = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e" }
 bitwarden-state = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e" }
+# zxcvbn: the add/edit-form's live password strength meter (src/strength.rs).
 zxcvbn = "3.1"
-sha1 = "0.10"
+# KeePass KDBX4 read/write (providers/keepass.rs). Write support is behind
+# `save_kdbx4` and still labeled experimental upstream — every save goes
+# through Agate's own atomic temp-write → reopen-verify → rename flow, with a
+# .bak of the previous file, so a bad write can never destroy the database.
+keepass = { version = "0.13", features = ["save_kdbx4"] }
+# Atomic save scratch files for the KeePass provider (same-dir temp + persist).
+tempfile = "3"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking"] }
 # Tiny loopback HTTP proxy used to fix self-hosted (Vaultwarden) prelogin: the
 # SDK's identity client has no middleware hook, so we rewrite the one prelogin
@@ -103,10 +92,7 @@ robius-authentication = "0.1"
 windows = { version = "0.58", features = [
     "Foundation",
     "Foundation_Collections",
-    "Graphics_Imaging",
-    "Media_Ocr",
     "Security_Credentials_UI",
-    "Storage_Streams",
     "Win32_Foundation",
     "Win32_System_Com",
     "Win32_System_Threading",
@@ -117,9 +103,5 @@ windows = { version = "0.58", features = [
 ] }
 
 [dev-dependencies]
-# Render a known otpauth:// QR in-process to test the decode path without a real
-# screen capture (qrscan::decode_otpauth_from_rgba). `image` moved to the main
-# [dependencies] for the OCR file path.
-qrcode = "0.14"
 specta = { version = "=2.0.0-rc.22", features = ["derive"] }
 specta-typescript = "=0.0.9"
