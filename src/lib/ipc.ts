@@ -174,6 +174,52 @@ export const ipc = {
   unlockKeepassConnection: (path: string, password: string): Promise<void> =>
     invoke('unlock_keepass_connection', { path, password }),
 
+  // ---- pass (the standard unix password store) connections ----
+
+  /** Native picker for a `pass` store root directory; null when cancelled. */
+  pickPassStore: (): Promise<string | null> => invoke('pick_pass_store'),
+
+  /** Native picker for an exported OpenPGP secret-key file; null when cancelled. */
+  pickPassKeyfile: (): Promise<string | null> => invoke('pick_pass_keyfile'),
+
+  /** Open + add a `pass` store as a (read-only) connection. The store root path
+   *  doubles as the connection id; `keyFile` is the exported OpenPGP secret key,
+   *  `passphrase` unlocks it. `storeCredentials` seals the passphrase under the
+   *  VMK so it auto-unlocks with the app. */
+  addPassConnection: (
+    storeRoot: string,
+    keyFile: string,
+    passphrase: string,
+    storeCredentials: boolean,
+  ): Promise<void> =>
+    invoke('add_pass_connection', { storeRoot, keyFile, passphrase, storeCredentials }),
+
+  /** Unlock one `pass` connection on demand (manual-unlock connections). The key
+   *  file is read from the connection record. */
+  unlockPassConnection: (storeRoot: string, passphrase: string): Promise<void> =>
+    invoke('unlock_pass_connection', { storeRoot, passphrase }),
+
+  // ---- Enpass connections ----
+
+  /** Native picker for an Enpass `vault.enpassdb` file; null when cancelled. */
+  pickEnpassVault: (): Promise<string | null> => invoke('pick_enpass_vault'),
+
+  /** Open + add an Enpass vault as a (read-only) connection. The vault path
+   *  doubles as the connection id. `keyfile` is optional; `storeCredentials`
+   *  seals the master password under the VMK so it auto-unlocks with the app. */
+  addEnpassConnection: (
+    path: string,
+    password: string,
+    keyfile: string | null,
+    storeCredentials: boolean,
+  ): Promise<void> =>
+    invoke('add_enpass_connection', { path, password, keyfile, storeCredentials }),
+
+  /** Unlock one Enpass connection on demand (manual-unlock connections). The key
+   *  file, when configured, is read from the connection record. */
+  unlockEnpassConnection: (path: string, password: string): Promise<void> =>
+    invoke('unlock_enpass_connection', { path, password }),
+
   setActiveConnection: (email: string): Promise<void> =>
     invoke('set_active_connection', { email }),
 
@@ -288,4 +334,16 @@ export const ipc = {
 
   /** Discard the pending detection without filling (popup dismissed). */
   autofillDismiss: (): Promise<void> => invoke('autofill_dismiss'),
+
+  /** Press Enter to submit the form after a successful fill (user opt-in). */
+  autofillSetSubmit: (submit: boolean): Promise<void> => invoke('autofill_set_submit', { submit }),
+
+  /** Replace the per-app denylist (process stems autofill must never offer in). */
+  autofillSetDenylist: (denylist: string[]): Promise<void> =>
+    invoke('autofill_set_denylist', { denylist }),
+
+  /** Remember the chosen login for the detected target (adds the detection's
+   *  association URI to the login's autofill URIs) so it matches next time. */
+  autofillAssociate: (accountEmail: string, itemId: string, uri: string): Promise<void> =>
+    invoke('autofill_associate', { accountEmail, itemId, uri }),
 };

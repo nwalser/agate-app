@@ -13,8 +13,23 @@
 //! - **Password** box → the password.
 //! - **Username** box → the username, then **Tab**, then the password (best-effort
 //!   both-field fill; tab order is the near-universal username→password sequence).
-//!   We never press Enter — filling is not submitting.
 //! - **One-time-code** box → the current TOTP code.
+//!
+//! After the value(s) land, we press **Enter** to submit ONLY when the user has
+//! opted in (`FillValues.submit`) — off by default, since some forms break on a
+//! premature submit. Submitting also drives multi-step (username-page → password-
+//! page) flows: the username page advances and the watcher re-offers on the next
+//! password field.
+//!
+//! We **verify the username after typing** (read its value back via UIA
+//! `ValuePattern`) and retry the keystrokes once on a mismatch — this catches the
+//! "focus wasn't really in the field" silent no-fill. A password is NOT verified:
+//! a masked field reports an empty/placeholder value, so a read-back can't tell
+//! "didn't land" from "masked".
+//!
+//! Window-settle timing is ADAPTIVE: we poll for the focused element up to
+//! [`MAX_FOCUS_SETTLE`] instead of sleeping a fixed time, so a fast app proceeds at
+//! once and a slow one still gets a real chance to paint + restore focus.
 //!
 //! ⚠️ Hard limits, surfaced not swallowed:
 //! - **UIPI**: a non-elevated Agate cannot send input to an elevated (admin)
@@ -29,25 +44,31 @@ use std::ffi::c_void;
 use std::thread::sleep;
 use std::time::Duration;
 
-use windows::core::HRESULT;
+use windows::core::{Interface, HRESULT};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
 };
 use windows::Win32::UI::Accessibility::{
-    CUIAutomation, IUIAutomation, IUIAutomationElement, UIA_EditControlTypeId,
+    CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationValuePattern,
+    UIA_EditControlTypeId, UIA_ValuePatternId,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP,
-    KEYEVENTF_UNICODE, VIRTUAL_KEY, VK_TAB,
+    KEYEVENTF_UNICODE, VIRTUAL_KEY, VK_RETURN, VK_TAB,
 };
 use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
 
 use crate::dto::AutofillField;
 use crate::error::{AgateError, AgateResult, ErrorKind};
 
-/// Time for the re-activated window to settle + restore focus before typing.
-const FOCUS_SETTLE: Duration = Duration::from_millis(120);
+/// Max time to wait for the re-activated window to settle + restore focus before
+/// typing. We poll for the focused element rather than sleeping a fixed time, so a
+/// fast app proceeds immediately and a slow one still gets a real chance to settle.
+const MAX_FOCUS_SETTLE: Duration = Duration::from_millis(600);
+
+/// Poll interval while waiting for the focused element to appear.
+const SETTLE_POLL: Duration = Duration::from_millis(20);
 
 /// Pause between fields in the username→Tab→password sequence, so the target form's
 /// per-field JS (validation, focus handlers) keeps up with the synthesized input.
@@ -60,6 +81,8 @@ pub struct FillValues<'a> {
     pub username: Option<&'a str>,
     pub password: Option<&'a str>,
     pub totp: Option<&'a str>,
+    /// Press Enter after the final value to submit the form (user opt-in).
+    pub submit: bool,
 }
 
 /// Bring `hwnd` to the foreground and type the value(s) for the detected field into
@@ -78,29 +101,38 @@ pub fn fill(hwnd: isize, detected: AutofillField, values: &FillValues) -> AgateR
             "Couldn't focus the target window to autofill — it may have closed.",
         ));
     }
-    sleep(FOCUS_SETTLE);
 
     // Re-read the live focused control via UIA to correct a stale detection (COM is
     // needed on this thread; None if the apartment can't be set up — then we trust
-    // `detected`). A live password box ALWAYS gets the password.
+    // `detected`). We poll for the focused element (adaptive settle) rather than
+    // sleeping a fixed time. A live password box ALWAYS gets the password.
     let _com = ComApartment::enter();
-    let field = unsafe { effective_field(detected, focused_element().as_ref()) };
+    let focused = unsafe { wait_for_focused_element() };
+    let field = unsafe { effective_field(detected, focused.as_ref()) };
 
-    match field {
+    // Whether the credential's terminal value was typed — gates the optional submit.
+    let typed = match field {
         AutofillField::Password => match values.password {
-            Some(pw) => type_unicode(pw),
-            None => Ok(()),
+            Some(pw) => {
+                type_unicode(pw)?;
+                true
+            }
+            None => false,
         },
         AutofillField::Totp => match values.totp {
-            Some(code) => type_unicode(code),
-            None => Ok(()),
+            Some(code) => {
+                type_unicode(code)?;
+                true
+            }
+            None => false,
         },
         AutofillField::Username => {
             let Some(user) = values.username else {
                 // No username to type; nothing sensible to do for a username box.
                 return Ok(());
             };
-            type_unicode(user)?;
+            // Type the username and verify it landed (retry once on mismatch).
+            type_and_verify(user, focused.as_ref())?;
             // Best-effort: tab to the password field and fill it too.
             if let Some(pw) = values.password {
                 sleep(INTER_FIELD);
@@ -122,9 +154,63 @@ pub fn fill(hwnd: isize, detected: AutofillField, values: &FillValues) -> AgateR
                     None => type_unicode(pw)?,
                 }
             }
-            Ok(())
+            // Even a username-only fill (no stored password) counts as typed, so an
+            // opted-in submit advances a username-first page to its password step.
+            true
         }
+    };
+
+    if values.submit && typed {
+        sleep(INTER_FIELD);
+        press_enter()?;
     }
+    Ok(())
+}
+
+/// Poll for the focused UI element up to [`MAX_FOCUS_SETTLE`], returning as soon as
+/// one is available. Replaces a fixed settle sleep: a snappy app proceeds in one
+/// poll, a slow one gets the full budget to paint + restore focus. None if UIA is
+/// unavailable or nothing focuses within the budget.
+unsafe fn wait_for_focused_element() -> Option<IUIAutomationElement> {
+    let deadline = std::time::Instant::now() + MAX_FOCUS_SETTLE;
+    loop {
+        if let Some(el) = focused_element() {
+            return Some(el);
+        }
+        if std::time::Instant::now() >= deadline {
+            return None;
+        }
+        sleep(SETTLE_POLL);
+    }
+}
+
+/// Type a non-secret value and confirm it landed by reading the control's value
+/// back via UIA `ValuePattern`; on a mismatch, clear + retype once. This catches
+/// the "focus wasn't really in the field" silent no-fill. Used only for the
+/// username — a masked password field reports no readable value, so it is never
+/// verified (a read-back can't tell "didn't land" from "masked"). Best-effort: if
+/// the control exposes no ValuePattern we just trust the first type.
+fn type_and_verify(text: &str, focused: Option<&IUIAutomationElement>) -> AgateResult<()> {
+    type_unicode(text)?;
+    let Some(el) = focused else { return Ok(()) };
+    if unsafe { read_value(el) }.as_deref() == Some(text) {
+        return Ok(());
+    }
+    // Mismatch (or unreadable): if the field now holds some OTHER text, selecting
+    // all + retyping would be needed — but we don't synthesize Ctrl+A here (risk of
+    // unexpected accelerators). Only retype when the field reads back empty, the
+    // common "nothing landed" case; otherwise leave the first attempt as-is.
+    match unsafe { read_value(el) } {
+        Some(v) if v.is_empty() => type_unicode(text),
+        _ => Ok(()),
+    }
+}
+
+/// Read a control's value via UIA `ValuePattern`, or None when it exposes none.
+unsafe fn read_value(el: &IUIAutomationElement) -> Option<String> {
+    let pattern = el.GetCurrentPattern(UIA_ValuePatternId).ok()?;
+    let value: IUIAutomationValuePattern = pattern.cast().ok()?;
+    Some(value.CurrentValue().ok()?.to_string())
 }
 
 /// Re-classify the live focused control so a detection that has gone stale (the
@@ -205,6 +291,12 @@ fn type_unicode(text: &str) -> AgateResult<()> {
 /// username field to the password field.
 fn press_tab() -> AgateResult<()> {
     send(&[vk_event(VK_TAB, false), vk_event(VK_TAB, true)])
+}
+
+/// Press and release Enter to submit the form (only when the user opted into
+/// submit-after-fill).
+fn press_enter() -> AgateResult<()> {
+    send(&[vk_event(VK_RETURN, false), vk_event(VK_RETURN, true)])
 }
 
 /// Submit a batch of synthesized inputs; a short write means the OS blocked us

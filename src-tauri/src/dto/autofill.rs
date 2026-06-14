@@ -117,4 +117,8 @@ pub struct AutofillStatus {
     pub supported: bool,
     /// Human label for the on-demand hotkey, e.g. "Ctrl+Alt+\".
     pub hotkey: String,
+    /// Press Enter to submit the form after a successful fill (user opt-in).
+    pub submit: bool,
+    /// Process stems autofill must never offer in (e.g. "discord").
+    pub denylist: Vec<String>,
 }

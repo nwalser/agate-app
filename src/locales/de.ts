@@ -324,6 +324,25 @@ export const de: PartialMessages = {
     unlockDb: '{name} entsperren',
     keepass: 'KeePass',
     clearKeyfile: 'Schlüsseldatei entfernen',
+    // pass + Enpass (in Agate nur lesbar)
+    sourcePass: 'Passwortspeicher (pass)',
+    sourceEnpass: 'Enpass-Tresor',
+    pass: 'pass',
+    enpass: 'Enpass',
+    proton: 'Proton Pass',
+    readOnly: 'In Agate nur lesbar — ansehen und kopieren, aber nicht bearbeiten.',
+    passStore: 'Speicherordner',
+    chooseFolder: 'Ordner wählen…',
+    passKeyfile: 'OpenPGP-Schlüssel',
+    passPassphrase: 'Schlüssel-Passphrase',
+    passPassphraseHint: '(leer, wenn keine)',
+    rememberPassphrase: 'Passphrase merken',
+    addPass: 'Speicher hinzufügen',
+    selectStoreAndKey: 'Wähle den Speicherordner und deinen exportierten OpenPGP-Schlüssel.',
+    enterPassphrase: 'Gib die Schlüssel-Passphrase ein.',
+    enpassVault: 'Tresordatei',
+    addEnpass: 'Enpass-Tresor hinzufügen',
+    selectVaultAndPassword: 'Wähle deine vault.enpassdb-Datei und gib ihr Passwort ein.',
   },
 
   trayDetail: {
@@ -356,6 +375,7 @@ export const de: PartialMessages = {
     passwordReused: 'Dieses Passwort wird bereits von {count} deiner Logins verwendet.',
     similarExisting: 'Ähnliche Logins sind bereits im Tresor:',
     noUnlockedAccount: 'Entsperre ein Konto, um ein Login hinzuzufügen.',
+    noFolder: 'Kein Ordner',
     strength: {
       veryWeak: 'Sehr schwach',
       weak: 'Schwach',
@@ -384,6 +404,17 @@ export const de: PartialMessages = {
     noneFound: 'Keine Anmeldung für {target} gefunden',
     unknownTarget: 'das fokussierte Fenster',
     fill: 'Ausfüllen',
+    submit: 'Nach dem Ausfüllen absenden',
+    submitHint:
+      'Drückt nach dem Autofill die Eingabetaste, um das Formular abzusenden. Standardmäßig aus — manche Formulare brechen bei zu frühem Absenden.',
+    denylist: 'In diesen Apps nie automatisch ausfüllen',
+    denylistHint:
+      'Agate bietet in hier aufgeführten Apps niemals Autofill an. Nutze den Prozessnamen, z. B. „discord“.',
+    denylistAdd: 'Hinzufügen',
+    denylistPlaceholder: 'Prozessname',
+    rememberHere: 'Hier verwenden',
+    rememberHereTooltip: 'Diese Anmeldung für {target} merken',
+    remembered: 'Für {target} gemerkt.',
   },
 
   generator: {

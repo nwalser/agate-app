@@ -8,6 +8,7 @@
 
 import type {
   ConnectionSummary,
+  Folder,
   ItemDetail,
   LoginDetail,
   VaultItem,
@@ -22,6 +23,14 @@ export function makeConnection(
     server: { region: 'us' },
     unlocked: true,
     storeCredentials: true,
+    ...over,
+  };
+}
+
+export function makeFolder(over: Partial<Folder> & { id: string; name: string }): Folder {
+  return {
+    accountEmail: 'tester@example.com',
+    accountLabel: 'Test vault',
     ...over,
   };
 }

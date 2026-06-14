@@ -68,7 +68,7 @@ fn automation() -> Option<IUIAutomation> {
 ///
 /// Safety: all calls are standard UIA / Win32 on the calling (MTA) thread; handles
 /// are closed before returning.
-pub fn detect_focused(own_pid: u32) -> Option<Detected> {
+pub fn detect_focused(own_pid: u32, denylist: &[String]) -> Option<Detected> {
     unsafe {
         let foreground = GetForegroundWindow();
         if foreground.0.is_null() {
@@ -79,6 +79,16 @@ pub fn detect_focused(own_pid: u32) -> Option<Detected> {
         GetWindowThreadProcessId(foreground, Some(&mut fg_pid as *mut u32));
         if fg_pid == own_pid {
             return None;
+        }
+
+        // The user's "never offer here" list — checked against the REAL process
+        // (before any browser-suppression below) so a denied browser/app is fully
+        // skipped, not just stripped of its process name.
+        let raw_process = process_name(foreground);
+        if let Some(p) = raw_process.as_deref() {
+            if super::matching::is_denied(p, denylist) {
+                return None;
+            }
         }
 
         let automation = automation()?;
@@ -103,17 +113,19 @@ pub fn detect_focused(own_pid: u32) -> Option<Detected> {
             super::matching::classify_field(false, is_edit, &[&name, &automation_id, &help])?
         };
 
-        let process = process_name(foreground);
+        let process = raw_process;
 
-        // A browser hosts many different sites under ONE process, so its process
-        // name (chrome / msedge / firefox) must NOT drive matching — only the page
-        // URL does. Scrape the URL from the focused field's document and suppress
-        // the process name. Native apps keep their process (no URL).
-        let (process_for_match, url) = if process.as_deref().is_some_and(is_browser) {
-            (None, document_url(&automation, &element))
-        } else {
-            (process, None)
-        };
+        // A browser (or the shared WebView2 runtime) hosts many unrelated sites
+        // under ONE process, so its process name (chrome / msedge / msedgewebview2)
+        // must NOT drive matching — only the page URL does. Scrape the URL from the
+        // focused field's document and suppress the process name. Native apps keep
+        // their process (no URL).
+        let (process_for_match, url) =
+            if process.as_deref().is_some_and(super::matching::is_shared_host_process) {
+                (None, document_url(&automation, &element))
+            } else {
+                (process, None)
+            };
 
         // What "remember this app" stores: the real URL when present (browser), else
         // a synthetic app://<process> association the matcher recognizes (native app).
@@ -140,24 +152,6 @@ pub fn detect_focused(own_pid: u32) -> Option<Detected> {
 /// secret. Shared with `inject` (it re-classifies the live focused field at fill).
 pub(super) fn bstr(res: windows::core::Result<windows::core::BSTR>) -> String {
     res.map(|b| b.to_string()).unwrap_or_default()
-}
-
-/// Whether a process file stem is a web browser — these share one process across
-/// many sites, so matching uses the page URL instead of the process name.
-fn is_browser(stem: &str) -> bool {
-    matches!(
-        stem,
-        "chrome"
-            | "msedge"
-            | "firefox"
-            | "brave"
-            | "opera"
-            | "opera_gx"
-            | "vivaldi"
-            | "chromium"
-            | "arc"
-            | "iexplore"
-    )
 }
 
 /// Best-effort current page URL: walk up from the focused field to the containing

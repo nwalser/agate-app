@@ -45,6 +45,13 @@ use crate::error::{AgateError, AgateResult, ErrorKind};
 /// KeePassXC's favorite convention: a literal "Favorite" tag on the entry.
 const FAVORITE_TAG: &str = "Favorite";
 
+/// Keepass2Android / KeePassXC convention for extra autofill URLs beyond the
+/// primary `URL` field: custom fields named `KP2A_URL` and `KP2A_URL_<n>`. Agate
+/// reads these into a login's match URIs and writes a login association ("remember
+/// this app/site") into the next free one, so multi-URL + native-app associations
+/// interoperate with other KeePass clients.
+const ADDITIONAL_URL_FIELD: &str = "KP2A_URL";
+
 /// Name for a recycle-bin group we create on first soft delete (mirrors
 /// KeePassXC's default).
 const RECYCLE_BIN_NAME: &str = "Recycle Bin";
@@ -139,6 +146,29 @@ impl KeepassConnection {
                 Some(eid) => edit_entry(db, eid, input, target),
                 None => create_entry(db, input, target),
             }
+        })
+    }
+
+    /// Remember an autofill URL for an entry ("use this login here"): fill the
+    /// primary `URL` field if it's empty, otherwise store it in the next free
+    /// `KP2A_URL` custom field. Idempotent — a URL already present (primary or
+    /// additional) is a no-op. The pre-edit state is pushed into the entry's
+    /// history like any other edit.
+    pub fn add_autofill_uri(&mut self, item_id: &str, uri: &str) -> AgateResult<()> {
+        let uri = uri.trim();
+        if uri.is_empty() {
+            return Err(AgateError::bad_request("There's nothing to remember for this app."));
+        }
+        let eid = EntryId::from_uuid(parse_uuid(item_id, "No such item.")?);
+        let uri = uri.to_string();
+        self.mutate_and_save(move |db| {
+            let mut entry =
+                db.entry_mut(eid).ok_or_else(|| AgateError::bad_request("No such item."))?;
+            entry.edit_tracking(|tracked| {
+                add_additional_url(tracked, &uri);
+                tracked.times.last_modification = Some(Times::now());
+            });
+            Ok(())
         })
     }
 
@@ -329,13 +359,26 @@ impl KeepassConnection {
             if bin.contains(&e.parent().id()) || entry_item_type(&e) != ItemType::Login {
                 continue;
             }
+            let mut uris: Vec<String> = non_empty(e.get_url()).into_iter().collect();
+            // Pull any Keepass2Android-style additional URLs (KP2A_URL*) too, so a
+            // login with several sites — or a native-app `app://` association — is
+            // matched on all of them, not just the primary URL field.
+            for (name, value) in e.fields.iter() {
+                if is_additional_url_field(name) {
+                    if let Some(v) = non_empty(Some(value.get())) {
+                        if !uris.contains(&v) {
+                            uris.push(v);
+                        }
+                    }
+                }
+            }
             out.push(crate::autofill::MatchItem {
                 id: e.id().uuid().to_string(),
                 account_email: id.to_string(),
                 account_label: label.to_string(),
                 name: e.get_title().unwrap_or_default().to_string(),
                 username: non_empty(e.get_username()),
-                uris: non_empty(e.get_url()).into_iter().collect(),
+                uris,
                 reprompt: false,
             });
         }
@@ -880,6 +923,58 @@ fn apply_input(entry: &mut Entry, input: &ItemInput) {
     set_favorite_tag(entry, input.favorite);
 }
 
+/// Whether a custom-field name is an additional-URL field (`KP2A_URL` or
+/// `KP2A_URL_<n>` for a numeric suffix).
+fn is_additional_url_field(name: &str) -> bool {
+    if name == ADDITIONAL_URL_FIELD {
+        return true;
+    }
+    match name.strip_prefix(&format!("{ADDITIONAL_URL_FIELD}_")) {
+        Some(suffix) => !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit()),
+        None => false,
+    }
+}
+
+/// The next free additional-URL field name given the ones already used: prefer the
+/// bare `KP2A_URL`, then `KP2A_URL_1`, `KP2A_URL_2`, … finding the first gap.
+fn next_additional_url_key(used: &[String]) -> String {
+    if !used.iter().any(|k| k == ADDITIONAL_URL_FIELD) {
+        return ADDITIONAL_URL_FIELD.to_string();
+    }
+    let mut n = 1u32;
+    loop {
+        let candidate = format!("{ADDITIONAL_URL_FIELD}_{n}");
+        if !used.contains(&candidate) {
+            return candidate;
+        }
+        n += 1;
+    }
+}
+
+/// Add `uri` to an entry's autofill URLs, choosing the right slot: the primary
+/// `URL` field when empty, else the next free `KP2A_URL` field. No-op when the URL
+/// is already present (primary or additional).
+fn add_additional_url(entry: &mut Entry, uri: &str) {
+    let primary = entry.get_url().map(str::to_string);
+    if primary.as_deref() == Some(uri) {
+        return;
+    }
+    let mut used_keys: Vec<String> = Vec::new();
+    for (name, value) in entry.fields.iter() {
+        if is_additional_url_field(name) {
+            if value.get() == uri {
+                return; // already associated
+            }
+            used_keys.push(name.clone());
+        }
+    }
+    if primary.as_deref().filter(|v| !v.is_empty()).is_none() {
+        entry.set_unprotected(kpf::URL, uri);
+    } else {
+        entry.set_unprotected(next_additional_url_key(&used_keys), uri);
+    }
+}
+
 fn set_or_remove(entry: &mut Entry, key: &str, value: Option<&str>, protected: bool) {
     match value.filter(|v| !v.is_empty()) {
         Some(v) if protected => entry.set_protected(key, v),
@@ -1422,6 +1517,57 @@ mod tests {
         // persisted: the tag round-trips through the file
         let conn2 = open_conn(&fx.path);
         assert!(!conn2.list_items("kp", "KeePass").iter().find(|i| i.id == fx.note_id).unwrap().favorite);
+    }
+
+    #[test]
+    fn additional_url_field_name_recognition() {
+        assert!(is_additional_url_field("KP2A_URL"));
+        assert!(is_additional_url_field("KP2A_URL_1"));
+        assert!(is_additional_url_field("KP2A_URL_42"));
+        assert!(!is_additional_url_field("KP2A_URL_"));
+        assert!(!is_additional_url_field("KP2A_URLx"));
+        assert!(!is_additional_url_field("URL"));
+        assert!(!is_additional_url_field("Plan"));
+    }
+
+    #[test]
+    fn next_additional_url_key_finds_the_first_gap() {
+        assert_eq!(next_additional_url_key(&[]), "KP2A_URL");
+        assert_eq!(next_additional_url_key(&["KP2A_URL".into()]), "KP2A_URL_1");
+        assert_eq!(
+            next_additional_url_key(&["KP2A_URL".into(), "KP2A_URL_1".into()]),
+            "KP2A_URL_2"
+        );
+    }
+
+    #[test]
+    fn associate_uri_fills_empty_url_then_spills_to_additional_fields() {
+        let fx = fixture();
+        let mut conn = open_conn(&fx.path);
+
+        // The note has no URL → the first association fills the primary URL field,
+        // which makes it match an app association in the autofill index.
+        conn.add_autofill_uri(&fx.note_id, "app://outlook").unwrap();
+        // The GitHub login already has a URL → a new association spills into KP2A_URL.
+        conn.add_autofill_uri(&fx.github_id, "https://github.example/login").unwrap();
+        // Idempotent: re-adding an existing URL is a no-op, no extra field.
+        conn.add_autofill_uri(&fx.github_id, "https://github.com/login").unwrap();
+        conn.add_autofill_uri(&fx.github_id, "https://github.example/login").unwrap();
+
+        // Round-trips through the file and feeds the matcher's URI list.
+        let conn2 = open_conn(&fx.path);
+        let entries = conn2.autofill_entries("kp", "KeePass");
+        let note = entries.iter().find(|e| e.id == fx.note_id).unwrap();
+        assert!(note.uris.iter().any(|u| u == "app://outlook"), "empty URL filled with association");
+
+        let gh = entries.iter().find(|e| e.id == fx.github_id).unwrap();
+        assert!(gh.uris.iter().any(|u| u == "https://github.com/login"), "primary URL preserved");
+        assert!(
+            gh.uris.iter().any(|u| u == "https://github.example/login"),
+            "second URL added as an additional URL"
+        );
+        // No duplication from the idempotent re-adds.
+        assert_eq!(gh.uris.iter().filter(|u| *u == "https://github.example/login").count(), 1);
     }
 
     #[test]

@@ -256,6 +256,18 @@ pub(crate) async fn finish_unlock(
                     Ok(()) => UnlockStatus::Unlocked,
                     Err(message) => UnlockStatus::Failed { message },
                 },
+                ConnectionKind::Pass => match unlock_one_pass(state, &acct.email, &vmk).await {
+                    Ok(()) => UnlockStatus::Unlocked,
+                    Err(message) => UnlockStatus::Failed { message },
+                },
+                ConnectionKind::Enpass => match unlock_one_enpass(state, &acct.email, &vmk).await {
+                    Ok(()) => UnlockStatus::Unlocked,
+                    Err(message) => UnlockStatus::Failed { message },
+                },
+                ConnectionKind::Proton => match unlock_one_proton(state, &acct.email, &vmk).await {
+                    Ok(()) => UnlockStatus::Unlocked,
+                    Err(message) => UnlockStatus::Failed { message },
+                },
             }
         };
         outcomes.push(UnlockOutcome {
@@ -332,6 +344,87 @@ async fn unlock_one_keepass(state: &AppState, id: &str, vmk: &[u8; 32]) -> Resul
         .await
         .connections
         .insert(id.to_string(), crate::providers::LiveConnection::Keepass(conn));
+    Ok(())
+}
+
+/// Unlock one `pass` connection from its sealed credentials: re-open the store
+/// with the stored passphrase + key-file path off the async runtime, then add it
+/// live. No network, no 2FA — failures are a missing/unreadable store or a wrong
+/// key, reported as a message.
+async fn unlock_one_pass(state: &AppState, id: &str, vmk: &[u8; 32]) -> Result<(), String> {
+    let stored = load_connection(id, vmk).map_err(|e| e.message)?;
+    let root = stored.path.clone().unwrap_or_else(|| stored.email.clone());
+    let key_file = stored
+        .keyfile
+        .clone()
+        .ok_or_else(|| "No OpenPGP key file path stored for this connection.".to_string())?;
+    let pw = Zeroizing::new(stored.master_password.clone());
+    let conn = tokio::task::spawn_blocking(move || {
+        crate::providers::PassConnection::open(
+            std::path::Path::new(&root),
+            std::path::Path::new(&key_file),
+            pw.as_str(),
+        )
+    })
+    .await
+    .map_err(|_| "password store open was interrupted".to_string())?
+    .map_err(|e| e.message)?;
+
+    state
+        .session
+        .lock()
+        .await
+        .connections
+        .insert(id.to_string(), crate::providers::LiveConnection::Pass(conn));
+    Ok(())
+}
+
+/// Unlock one Enpass connection from its sealed credentials: re-open the vault
+/// with the stored password (+ key file) off the async runtime, then add it live.
+/// No network, no 2FA — like the KeePass path.
+async fn unlock_one_enpass(state: &AppState, id: &str, vmk: &[u8; 32]) -> Result<(), String> {
+    let stored = load_connection(id, vmk).map_err(|e| e.message)?;
+    let path = stored.path.clone().unwrap_or_else(|| stored.email.clone());
+    let keyfile = stored.keyfile.clone();
+    let pw = Zeroizing::new(stored.master_password.clone());
+    let conn = tokio::task::spawn_blocking(move || {
+        crate::providers::EnpassConnection::open(
+            std::path::Path::new(&path),
+            pw.as_str(),
+            keyfile.as_deref().map(std::path::Path::new),
+        )
+    })
+    .await
+    .map_err(|_| "vault open was interrupted".to_string())?
+    .map_err(|e| e.message)?;
+
+    state
+        .session
+        .lock()
+        .await
+        .connections
+        .insert(id.to_string(), crate::providers::LiveConnection::Enpass(conn));
+    Ok(())
+}
+
+/// Unlock one Proton Pass connection from its sealed credentials by re-running the
+/// account login with the stored password. NOTE: the Proton login pipeline is not
+/// yet implemented (`ProtonConnection::open` returns a typed error), so this path
+/// currently always reports `Failed` — it is wired ahead of the live login so the
+/// restart-unlock flow is complete the moment that lands.
+async fn unlock_one_proton(state: &AppState, id: &str, vmk: &[u8; 32]) -> Result<(), String> {
+    let stored = load_connection(id, vmk).map_err(|e| e.message)?;
+    let pw = Zeroizing::new(stored.master_password.clone());
+    let conn = crate::providers::ProtonConnection::open(&stored.email, pw, None)
+        .await
+        .map_err(|e| e.message)?;
+
+    state
+        .session
+        .lock()
+        .await
+        .connections
+        .insert(id.to_string(), crate::providers::LiveConnection::Proton(conn));
     Ok(())
 }
 

@@ -1,5 +1,6 @@
-//! Autofill commands: feature status, mode switch, the pending detection (with
-//! ranked candidates), fill, and dismiss. Thin wrappers over `crate::autofill`.
+//! Autofill commands: feature status, mode switch, submit/denylist settings, the
+//! pending detection (with ranked candidates), fill, associate, and dismiss. Thin
+//! wrappers over `crate::autofill` (+ `crate::mutate` for the associate write).
 
 use super::State;
 use crate::autofill;
@@ -18,6 +19,30 @@ pub async fn autofill_set_mode(
     mode: AutofillMode,
 ) -> AgateResult<()> {
     autofill::set_mode(&app, &state, mode).await
+}
+
+/// Persist whether a successful fill presses Enter to submit the form.
+#[tauri::command]
+pub async fn autofill_set_submit(state: State<'_>, submit: bool) -> AgateResult<()> {
+    autofill::set_submit(&state, submit).await
+}
+
+/// Replace the per-app denylist ("never offer autofill in these apps").
+#[tauri::command]
+pub async fn autofill_set_denylist(state: State<'_>, denylist: Vec<String>) -> AgateResult<()> {
+    autofill::set_denylist(&state, denylist).await
+}
+
+/// Remember a login for the current target ("use this login here"): append the
+/// detected association URI to the chosen login so it matches there next time.
+#[tauri::command]
+pub async fn autofill_associate(
+    state: State<'_>,
+    account_email: String,
+    item_id: String,
+    uri: String,
+) -> AgateResult<()> {
+    crate::mutate::associate_uri(&state, &account_email, &item_id, &uri).await
 }
 
 #[tauri::command]

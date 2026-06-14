@@ -266,6 +266,44 @@ pub async fn save_item(state: &AppState, account_email: &str, input: ItemInput) 
     }
 }
 
+/// Remember a login for an autofill target: append `uri` (a real site URL or a
+/// synthetic `app://<process>` association) to the login's autofill URIs, so the
+/// matcher offers it there next time. Idempotent — a URI already present is a no-op.
+pub async fn associate_uri(
+    state: &AppState,
+    account_email: &str,
+    item_id: &str,
+    uri: &str,
+) -> AgateResult<()> {
+    let uri = uri.trim();
+    if uri.is_empty() {
+        return Err(AgateError::bad_request("There's nothing to remember for this app."));
+    }
+    if let super::WriteRoute::Keepass = super::route_for(state, account_email).await? {
+        let uri = uri.to_string();
+        return super::keepass_write(state, account_email, move |k| {
+            k.add_autofill_uri(item_id, &uri)
+        })
+        .await;
+    }
+
+    let client = client_for(state, account_email).await?;
+    let existing = decrypt_one(state, account_email, item_id).await?;
+    let mut v = serde_json::to_value(&existing).map_err(build_err)?;
+    if v.get("login").map(Value::is_null).unwrap_or(true) {
+        return Err(AgateError::bad_request("Only logins can be remembered for autofill."));
+    }
+    let mut uris = v["login"]["uris"].as_array().cloned().unwrap_or_default();
+    // Already associated → nothing to do (don't churn the cipher / revision date).
+    if uris.iter().any(|u| u.get("uri").and_then(Value::as_str) == Some(uri)) {
+        return Ok(());
+    }
+    uris.push(json!({ "uri": uri, "match": null }));
+    v["login"]["uris"] = json!(uris);
+    let view: CipherView = serde_json::from_value(v).map_err(build_err)?;
+    encrypt_and_push(&client, view, Some(parse_id::<CipherId>(item_id)?)).await
+}
+
 /// Duplicate an item into a new personal cipher named "… - Clone".
 pub async fn clone_item(state: &AppState, account_email: &str, id: &str) -> AgateResult<()> {
     if let super::WriteRoute::Keepass = super::route_for(state, account_email).await? {

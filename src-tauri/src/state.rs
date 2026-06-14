@@ -50,8 +50,17 @@ impl AccountRef {
     pub fn label(&self) -> String {
         match self.kind {
             ConnectionKind::Bitwarden => crate::server::server_label(&self.server),
+            // Proton's id is the account email, like Bitwarden's.
+            ConnectionKind::Proton => self.email.clone(),
+            // KeePass is a `.kdbx` FILE — the stem drops the extension.
             ConnectionKind::Keepass => std::path::Path::new(&self.email)
                 .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| self.email.clone()),
+            // pass (store dir) and Enpass (vault folder) ids are directories —
+            // the final path component is the human label.
+            ConnectionKind::Pass | ConnectionKind::Enpass => std::path::Path::new(&self.email)
+                .file_name()
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_else(|| self.email.clone()),
         }
@@ -60,6 +69,23 @@ impl AccountRef {
 
 fn default_true() -> bool {
     true
+}
+
+/// Cap on the remembered autofill picks — bounds `autofill_recent` so the config
+/// file can't grow without limit. Oldest entries fall off the back.
+const RECENT_FILL_CAP: usize = 50;
+
+/// One remembered autofill pick: which login the user last filled into a given
+/// target (a URL host or an app process — see `matching::recency_key`). Non-secret
+/// (a target key + an opaque cipher id + the owning account), so it lives in the
+/// plain config like the connection list, never the keychain. Used only to float a
+/// remembered login to the top of the candidate list; never to grant access.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecentFill {
+    /// Stable target key from `matching::recency_key` (e.g. "host:github.com").
+    pub target: String,
+    pub account_email: String,
+    pub item_id: String,
 }
 
 /// Non-secret config persisted across launches. `accounts` is the set of
@@ -87,6 +113,19 @@ pub struct PersistedConfig {
     /// inspects other windows, so it stays disabled until the user chooses a mode.
     #[serde(default)]
     pub autofill_mode: AutofillMode,
+    /// Press Enter after a successful autofill to submit the form. Off by default —
+    /// some forms break on a premature submit, so the user opts in.
+    #[serde(default)]
+    pub autofill_submit: bool,
+    /// Process stems (e.g. "discord") the watcher must NEVER offer autofill in.
+    /// Empty by default.
+    #[serde(default)]
+    pub autofill_denylist: Vec<String>,
+    /// Most-recent-first record of which login was last filled into each target,
+    /// so the picker can float a remembered choice to the top. Bounded to
+    /// [`RECENT_FILL_CAP`]; non-secret (see [`RecentFill`]).
+    #[serde(default)]
+    pub autofill_recent: Vec<RecentFill>,
 }
 
 impl PersistedConfig {
@@ -130,9 +169,37 @@ impl PersistedConfig {
         self.accounts.iter().find(|a| a.email == email)
     }
 
-    /// Forget a connection: drop its account record.
+    /// Forget a connection: drop its account record, and any remembered autofill
+    /// picks that pointed at it (so a re-added account never inherits stale
+    /// recency for a login that may no longer exist).
     pub fn remove_account(&mut self, email: &str) {
         self.accounts.retain(|a| a.email != email);
+        self.autofill_recent.retain(|r| r.account_email != email);
+    }
+
+    /// The login last filled into `target` (a `matching::recency_key`), if any —
+    /// returned as `(account_email, item_id)` for the matcher's recency boost.
+    pub fn recent_fill_for(&self, target: &str) -> Option<(String, String)> {
+        self.autofill_recent
+            .iter()
+            .find(|r| r.target == target)
+            .map(|r| (r.account_email.clone(), r.item_id.clone()))
+    }
+
+    /// Remember that `(account_email, item_id)` was just filled into `target`:
+    /// move it to the front (most-recent-first), de-duplicating by target, and
+    /// trim to [`RECENT_FILL_CAP`].
+    pub fn record_recent_fill(&mut self, target: &str, account_email: &str, item_id: &str) {
+        self.autofill_recent.retain(|r| r.target != target);
+        self.autofill_recent.insert(
+            0,
+            RecentFill {
+                target: target.to_string(),
+                account_email: account_email.to_string(),
+                item_id: item_id.to_string(),
+            },
+        );
+        self.autofill_recent.truncate(RECENT_FILL_CAP);
     }
 }
 
@@ -150,6 +217,9 @@ impl PersistedConfig {
             hello_configured: false,
             accounts: Vec::new(),
             autofill_mode: AutofillMode::Off,
+            autofill_submit: false,
+            autofill_denylist: Vec::new(),
+            autofill_recent: Vec::new(),
         }
     }
 }

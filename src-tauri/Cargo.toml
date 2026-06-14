@@ -64,6 +64,10 @@ bitwarden-collections = { git = "https://github.com/bitwarden/sdk-internal", rev
 bitwarden-state = { git = "https://github.com/bitwarden/sdk-internal", rev = "ef81e7ae1fa63616d84a8275511f4db98c09a64e" }
 # zxcvbn: the add/edit-form's live password strength meter (src/strength.rs).
 zxcvbn = "3.1"
+# Public Suffix List (compiled in — no runtime data file) for correct registrable-
+# domain comparison in autofill ranking, so example.co.uk / foo.co.uk don't collide
+# at the co.uk level. Ranking only; never grants access.
+psl = "2"
 # KeePass KDBX4 read/write (providers/keepass.rs). Write support is behind
 # `save_kdbx4` and still labeled experimental upstream — every save goes
 # through Agate's own atomic temp-write → reopen-verify → rename flow, with a
@@ -76,6 +80,34 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 # SDK's identity client has no middleware hook, so we rewrite the one prelogin
 # path at the network edge. See proxy.rs.
 tiny_http = "0.12"
+
+# `pass` provider (providers/pass.rs): pure-Rust OpenPGP. The crypto-rust backend
+# avoids the Nettle/OpenSSL C deps, so it builds identically on Windows/macOS/Linux
+# and in unit tests — no system libs. The allow-* flags are required to compile the
+# RustCrypto backend (sequoia gates non-constant-time RustCrypto ops behind an
+# explicit opt-in); acceptable here (local decrypt of the user's own files, no
+# network-facing timing oracle). compression-deflate inflates real GPG output.
+sequoia-openpgp = { version = "1.22", default-features = false, features = [
+    "crypto-rust",
+    "allow-experimental-crypto",
+    "allow-variable-time-crypto",
+    "compression-deflate",
+] }
+anyhow = "1"
+
+# Enpass provider (providers/enpass.rs). SQLCipher is decrypted in PURE RUST
+# (PBKDF2-HMAC-SHA512 → AES-256-CBC pages + HMAC verify) and the resulting
+# plaintext SQLite is read via the plain `bundled` SQLite amalgamation — so no
+# OpenSSL/Perl, only the C toolchain we already need. Versions are the digest-0.10
+# RustCrypto generation, matching the existing aes-gcm 0.10 (used for Enpass's
+# per-field password layer).
+rusqlite = { version = "0.39", features = ["bundled"] }
+aes = "0.8"
+cbc = "0.1"
+hmac = "0.12"
+sha2 = "0.10"
+sha1 = "0.10"
+pbkdf2 = { version = "0.12", default-features = false }
 
 # Cross-platform biometric consent (Touch ID on macOS, polkit on Linux) for the
 # non-Windows unlock path. ⚠️ The macOS/Linux arm (src/hello_unix.rs) is written

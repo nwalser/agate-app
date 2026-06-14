@@ -14,13 +14,14 @@
 //! verification surface, so a weak or empty match just means "let the user pick /
 //! search" rather than a failure. Strong matches float to the top.
 //!
-//! Signals, strongest first: synthetic app association → exact URL host →
+//! Signals, strongest first: a user-remembered recency boost (last login filled
+//! into this target) → synthetic app association → exact URL host →
 //! registrable-domain → suffix overlap → process-name (exe stem, plus a tiny hint
 //! table for app suites whose exe name doesn't carry their domain) → window title.
 //!
-//! Known limitation: `base_domain` is the naive last-two-labels rule, so multi-part
-//! public suffixes (`example.co.uk`) compare at the `co.uk` level. Good enough for
-//! ranking; it never *grants* access (the popup does).
+//! Registrable-domain comparison uses the compiled-in Public Suffix List
+//! ([`registrable_domain`]), so multi-part suffixes (`example.co.uk`) compare
+//! correctly. Matching only *ranks*; it never *grants* access (the popup does).
 
 use crate::dto::{AutofillCandidate, AutofillContext, AutofillField};
 
@@ -29,17 +30,27 @@ use crate::dto::{AutofillCandidate, AutofillContext, AutofillField};
 const MAX_CANDIDATES: usize = 20;
 
 /// Substrings (lower-cased) in a field's accessible label that mark it a
-/// username / email / login box. Deliberately small and English-leaning — a
-/// false positive only offers a popup the user can dismiss, while a missed field
-/// just falls back to the old password-only behaviour. `"user"` subsumes
-/// "username" / "user id" / "user name".
-const USERNAME_HINTS: &[&str] = &["user", "email", "e-mail", "login", "log in", "account", "phone"];
+/// username / email / login box. A false positive only offers a popup the user
+/// can dismiss, while a missed field just falls back to password-only behaviour.
+/// `"user"` subsumes "username" / "user id" / "user name". Covers the three
+/// shipped UI locales (en / de / es) so a German/Spanish login form is detected —
+/// `to_ascii_lowercase` leaves accented bytes intact, so accented hints (e.g.
+/// "teléfono") are written with their accents and still match.
+const USERNAME_HINTS: &[&str] = &[
+    // English
+    "user", "email", "e-mail", "login", "log in", "account", "phone",
+    // German
+    "benutzer", "anmelden", "anmeldung", "konto", "telefon", "e-post",
+    // Spanish
+    "usuario", "correo", "cuenta", "iniciar sesión", "teléfono", "telefono",
+];
 
 /// Substrings (lower-cased) marking a one-time-code / TOTP / 2FA field. Kept to
-/// SPECIFIC phrases — never the bare word "code", which appears in benign fields
-/// (zip / country / promo / coupon code). Checked before [`USERNAME_HINTS`] so a
-/// "verification code" box reads as TOTP, not a username.
+/// SPECIFIC phrases — never a bare "code" / "código", which appears in benign
+/// fields (zip / country / promo / postal code). Checked before [`USERNAME_HINTS`]
+/// so a "verification code" box reads as TOTP, not a username. Covers en / de / es.
 const TOTP_HINTS: &[&str] = &[
+    // English
     "totp",
     "otp",
     "one-time",
@@ -54,6 +65,19 @@ const TOTP_HINTS: &[&str] = &[
     "mfa",
     "6-digit",
     "6 digit",
+    // German
+    "einmalkennwort",
+    "einmalcode",
+    "bestätigungscode",
+    "sicherheitscode",
+    "authentifizierungscode",
+    "verifizierungscode",
+    // Spanish
+    "código de verificación",
+    "código de seguridad",
+    "código de autenticación",
+    "verificación",
+    "autenticación",
 ];
 
 /// Classify the focused control from its platform-agnostic UIA signals, so the
@@ -95,6 +119,63 @@ fn label_matches(label: &str, hints: &[&str]) -> bool {
 /// process. Mirrors Bitwarden's own `androidapp://` / `iosapp://` associations.
 pub const APP_URI_SCHEME: &str = "app://";
 
+/// Recency boost added to a candidate that the user last filled into THIS target.
+/// Large enough to float a remembered choice to the top of the real candidates, but
+/// only ever applied to a login that ALREADY matches (`base score > 0`) — recency
+/// never invents a match for an unrelated login.
+const RECENCY_BOOST: u32 = 1000;
+
+/// Whether a process file stem hosts many unrelated sites under one process, so its
+/// process name must NOT drive matching — only a scraped page URL should. Covers
+/// web browsers and the shared WebView2 runtime (Teams, and other WebView2 apps,
+/// all run as `msedgewebview2`, so the process name identifies the runtime, not the
+/// app — the embedded page URL is the real signal). Pure so the Windows UIA layer
+/// stays a thin shim over this list.
+pub fn is_shared_host_process(stem: &str) -> bool {
+    matches!(
+        stem,
+        "chrome"
+            | "msedge"
+            | "firefox"
+            | "brave"
+            | "opera"
+            | "opera_gx"
+            | "vivaldi"
+            | "chromium"
+            | "arc"
+            | "iexplore"
+            | "msedgewebview2"
+    )
+}
+
+/// Whether a detected process is on the user's autofill denylist ("never offer in
+/// this app"). Case-insensitive and tolerant of a stored ".exe" suffix on either
+/// side, so "Discord", "discord", and "discord.exe" all match a "discord" entry.
+pub fn is_denied(process: &str, denylist: &[String]) -> bool {
+    let p = process.trim().trim_end_matches(".exe").to_ascii_lowercase();
+    if p.is_empty() {
+        return false;
+    }
+    denylist
+        .iter()
+        .any(|d| d.trim().trim_end_matches(".exe").to_ascii_lowercase() == p)
+}
+
+/// The stable key identifying a detected target for recency ("what did I last fill
+/// here"): the URL host when present, else the process name. The window title is
+/// deliberately excluded — it changes with page/state and would scatter recency
+/// across many keys. None when neither a host nor a process is known.
+pub fn recency_key(ctx: &AutofillContext) -> Option<String> {
+    if let Some(host) = ctx.url.as_deref().and_then(host_of) {
+        return Some(format!("host:{host}"));
+    }
+    ctx.process_name
+        .as_deref()
+        .map(normalize)
+        .filter(|p| !p.is_empty())
+        .map(|p| format!("proc:{p}"))
+}
+
 /// A login to rank, with ALL of its URIs so an associated synthetic URI in any slot
 /// still matches. Built by `vault::autofill_index`; logins only.
 pub struct MatchItem {
@@ -130,7 +211,16 @@ impl FillContext {
 /// Rank `items` against `ctx`. Returns only positive-scoring logins, best first
 /// (name breaks ties), capped at [`MAX_CANDIDATES`]. Empty means "no confident
 /// match" — the caller falls back to the popup's searchable full list.
-pub fn rank(items: &[MatchItem], ctx: &FillContext) -> Vec<AutofillCandidate> {
+///
+/// `preferred` is the `(account_email, item_id)` the user last filled into this
+/// target; a matching candidate gets [`RECENCY_BOOST`] so it floats to the top.
+/// The boost only applies to a login that already matches — recency never surfaces
+/// an unrelated login.
+pub fn rank(
+    items: &[MatchItem],
+    ctx: &FillContext,
+    preferred: Option<(&str, &str)>,
+) -> Vec<AutofillCandidate> {
     let url_host = ctx.url.as_deref().and_then(host_of);
     let process = ctx.process_name.as_deref().map(normalize);
     let title = ctx.window_title.as_deref().map(normalize);
@@ -139,7 +229,12 @@ pub fn rank(items: &[MatchItem], ctx: &FillContext) -> Vec<AutofillCandidate> {
         .iter()
         .filter_map(|it| {
             let s = score_item(it, url_host.as_deref(), process.as_deref(), title.as_deref());
-            (s > 0).then_some((s, it))
+            if s == 0 {
+                return None;
+            }
+            let is_preferred =
+                preferred.is_some_and(|(e, id)| e == it.account_email && id == it.id);
+            Some((s + if is_preferred { RECENCY_BOOST } else { 0 }, it))
         })
         .collect();
 
@@ -238,7 +333,7 @@ fn score_item(
 fn host_match_score(target: &str, item: &str) -> u32 {
     if target == item {
         100
-    } else if base_domain(target) == base_domain(item) {
+    } else if registrable_domain(target) == registrable_domain(item) {
         80
     } else if target.ends_with(item) || item.ends_with(target) {
         60
@@ -308,9 +403,18 @@ fn host_of(raw: &str) -> Option<String> {
     Some(host)
 }
 
-/// Naive registrable domain: the last two labels. See the module note for the
-/// known multi-part-suffix limitation.
-fn base_domain(host: &str) -> String {
+/// The registrable domain (eTLD+1) of a host, via the compiled-in Public Suffix
+/// List — so `foo.example.co.uk` and `bar.example.co.uk` both reduce to
+/// `example.co.uk` (and don't collide at `co.uk`). Falls back to the naive
+/// last-two-labels rule when the PSL can't resolve the suffix (unknown / private
+/// TLD), so an exotic host still compares sanely. Used only for ranking — never to
+/// grant access.
+fn registrable_domain(host: &str) -> String {
+    psl::domain_str(host).map(str::to_string).unwrap_or_else(|| naive_base_domain(host))
+}
+
+/// Last-two-labels fallback for hosts the PSL doesn't recognize.
+fn naive_base_domain(host: &str) -> String {
     let labels: Vec<&str> = host.split('.').filter(|l| !l.is_empty()).collect();
     let n = labels.len();
     if n >= 2 {
@@ -416,7 +520,7 @@ mod tests {
             mi("b", "GH Enterprise", Some("u"), &["https://ci.github.com"]),
         ];
         let ctx = FillContext { url: Some("https://github.com/session".into()), ..Default::default() };
-        let out = rank(&items, &ctx);
+        let out = rank(&items, &ctx, None);
         assert_eq!(out[0].item_id, "a", "exact host wins over a subdomain of the same base");
         assert!(out[0].score > out[1].score);
     }
@@ -426,7 +530,7 @@ mod tests {
         let items = vec![mi("a", "Example", Some("u"), &["example.com"])];
         let ctx =
             FillContext { url: Some("https://www.example.com:443/login?x=1".into()), ..Default::default() };
-        let out = rank(&items, &ctx);
+        let out = rank(&items, &ctx, None);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].score, 100, "www/scheme/port/path stripped → exact host");
     }
@@ -436,7 +540,7 @@ mod tests {
         // The detected site is the login's SECOND URI — matching must scan all.
         let items = vec![mi("a", "Acme", Some("u"), &["https://acme.com", "https://acme.org"])];
         let ctx = FillContext { url: Some("https://acme.org/login".into()), ..Default::default() };
-        let out = rank(&items, &ctx);
+        let out = rank(&items, &ctx, None);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].score, 100);
     }
@@ -450,7 +554,7 @@ mod tests {
             mi("other", "Bank", Some("u"), &["https://bank.example"]),
         ];
         let ctx = FillContext { process_name: Some("outlook".into()), ..Default::default() };
-        let out = rank(&items, &ctx);
+        let out = rank(&items, &ctx, None);
         assert_eq!(out[0].item_id, "ms");
         assert!(out[0].score >= 100, "the synthetic association is a strong match");
     }
@@ -459,7 +563,7 @@ mod tests {
     fn synthetic_app_uri_tolerates_an_exe_suffix() {
         let items = vec![mi("a", "App", Some("u"), &["app://Outlook.exe"])];
         let ctx = FillContext { process_name: Some("outlook".into()), ..Default::default() };
-        assert_eq!(rank(&items, &ctx)[0].item_id, "a");
+        assert_eq!(rank(&items, &ctx, None)[0].item_id, "a");
     }
 
     #[test]
@@ -469,7 +573,7 @@ mod tests {
             mi("b", "Bank", Some("u"), &["https://mybank.example"]),
         ];
         let ctx = FillContext { process_name: Some("GitHub".into()), ..Default::default() };
-        let out = rank(&items, &ctx);
+        let out = rank(&items, &ctx, None);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].item_id, "a");
     }
@@ -481,7 +585,7 @@ mod tests {
             mi("other", "Some Bank", Some("u"), &["https://bank.example"]),
         ];
         let ctx = FillContext { process_name: Some("outlook".into()), ..Default::default() };
-        let out = rank(&items, &ctx);
+        let out = rank(&items, &ctx, None);
         assert_eq!(out[0].item_id, "ms", "outlook hint keyword matches microsoftonline host");
     }
 
@@ -489,7 +593,7 @@ mod tests {
     fn window_title_matches_item_name() {
         let items = vec![mi("a", "GitLab", Some("u"), &[])];
         let ctx = FillContext { window_title: Some("Sign in · GitLab".into()), ..Default::default() };
-        let out = rank(&items, &ctx);
+        let out = rank(&items, &ctx, None);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].item_id, "a");
     }
@@ -498,7 +602,7 @@ mod tests {
     fn no_signal_yields_no_candidates() {
         let items = vec![mi("a", "GitHub", Some("u"), &["https://github.com"])];
         let ctx = FillContext { window_title: Some("Untitled - Notepad".into()), ..Default::default() };
-        assert!(rank(&items, &ctx).is_empty(), "an unrelated window must not match");
+        assert!(rank(&items, &ctx, None).is_empty(), "an unrelated window must not match");
     }
 
     #[test]
@@ -512,7 +616,7 @@ mod tests {
             window_title: Some("Sign in to GitHub".into()),
             process_name: None,
         };
-        let out = rank(&items, &ctx);
+        let out = rank(&items, &ctx, None);
         assert_eq!(out[0].item_id, "strong");
         assert!(out[0].score > out.iter().find(|c| c.item_id == "weak").map_or(0, |c| c.score));
     }
@@ -522,6 +626,129 @@ mod tests {
         let items: Vec<MatchItem> =
             (0..50).map(|i| mi(&format!("i{i}"), "GitHub", Some("u"), &["https://github.com"])).collect();
         let ctx = FillContext { url: Some("https://github.com".into()), ..Default::default() };
-        assert_eq!(rank(&items, &ctx).len(), MAX_CANDIDATES);
+        assert_eq!(rank(&items, &ctx, None).len(), MAX_CANDIDATES);
+    }
+
+    // ── i18n field hints (de / es) ───────────────────────────────────────────
+
+    #[test]
+    fn german_and_spanish_username_labels_classify() {
+        for label in ["Benutzername", "Anmeldung", "Konto", "Usuario", "Correo electrónico", "Cuenta", "Teléfono"] {
+            assert_eq!(
+                classify_field(false, true, &[label]),
+                Some(AutofillField::Username),
+                "{label:?} should read as a username field"
+            );
+        }
+    }
+
+    #[test]
+    fn german_and_spanish_one_time_code_labels_classify() {
+        for label in
+            ["Bestätigungscode", "Sicherheitscode", "Einmalkennwort", "Código de verificación", "Código de seguridad"]
+        {
+            assert_eq!(
+                classify_field(false, true, &[label]),
+                Some(AutofillField::Totp),
+                "{label:?} should read as a one-time-code field"
+            );
+        }
+    }
+
+    #[test]
+    fn spanish_postal_code_is_not_a_one_time_code() {
+        // "código postal" must not be mistaken for a one-time code (mirrors the
+        // English bare-"code" guard).
+        assert_ne!(classify_field(false, true, &["Código postal"]), Some(AutofillField::Totp));
+    }
+
+    // ── registrable domain via the PSL ───────────────────────────────────────
+
+    #[test]
+    fn multipart_public_suffix_does_not_collide() {
+        // Two unrelated co.uk sites must NOT match each other on the domain rule —
+        // the naive last-two-labels rule would have collided them at "co.uk".
+        let items = vec![mi("a", "Foo", Some("u"), &["https://foo.co.uk"])];
+        let ctx = FillContext { url: Some("https://bar.co.uk/login".into()), ..Default::default() };
+        assert!(rank(&items, &ctx, None).is_empty(), "different co.uk registrable domains must not match");
+    }
+
+    #[test]
+    fn subdomains_of_a_multipart_suffix_match_on_registrable_domain() {
+        // app.example.co.uk and www.example.co.uk share the registrable domain.
+        let items = vec![mi("a", "Example", Some("u"), &["https://app.example.co.uk"])];
+        let ctx = FillContext { url: Some("https://www.example.co.uk/login".into()), ..Default::default() };
+        let out = rank(&items, &ctx, None);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].score, 80, "same registrable domain, different host → domain-level match");
+    }
+
+    // ── recency boost ────────────────────────────────────────────────────────
+
+    #[test]
+    fn preferred_candidate_floats_above_an_equal_match() {
+        let items = vec![
+            mi("a", "GitHub Personal", Some("me"), &["https://github.com"]),
+            mi("b", "GitHub Work", Some("work"), &["https://github.com"]),
+        ];
+        let ctx = FillContext { url: Some("https://github.com/login".into()), ..Default::default() };
+        // Without recency, "GitHub Personal" wins on the name tiebreak.
+        assert_eq!(rank(&items, &ctx, None)[0].item_id, "a");
+        // With "b" remembered for this target, it floats to the top.
+        let out = rank(&items, &ctx, Some(("me@example.com", "b")));
+        assert_eq!(out[0].item_id, "b");
+        assert!(out[0].score > out[1].score);
+    }
+
+    #[test]
+    fn recency_never_surfaces_a_non_matching_login() {
+        // The remembered login doesn't match the current target at all → it must
+        // NOT appear just because it was once used elsewhere.
+        let items = vec![mi("a", "Unrelated", Some("u"), &["https://elsewhere.example"])];
+        let ctx = FillContext { url: Some("https://github.com/login".into()), ..Default::default() };
+        assert!(rank(&items, &ctx, Some(("me@example.com", "a"))).is_empty());
+    }
+
+    // ── shared-host process classification ───────────────────────────────────
+
+    #[test]
+    fn browsers_and_webview2_are_shared_host_processes() {
+        for p in ["chrome", "msedge", "firefox", "msedgewebview2"] {
+            assert!(is_shared_host_process(p), "{p} should be shared-host");
+        }
+        for p in ["outlook", "slack", "discord", "1password"] {
+            assert!(!is_shared_host_process(p), "{p} should NOT be shared-host");
+        }
+    }
+
+    // ── denylist ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn denylist_matches_case_and_exe_insensitively() {
+        let deny = vec!["Discord".to_string(), "steam.exe".to_string()];
+        assert!(is_denied("discord", &deny));
+        assert!(is_denied("Discord.exe", &deny));
+        assert!(is_denied("STEAM", &deny));
+        assert!(!is_denied("chrome", &deny));
+        assert!(!is_denied("", &deny));
+    }
+
+    // ── recency key ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn recency_key_prefers_host_then_process() {
+        let host_ctx = AutofillContext {
+            url: Some("https://www.github.com/login".into()),
+            process_name: Some("chrome".into()),
+            ..Default::default()
+        };
+        assert_eq!(recency_key(&host_ctx).as_deref(), Some("host:github.com"));
+
+        let app_ctx = AutofillContext { process_name: Some("Outlook".into()), ..Default::default() };
+        assert_eq!(recency_key(&app_ctx).as_deref(), Some("proc:outlook"));
+
+        // Title-only target has no stable recency key.
+        let title_ctx = AutofillContext { window_title: Some("Sign in".into()), ..Default::default() };
+        assert_eq!(recency_key(&title_ctx), None);
     }
 }

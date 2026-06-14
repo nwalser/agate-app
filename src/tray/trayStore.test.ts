@@ -3,7 +3,13 @@
 // filter/rank helper and the store's refresh/copy/reprompt behavior.
 
 import { describe, expect, it, vi } from 'vitest';
-import { makeConnection, makeDetail, makeItem, makeLoginDetail } from '../testing/factories.ts';
+import {
+  makeConnection,
+  makeDetail,
+  makeFolder,
+  makeItem,
+  makeLoginDetail,
+} from '../testing/factories.ts';
 import type {
   AutofillCandidate,
   AutofillPending,
@@ -67,6 +73,7 @@ function makeDeps(over: {
   outcomes?: UnlockOutcome[];
   pending?: AutofillPending | null;
   connections?: ReturnType<typeof makeConnection>[];
+  folders?: ReturnType<typeof makeFolder>[];
   generated?: string;
   reuseCount?: number;
   strength?: number;
@@ -91,7 +98,9 @@ function makeDeps(over: {
       autofillPending: vi.fn(async () => over.pending ?? null),
       autofillFill: vi.fn(async () => {}),
       autofillDismiss: vi.fn(async () => {}),
+      autofillAssociate: vi.fn(async () => {}),
       listConnections: vi.fn(async () => over.connections ?? [makeConnection({ email: 'me@x.com' })]),
+      listFolders: vi.fn(async () => over.folders ?? []),
       generatePassword: vi.fn(async () => over.generated ?? 'Gen3rated!Pass'),
       saveItem: vi.fn(async () => {}),
       passwordInUse: vi.fn(async () => over.reuseCount ?? 0),
@@ -102,6 +111,7 @@ function makeDeps(over: {
     onError: vi.fn(),
     onRepromptBlocked: vi.fn(),
     onTwoFactorPending: vi.fn(),
+    onAssociated: vi.fn(),
   } satisfies TrayStoreDeps;
   return deps;
 }
@@ -474,10 +484,79 @@ describe('createTrayStore add-login', () => {
     await store.enterAdd();
     store.setDraft({ name: 'X', password: 'pw' });
     await store.checkReuse();
+    store.setFolderId('f-1');
     store.exitAdd();
     expect(store.addMode()).toBe(false);
     expect(store.draft()).toEqual({ name: '', username: '', password: '', uri: '' });
     expect(store.reuseCount()).toBe(0);
+    expect(store.folderId()).toBeNull();
+  });
+
+  it('enterAdd loads folders and saveNew stores the login in the chosen folder', async () => {
+    const deps = makeDeps({
+      folders: [
+        makeFolder({ id: 'f-work', name: 'Work', accountEmail: 'me@x.com' }),
+        makeFolder({ id: 'f-home', name: 'Home', accountEmail: 'me@x.com' }),
+      ],
+    });
+    const store = createTrayStore(deps);
+    await store.enterAdd();
+    // Name-sorted, account-scoped options; the form defaults to no folder (root).
+    expect(store.folderOptions().map((f) => f.id)).toEqual(['f-home', 'f-work']);
+    expect(store.folderId()).toBeNull();
+
+    store.setDraft({ name: 'GitHub' });
+    store.setFolderId('f-work');
+    await expect(store.saveNew()).resolves.toBe(true);
+    expect(deps.ipc.saveItem).toHaveBeenCalledWith(
+      'me@x.com',
+      expect.objectContaining({ folderId: 'f-work' }),
+    );
+  });
+
+  it('saveNew with no folder chosen stores at the vault root (folderId null)', async () => {
+    const deps = makeDeps({
+      folders: [makeFolder({ id: 'f-work', name: 'Work', accountEmail: 'me@x.com' })],
+    });
+    const store = createTrayStore(deps);
+    await store.enterAdd();
+    store.setDraft({ name: 'GitHub' });
+    await expect(store.saveNew()).resolves.toBe(true);
+    expect(deps.ipc.saveItem).toHaveBeenCalledWith(
+      'me@x.com',
+      expect.objectContaining({ folderId: null }),
+    );
+  });
+
+  it('folderOptions is scoped to the selected account; switching account resets the folder', async () => {
+    const deps = makeDeps({
+      connections: [makeConnection({ email: 'me@x.com' }), makeConnection({ email: 'you@y.com' })],
+      folders: [
+        makeFolder({ id: 'mine', name: 'Mine', accountEmail: 'me@x.com' }),
+        makeFolder({ id: 'yours', name: 'Yours', accountEmail: 'you@y.com' }),
+      ],
+    });
+    const store = createTrayStore(deps);
+    await store.enterAdd();
+    expect(store.account()).toBe('me@x.com');
+    expect(store.folderOptions().map((f) => f.id)).toEqual(['mine']);
+
+    store.setFolderId('mine');
+    store.setAccount('you@y.com');
+    // A folder id is per-vault, so switching the destination clears it.
+    expect(store.folderId()).toBeNull();
+    expect(store.folderOptions().map((f) => f.id)).toEqual(['yours']);
+  });
+
+  it('a failed folder load leaves the picker empty but keeps the form usable', async () => {
+    const deps = makeDeps();
+    deps.ipc.listFolders.mockRejectedValueOnce(new Error('offline'));
+    const store = createTrayStore(deps);
+    await store.enterAdd();
+    expect(store.folderOptions()).toEqual([]);
+    expect(store.addMode()).toBe(true);
+    expect(store.account()).toBe('me@x.com');
+    expect(deps.onError).toHaveBeenCalledOnce();
   });
 });
 
@@ -769,6 +848,72 @@ describe('createTrayStore autofill fill-mode', () => {
     expect(store.fillMode()).toBe(false);
     expect(store.pending()).toBeNull();
   });
+
+  it('associate() remembers the login for the detected target and re-syncs candidates', async () => {
+    const deps = makeDeps({
+      pending: makePending({
+        context: {
+          field: 'password',
+          processName: 'discord',
+          windowTitle: 'Discord',
+          url: null,
+          associateUri: 'app://discord',
+        },
+        candidates: [makeCandidate({ itemId: 'x', accountEmail: 'me@x.com' })],
+      }),
+    });
+    const store = createTrayStore(deps);
+    await store.syncFill();
+    // Re-sync after the association: the now-matching login appears.
+    deps.ipc.autofillPending.mockResolvedValueOnce(
+      makePending({ candidates: [makeCandidate({ itemId: 'x' }), makeCandidate({ itemId: 'y' })] }),
+    );
+
+    await store.associate({ accountEmail: 'me@x.com', itemId: 'x', reprompt: false });
+
+    expect(deps.ipc.autofillAssociate).toHaveBeenCalledWith('me@x.com', 'x', 'app://discord');
+    // The success path names the target (window title) and re-syncs the rows.
+    expect(deps.onAssociated).toHaveBeenCalledWith('Discord');
+    expect(store.fillRows().map((r) => r.itemId)).toEqual(['x', 'y']);
+    expect(deps.onError).not.toHaveBeenCalled();
+  });
+
+  it('associate() is a no-op when the detection exposes no association URI', async () => {
+    const deps = makeDeps({
+      pending: makePending({
+        context: { field: 'password', processName: 'outlook', windowTitle: 'Sign in', url: null, associateUri: null },
+      }),
+    });
+    const store = createTrayStore(deps);
+    await store.syncFill();
+
+    await store.associate({ accountEmail: 'me@x.com', itemId: 'x', reprompt: false });
+
+    expect(deps.ipc.autofillAssociate).not.toHaveBeenCalled();
+    expect(deps.onAssociated).not.toHaveBeenCalled();
+  });
+
+  it('a failed associate routes to onError (no success toast, no crash)', async () => {
+    const deps = makeDeps({
+      pending: makePending({
+        context: {
+          field: 'password',
+          processName: 'discord',
+          windowTitle: null,
+          url: null,
+          associateUri: 'app://discord',
+        },
+      }),
+    });
+    deps.ipc.autofillAssociate.mockRejectedValueOnce(new Error('sync first'));
+    const store = createTrayStore(deps);
+    await store.syncFill();
+
+    await store.associate({ accountEmail: 'me@x.com', itemId: 'x', reprompt: false });
+
+    expect(deps.onError).toHaveBeenCalledOnce();
+    expect(deps.onAssociated).not.toHaveBeenCalled();
+  });
 });
 
 describe('createTrayStore state retention', () => {
@@ -837,12 +982,16 @@ describe('buildEditInput', () => {
     });
 
   it('overrides only name/username/password/first-uri and preserves everything else', () => {
-    const input = buildEditInput(rich(), {
-      name: '  GitHub Work  ',
-      username: '  morpheus  ',
-      password: 'new-pw',
-      uri: 'https://github.com/login',
-    });
+    const input = buildEditInput(
+      rich(),
+      {
+        name: '  GitHub Work  ',
+        username: '  morpheus  ',
+        password: 'new-pw',
+        uri: 'https://github.com/login',
+      },
+      'fold-1',
+    );
     expect(input.id).toBe('i1');
     expect(input.itemType).toBe('login');
     expect(input.name).toBe('GitHub Work');
@@ -870,19 +1019,19 @@ describe('buildEditInput', () => {
   });
 
   it('empty username/password become null (not empty strings)', () => {
-    const input = buildEditInput(rich(), { name: 'X', username: '   ', password: '', uri: 'x' });
+    const input = buildEditInput(rich(), { name: 'X', username: '   ', password: '', uri: 'x' }, 'fold-1');
     expect(input.login?.username).toBeNull();
     expect(input.login?.password).toBeNull();
   });
 
   it('clearing the URI drops the first URI but keeps the rest', () => {
-    const input = buildEditInput(rich(), { name: 'X', username: 'u', password: 'p', uri: '   ' });
+    const input = buildEditInput(rich(), { name: 'X', username: 'u', password: 'p', uri: '   ' }, 'fold-1');
     expect(input.login?.uris).toEqual([{ uri: 'https://gist.github.com', matchType: null }]);
   });
 
   it('adds a first URI when the original had none', () => {
     const detail = makeDetail({ id: 'i1', name: 'X', login: makeLoginDetail({ uris: [] }) });
-    const input = buildEditInput(detail, { name: 'X', username: '', password: '', uri: 'site.com' });
+    const input = buildEditInput(detail, { name: 'X', username: '', password: '', uri: 'site.com' }, null);
     expect(input.login?.uris).toEqual([{ uri: 'site.com', matchType: null }]);
   });
 });
@@ -965,6 +1114,35 @@ describe('createTrayStore edit-login', () => {
     expect(store.addMode()).toBe(false);
     expect(store.editing()).toBeNull();
     expect(deps.ipc.listItems.mock.calls.length).toBeGreaterThan(listCallsBefore);
+  });
+
+  it('enterEdit seeds the folder from the item and save can move it to another folder', async () => {
+    const deps = makeDeps({
+      folders: [
+        makeFolder({ id: 'a', name: 'A', accountEmail: 'me@x.com' }),
+        makeFolder({ id: 'b', name: 'B', accountEmail: 'me@x.com' }),
+      ],
+    });
+    deps.ipc.itemDetail.mockResolvedValueOnce(
+      makeDetail({
+        id: 'i1',
+        name: 'GitHub',
+        accountEmail: 'me@x.com',
+        folderId: 'a',
+        login: makeLoginDetail({ username: 'neo', password: 'pw' }),
+      }),
+    );
+    const store = createTrayStore(deps);
+    await store.enterEdit(makeItem({ id: 'i1', name: 'GitHub', accountEmail: 'me@x.com' }));
+    // Picker opens on the item's current folder.
+    expect(store.folderId()).toBe('a');
+
+    store.setFolderId('b');
+    await expect(store.save()).resolves.toBe(true);
+    expect(deps.ipc.saveItem).toHaveBeenCalledWith(
+      'me@x.com',
+      expect.objectContaining({ id: 'i1', folderId: 'b' }),
+    );
   });
 
   it('a failed edit surfaces onError and keeps the form (and editing) open', async () => {

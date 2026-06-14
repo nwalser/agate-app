@@ -80,8 +80,14 @@ pub fn supported() -> bool {
 
 /// Feature status for the Settings page + popup gating.
 pub async fn status(state: &AppState) -> AutofillStatus {
-    let mode = state.config.lock().await.autofill_mode;
-    AutofillStatus { mode, supported: supported(), hotkey: HOTKEY_LABEL.to_string() }
+    let cfg = state.config.lock().await;
+    AutofillStatus {
+        mode: cfg.autofill_mode,
+        supported: supported(),
+        hotkey: HOTKEY_LABEL.to_string(),
+        submit: cfg.autofill_submit,
+        denylist: cfg.autofill_denylist.clone(),
+    }
 }
 
 /// Switch the detection mode: persist it, then (re)start or stop the watcher.
@@ -120,6 +126,33 @@ pub fn apply_mode(app: tauri::AppHandle, mode: AutofillMode) {
     }
 }
 
+/// Persist whether a successful fill presses Enter to submit the form.
+pub async fn set_submit(state: &AppState, submit: bool) -> AgateResult<()> {
+    state.update_config(|c| c.autofill_submit = submit).await
+}
+
+/// Persist the per-app denylist and refresh the live watcher snapshot, so a newly
+/// denied app stops being offered immediately (no mode toggle needed).
+pub async fn set_denylist(state: &AppState, denylist: Vec<String>) -> AgateResult<()> {
+    state.update_config(|c| c.autofill_denylist = denylist.clone()).await?;
+    push_denylist(denylist);
+    Ok(())
+}
+
+/// Push the denylist into the platform watcher's snapshot. The watcher thread is
+/// synchronous and can't await the config mutex, so it reads this snapshot instead.
+/// Called on every denylist change and once at launch. No-op off-Windows.
+pub fn push_denylist(denylist: Vec<String>) {
+    #[cfg(windows)]
+    {
+        watcher::set_denylist_snapshot(denylist);
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = denylist;
+    }
+}
+
 /// The current pending target with its ranked candidates, or `None` when nothing is
 /// awaiting a pick. Ranks the unified vault against the detected context; an empty
 /// candidate list just means "no confident match" — the popup falls back to its own
@@ -132,12 +165,19 @@ pub async fn pending(state: &AppState) -> AgateResult<Option<AutofillPending>> {
             None => return Ok(None),
         }
     };
+    // The login the user last filled into THIS target floats to the top of the
+    // ranked list (recency). Looked up by the target's stable key.
+    let preferred = match matching::recency_key(&context) {
+        Some(key) => state.config.lock().await.recent_fill_for(&key),
+        None => None,
+    };
     // The match index covers every unlocked login with ALL its URIs (so a synthetic
     // app:// association in any slot matches). Empty when locked → zero candidates,
     // never an error.
     let items = vault::autofill_index(state).await?;
     let fc = matching::FillContext::from_context(&context);
-    let candidates = matching::rank(&items, &fc);
+    let preferred_ref = preferred.as_ref().map(|(e, id)| (e.as_str(), id.as_str()));
+    let candidates = matching::rank(&items, &fc, preferred_ref);
     Ok(Some(AutofillPending { token, context, candidates }))
 }
 
@@ -151,13 +191,13 @@ pub async fn fill(
     account_email: &str,
     item_id: &str,
 ) -> AgateResult<()> {
-    // Take the handle + detected field kind only if the token matches the live
-    // detection. The field kind decides what we type: a password box gets the
-    // password, a username/email box gets the username.
-    let (hwnd, field) = {
+    // Take the handle + detected field kind + context only if the token matches the
+    // live detection. The field kind decides what we type: a password box gets the
+    // password, a username/email box gets the username. The context drives recency.
+    let (hwnd, field, context) = {
         let shared = state.autofill.lock().unwrap_or_else(|e| e.into_inner());
         match &shared.pending {
-            Some(p) if p.token == token => (p.hwnd, p.context.field),
+            Some(p) if p.token == token => (p.hwnd, p.context.field, p.context.clone()),
             _ => {
                 return Err(AgateError::bad_request(
                     "This autofill prompt is no longer valid — try again.",
@@ -209,11 +249,25 @@ pub async fn fill(
         None
     };
 
+    // Press Enter after filling to submit the form, only if the user opted in.
+    let submit = state.config.lock().await.autofill_submit;
+
     // A fill re-activates the target window; suppress the watcher so that window's
     // focus event doesn't immediately re-open the popup over what we just filled.
     #[cfg(windows)]
     watcher::suppress_for(2000);
-    inject_blocking(hwnd, field, username, password, totp).await?;
+    inject_blocking(hwnd, field, username, password, totp, submit).await?;
+
+    // Remember this pick for the target so the picker offers it first next time.
+    // Best-effort: a recency-write failure must never fail the fill itself.
+    if let Some(key) = matching::recency_key(&context) {
+        if let Err(e) = state
+            .update_config(|c| c.record_recent_fill(&key, account_email, item_id))
+            .await
+        {
+            log::warn!("autofill: could not record recent fill: {}", e.message);
+        }
+    }
 
     clear_pending(state);
     if let Some(popup) = app.get_webview_window("tray") {
@@ -277,6 +331,7 @@ async fn inject_blocking(
     username: Option<String>,
     password: Option<Zeroizing<String>>,
     totp: Option<Zeroizing<String>>,
+    submit: bool,
 ) -> AgateResult<()> {
     #[cfg(windows)]
     {
@@ -285,6 +340,7 @@ async fn inject_blocking(
                 username: username.as_deref(),
                 password: password.as_ref().map(|p| p.as_str()),
                 totp: totp.as_ref().map(|t| t.as_str()),
+                submit,
             };
             inject::fill(hwnd, field, &values)
         })

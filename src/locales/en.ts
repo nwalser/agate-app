@@ -334,6 +334,25 @@ export const en = {
     unlockDb: 'Unlock {name}',
     keepass: 'KeePass',
     clearKeyfile: 'Remove key file',
+    // pass + Enpass providers (both read-only in Agate)
+    sourcePass: 'Password store (pass)',
+    sourceEnpass: 'Enpass vault',
+    pass: 'pass',
+    enpass: 'Enpass',
+    proton: 'Proton Pass',
+    readOnly: 'Read-only in Agate — you can view and copy, but not edit.',
+    passStore: 'Store folder',
+    chooseFolder: 'Choose folder…',
+    passKeyfile: 'OpenPGP secret key',
+    passPassphrase: 'Key passphrase',
+    passPassphraseHint: '(blank if the key has none)',
+    rememberPassphrase: 'Remember key passphrase',
+    addPass: 'Add password store',
+    selectStoreAndKey: 'Choose your store folder and exported OpenPGP secret key.',
+    enterPassphrase: 'Enter the key passphrase.',
+    enpassVault: 'Vault file',
+    addEnpass: 'Add Enpass vault',
+    selectVaultAndPassword: 'Choose your vault.enpassdb file and enter its password.',
   },
 
   trayDetail: {
@@ -366,6 +385,7 @@ export const en = {
     passwordReused: 'This password is already used by {count} of your logins.',
     similarExisting: 'Similar logins already in your vault:',
     noUnlockedAccount: 'Unlock an account to add a login.',
+    noFolder: 'No folder',
     strength: {
       veryWeak: 'Very weak',
       weak: 'Weak',
@@ -394,6 +414,17 @@ export const en = {
     noneFound: 'No login found for {target}',
     unknownTarget: 'the focused window',
     fill: 'Fill',
+    submit: 'Submit after filling',
+    submitHint:
+      'Press Enter to submit the form after autofill. Off by default — some forms break on an early submit.',
+    denylist: 'Never autofill in these apps',
+    denylistHint:
+      'Agate never offers autofill in apps listed here. Use the process name, e.g. “discord”.',
+    denylistAdd: 'Add',
+    denylistPlaceholder: 'process name',
+    rememberHere: 'Use here',
+    rememberHereTooltip: 'Remember this login for {target}',
+    remembered: 'Remembered for {target}.',
   },
 
   generator: {

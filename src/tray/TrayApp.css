@@ -252,7 +252,8 @@
 }
 
 .tray-add-form input,
-.tray-add-account {
+.tray-add-account,
+.tray-add-folder {
   width: 100%;
   background: var(--card);
   border: 1px solid var(--border);
@@ -264,7 +265,8 @@
 }
 
 .tray-add-form input:focus,
-.tray-add-account:focus {
+.tray-add-account:focus,
+.tray-add-folder:focus {
   border-color: var(--primary);
 }
 

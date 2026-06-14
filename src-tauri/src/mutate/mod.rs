@@ -14,7 +14,7 @@ mod writes;
 
 // Item writes, driven by the Tauri commands in `lib.rs`.
 pub use writes::{
-    clone_item, delete_items, move_items, restore_items, save_item, set_favorite,
+    associate_uri, clone_item, delete_items, move_items, restore_items, save_item, set_favorite,
 };
 
 // Folder writes, also driven from `lib.rs`.
@@ -41,6 +41,12 @@ pub(crate) async fn route_for(state: &AppState, account_email: &str) -> AgateRes
     Ok(match conn.kind() {
         ConnectionKind::Bitwarden => WriteRoute::Bitwarden,
         ConnectionKind::Keepass => WriteRoute::Keepass,
+        // pass / Enpass / Proton are read-only in Agate. Every write entry point
+        // calls `route_for(..).await?` before routing, so returning the error here
+        // is the single, exhaustive rejection point — no per-call-site guard needed.
+        ConnectionKind::Pass | ConnectionKind::Enpass | ConnectionKind::Proton => {
+            return Err(AgateError::bad_request("This vault is read-only in Agate."))
+        }
     })
 }
 

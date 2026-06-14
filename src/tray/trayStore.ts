@@ -22,6 +22,7 @@ import type {
   AutofillContext,
   AutofillPending,
   FieldInput,
+  Folder,
   ItemDetail,
   ItemInput,
   UnlockOutcome,
@@ -44,7 +45,9 @@ export type TrayIpc = Pick<
   | 'autofillPending'
   | 'autofillFill'
   | 'autofillDismiss'
+  | 'autofillAssociate'
   | 'listConnections'
+  | 'listFolders'
   | 'generatePassword'
   | 'saveItem'
   | 'passwordInUse'
@@ -57,6 +60,14 @@ export interface FillTarget {
   accountEmail: string;
   itemId: string;
   reprompt: boolean;
+}
+
+/** The human label for the app/site a fill would land in: the window title, else
+ *  the process name, else null when neither is known (callers substitute their
+ *  own "the focused window" fallback). Shared so the fill header and the
+ *  "remember here" toast name the same target. Pure. */
+export function fillTargetLabel(context: AutofillContext | undefined): string | null {
+  return context?.windowTitle || context?.processName || null;
 }
 
 /** A fill-mode row: a target plus the label fields the popup renders. */
@@ -95,6 +106,10 @@ export interface TrayStoreDeps {
    *  2FA flow itself (same deferral as reprompt) — the user finishes these in
    *  the main window. */
   onTwoFactorPending: (emails: string[]) => void;
+  /** A "remember this login here" association succeeded — production shows a
+   *  success toast naming the target (the window title / process, else a generic
+   *  label). */
+  onAssociated: (targetLabel: string | null) => void;
 }
 
 /** Map a key event to the copy action it requests (the popup's Enter chords):
@@ -165,11 +180,17 @@ const ADD_GEN_OPTIONS = {
 /** Build a lossless EDIT payload for a LOGIN from its current detail. The compact
  *  popup form exposes only four fields (name / username / password / first URI);
  *  this overrides exactly those and carries everything else through unchanged —
- *  TOTP, notes, custom fields, extra URIs, folder, org, favorite, reprompt,
+ *  TOTP, notes, custom fields, extra URIs, org, favorite, reprompt,
  *  autofill-on-load — so a quick edit never silently wipes the richer data the
- *  main editor owns. Only logins are editable here, so non-login payloads are
- *  null on a login detail and stay that way. Pure, unit-tested. */
-export function buildEditInput(original: ItemDetail, draft: AddDraft): ItemInput {
+ *  main editor owns. The destination `folderId` is explicit (the form's folder
+ *  picker owns it); pass `original.folderId` to keep the item where it is. Only
+ *  logins are editable here, so non-login payloads are null on a login detail and
+ *  stay that way. Pure, unit-tested. */
+export function buildEditInput(
+  original: ItemDetail,
+  draft: AddDraft,
+  folderId: string | null,
+): ItemInput {
   const login = original.login;
   const restUris: UriInput[] = (login?.uris ?? [])
     .slice(1)
@@ -192,7 +213,7 @@ export function buildEditInput(original: ItemDetail, draft: AddDraft): ItemInput
     id: original.id,
     itemType: 'login',
     name: draft.name.trim(),
-    folderId: original.folderId,
+    folderId,
     organizationId: original.organizationId,
     favorite: original.favorite,
     reprompt: original.reprompt,
@@ -465,6 +486,24 @@ export function createTrayStore(deps: TrayStoreDeps) {
     }
   }
 
+  /** "Use here": remember THIS login for THIS detected app/site so it matches
+   *  next time. Adds the detection's association URI to the login's autofill
+   *  URIs, then re-syncs so the now-matching login shows as a candidate. A no-op
+   *  when the detection exposed no association URI (the affordance is hidden in
+   *  that case, but guard defensively). Does NOT fill. */
+  async function associate(target: FillTarget): Promise<void> {
+    const p = pending();
+    const uri = p?.context.associateUri;
+    if (!uri) return;
+    try {
+      await deps.ipc.autofillAssociate(target.accountEmail, target.itemId, uri);
+      deps.onAssociated(fillTargetLabel(p?.context));
+      await syncFill();
+    } catch (err) {
+      deps.onError(err);
+    }
+  }
+
   // ── Add-login form ──────────────────────────────────────────────────────────
 
   const [addMode, setAddMode] = createSignal(false);
@@ -472,15 +511,47 @@ export function createTrayStore(deps: TrayStoreDeps) {
   // "add". Drives the edit-vs-create branch in save() and the form's labels.
   const [editing, setEditing] = createSignal<ItemDetail | null>(null);
   const [draft, setDraftSignal] = createSignal<AddDraft>(EMPTY_DRAFT);
-  const [account, setAccount] = createSignal('');
+  const [account, setAccountSignal] = createSignal('');
   const [accounts, setAccounts] = createSignal<string[]>([]);
+  // Destination folder/group for the new (or moved) item, scoped to `account`.
+  // null = the vault root ("no folder"). Folders are per-connection, so every
+  // unlocked vault's folders are loaded together and filtered by account below.
+  const [folders, setFolders] = createSignal<Folder[]>([]);
+  const [folderId, setFolderId] = createSignal<string | null>(null);
   const [saving, setSaving] = createSignal(false);
   const [reuseCount, setReuseCount] = createSignal(0);
   // zxcvbn strength of the draft password (0–4), null when the field is empty.
   const [strength, setStrength] = createSignal<number | null>(null);
 
+  /** Folders (Bitwarden) / groups (KeePass) of the selected destination vault,
+   *  name-sorted — the form's "store in" options. A folder id is account-scoped,
+   *  so this MUST follow `account()`. */
+  const folderOptions = (): Folder[] =>
+    folders()
+      .filter((f) => f.accountEmail === account() && f.id != null)
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+  /** Pick the destination vault. Folder ids are per-vault, so switching vaults
+   *  drops any chosen folder back to the root — an id from the old vault would be
+   *  meaningless (or, worse, a real folder) in the new one. */
+  function setAccount(email: string): void {
+    setAccountSignal(email);
+    setFolderId(null);
+  }
+
   function setDraft(patch: Partial<AddDraft>): void {
     setDraftSignal((d) => ({ ...d, ...patch }));
+  }
+
+  /** Load every unlocked vault's folders for the form's picker. Advisory: a
+   *  failure leaves the picker empty (root only), never blocks the form. */
+  async function loadFolders(): Promise<void> {
+    try {
+      setFolders(await deps.ipc.listFolders());
+    } catch (err) {
+      setFolders([]);
+      deps.onError(err);
+    }
   }
 
   /** Open the add form. Default prefill is the name from the current query (the
@@ -492,6 +563,7 @@ export function createTrayStore(deps: TrayStoreDeps) {
     setDraftSignal({ ...EMPTY_DRAFT, name: query().trim(), ...prefill });
     setReuseCount(0);
     setStrength(null);
+    setFolders([]);
     setAddMode(true);
     try {
       const cons = await deps.ipc.listConnections();
@@ -503,6 +575,7 @@ export function createTrayStore(deps: TrayStoreDeps) {
       setAccounts([]);
       setAccount('');
     }
+    await loadFolders();
   }
 
   /** Open the form to EDIT an existing login: fetch its detail, seed the draft
@@ -524,9 +597,14 @@ export function createTrayStore(deps: TrayStoreDeps) {
       });
       setAccounts([item.accountEmail]);
       setAccount(item.accountEmail);
+      setFolders([]);
       setReuseCount(0);
       setStrength(null);
       setAddMode(true);
+      await loadFolders();
+      // After setAccount cleared it, restore the item's current folder so the
+      // picker opens on where the item lives (and an unchanged save keeps it).
+      setFolderId(detail.folderId);
     } catch (err) {
       deps.onError(err);
     }
@@ -536,6 +614,8 @@ export function createTrayStore(deps: TrayStoreDeps) {
     setAddMode(false);
     setEditing(null);
     setDraftSignal(EMPTY_DRAFT);
+    setFolders([]);
+    setFolderId(null);
     setReuseCount(0);
     setStrength(null);
   }
@@ -591,7 +671,7 @@ export function createTrayStore(deps: TrayStoreDeps) {
       id: null,
       itemType: 'login',
       name,
-      folderId: null,
+      folderId: folderId(),
       organizationId: null,
       favorite: false,
       reprompt: false,
@@ -631,7 +711,7 @@ export function createTrayStore(deps: TrayStoreDeps) {
     if (!original || !d.name.trim()) return false;
     setSaving(true);
     try {
-      await deps.ipc.saveItem(original.accountEmail, buildEditInput(original, d));
+      await deps.ipc.saveItem(original.accountEmail, buildEditInput(original, d, folderId()));
       await refresh();
       exitAdd();
       return true;
@@ -685,6 +765,7 @@ export function createTrayStore(deps: TrayStoreDeps) {
     syncFill,
     exitFill,
     fill,
+    associate,
     fillRows,
     // add / edit form
     addMode,
@@ -694,6 +775,9 @@ export function createTrayStore(deps: TrayStoreDeps) {
     account,
     setAccount,
     accounts,
+    folderOptions,
+    folderId,
+    setFolderId,
     saving,
     reuseCount,
     strength,

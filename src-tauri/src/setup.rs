@@ -43,10 +43,16 @@ pub fn configure_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Err
     // a no-op on other platforms and when Off). Best-effort: it spawns its own
     // thread and never blocks launch.
     {
-        let mode = {
+        let (mode, denylist) = {
             let state = app.state::<AppState>();
-            tauri::async_runtime::block_on(async { state.config.lock().await.autofill_mode })
+            tauri::async_runtime::block_on(async {
+                let cfg = state.config.lock().await;
+                (cfg.autofill_mode, cfg.autofill_denylist.clone())
+            })
         };
+        // Seed the watcher's denylist snapshot before arming, so a denied app is
+        // skipped from the very first focus event.
+        crate::autofill::push_denylist(denylist);
         crate::autofill::apply_mode(app.handle().clone(), mode);
     }
 

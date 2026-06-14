@@ -11,10 +11,16 @@
 //! the connection id + label. Provider-specific code lives in the submodules.
 
 pub mod bitwarden;
+pub mod enpass;
 pub mod keepass;
+pub mod pass;
+pub mod proton;
 
 pub use bitwarden::BitwardenConnection;
+pub use enpass::EnpassConnection;
 pub use keepass::KeepassConnection;
+pub use pass::PassConnection;
+pub use proton::ProtonConnection;
 
 use crate::dto::{Collection, ConnectionKind, Folder, ItemDetail, TotpCode, VaultItem};
 use crate::error::AgateResult;
@@ -28,6 +34,9 @@ use crate::error::AgateResult;
 pub enum LiveConnection {
     Bitwarden(BitwardenConnection),
     Keepass(KeepassConnection),
+    Pass(PassConnection),
+    Enpass(EnpassConnection),
+    Proton(ProtonConnection),
 }
 
 impl LiveConnection {
@@ -35,6 +44,9 @@ impl LiveConnection {
         match self {
             LiveConnection::Bitwarden(_) => ConnectionKind::Bitwarden,
             LiveConnection::Keepass(_) => ConnectionKind::Keepass,
+            LiveConnection::Pass(_) => ConnectionKind::Pass,
+            LiveConnection::Enpass(_) => ConnectionKind::Enpass,
+            LiveConnection::Proton(_) => ConnectionKind::Proton,
         }
     }
 
@@ -43,14 +55,14 @@ impl LiveConnection {
     pub fn bitwarden(&self) -> Option<&BitwardenConnection> {
         match self {
             LiveConnection::Bitwarden(b) => Some(b),
-            LiveConnection::Keepass(_) => None,
+            _ => None,
         }
     }
 
     pub fn bitwarden_mut(&mut self) -> Option<&mut BitwardenConnection> {
         match self {
             LiveConnection::Bitwarden(b) => Some(b),
-            LiveConnection::Keepass(_) => None,
+            _ => None,
         }
     }
 
@@ -58,8 +70,8 @@ impl LiveConnection {
     /// reload-on-sync and write paths).
     pub fn keepass_mut(&mut self) -> Option<&mut KeepassConnection> {
         match self {
-            LiveConnection::Bitwarden(_) => None,
             LiveConnection::Keepass(k) => Some(k),
+            _ => None,
         }
     }
 
@@ -69,6 +81,9 @@ impl LiveConnection {
         match self {
             LiveConnection::Bitwarden(b) => b.list_items(id, label),
             LiveConnection::Keepass(k) => k.list_items(id, label),
+            LiveConnection::Pass(p) => p.list_items(id, label),
+            LiveConnection::Enpass(e) => e.list_items(id, label),
+            LiveConnection::Proton(p) => p.list_items(id, label),
         }
     }
 
@@ -77,6 +92,9 @@ impl LiveConnection {
         match self {
             LiveConnection::Bitwarden(b) => b.autofill_entries(id, label),
             LiveConnection::Keepass(k) => k.autofill_entries(id, label),
+            LiveConnection::Pass(p) => p.autofill_entries(id, label),
+            LiveConnection::Enpass(e) => e.autofill_entries(id, label),
+            LiveConnection::Proton(p) => p.autofill_entries(id, label),
         }
     }
 
@@ -86,6 +104,9 @@ impl LiveConnection {
         match self {
             LiveConnection::Bitwarden(b) => b.custom_field_names(),
             LiveConnection::Keepass(k) => k.custom_field_names(),
+            LiveConnection::Pass(p) => p.custom_field_names(),
+            LiveConnection::Enpass(e) => e.custom_field_names(),
+            LiveConnection::Proton(p) => p.custom_field_names(),
         }
     }
 
@@ -94,6 +115,9 @@ impl LiveConnection {
         match self {
             LiveConnection::Bitwarden(b) => b.item_detail(id, label, item_id),
             LiveConnection::Keepass(k) => k.item_detail(id, label, item_id),
+            LiveConnection::Pass(p) => p.item_detail(id, label, item_id),
+            LiveConnection::Enpass(e) => e.item_detail(id, label, item_id),
+            LiveConnection::Proton(p) => p.item_detail(id, label, item_id),
         }
     }
 
@@ -102,6 +126,9 @@ impl LiveConnection {
         match self {
             LiveConnection::Bitwarden(b) => b.item_totp(item_id),
             LiveConnection::Keepass(k) => k.item_totp(item_id),
+            LiveConnection::Pass(p) => p.item_totp(item_id),
+            LiveConnection::Enpass(e) => e.item_totp(item_id),
+            LiveConnection::Proton(p) => p.item_totp(item_id),
         }
     }
 
@@ -110,6 +137,9 @@ impl LiveConnection {
         match self {
             LiveConnection::Bitwarden(b) => b.list_folders(id, label),
             LiveConnection::Keepass(k) => k.list_folders(id, label),
+            LiveConnection::Pass(p) => p.list_folders(id, label),
+            LiveConnection::Enpass(e) => e.list_folders(id, label),
+            LiveConnection::Proton(p) => p.list_folders(id, label),
         }
     }
 
@@ -119,6 +149,9 @@ impl LiveConnection {
         match self {
             LiveConnection::Bitwarden(b) => b.list_collections(id, label),
             LiveConnection::Keepass(k) => k.list_collections(id, label),
+            LiveConnection::Pass(p) => p.list_collections(id, label),
+            LiveConnection::Enpass(e) => e.list_collections(id, label),
+            LiveConnection::Proton(p) => p.list_collections(id, label),
         }
     }
 
@@ -128,6 +161,9 @@ impl LiveConnection {
         match self {
             LiveConnection::Bitwarden(b) => b.count_password_use(candidate),
             LiveConnection::Keepass(k) => k.count_password_use(candidate),
+            LiveConnection::Pass(p) => p.count_password_use(candidate),
+            LiveConnection::Enpass(e) => e.count_password_use(candidate),
+            LiveConnection::Proton(p) => p.count_password_use(candidate),
         }
     }
 }

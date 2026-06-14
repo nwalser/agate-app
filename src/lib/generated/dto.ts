@@ -125,7 +125,15 @@ supported: boolean;
 /**
  * Human label for the on-demand hotkey, e.g. "Ctrl+Alt+\".
  */
-hotkey: string }
+hotkey: string; 
+/**
+ * Press Enter to submit the form after a successful fill (user opt-in).
+ */
+submit: boolean; 
+/**
+ * Process stems autofill must never offer in (e.g. "discord").
+ */
+denylist: string[] }
 
 export type CardInput = { cardholderName: string | null; number: string | null; brand: string | null; expMonth: string | null; expYear: string | null; code: string | null }
 
@@ -141,7 +149,19 @@ export type Collection = { id: string; name: string; organizationId: string; acc
  * into `config.json` and over IPC; a missing value deserializes to `bitwarden`
  * (every pre-provider connection was one).
  */
-export type ConnectionKind = "bitwarden" | "keepass"
+export type ConnectionKind = "bitwarden" | "keepass" | 
+/**
+ * The `pass` standard unix password store (GPG-encrypted file tree).
+ */
+"pass" | 
+/**
+ * A local Enpass 6+ vault (SQLCipher database).
+ */
+"enpass" | 
+/**
+ * Proton Pass (end-to-end-encrypted Proton account vault).
+ */
+"proton"
 
 /**
  * add-connection quick-pick. Non-secret (server + email only).

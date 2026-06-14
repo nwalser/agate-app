@@ -332,6 +332,226 @@ async fn open_keepass(
     .map_err(|_| AgateError::internal("database open was interrupted"))?
 }
 
+/// Add a `pass` store (the standard unix password store) as a connection. The
+/// store root path doubles as the connection id; the user's exported OpenPGP
+/// secret-key file is the (non-secret) key-file path, the key passphrase is the
+/// sealed secret. Opens (verifies) the store first, then seals + records — same
+/// ordering as the KeePass path.
+pub async fn add_pass_connection(
+    state: &AppState,
+    store_root: String,
+    key_file: String,
+    passphrase: Zeroizing<String>,
+    store_credentials: bool,
+) -> AgateResult<()> {
+    let vmk = appunlock::current_vmk(state)
+        .await
+        .map_err(|_| AgateError::bad_request("Set an app password before adding a connection."))?;
+
+    let conn = open_pass(store_root.clone(), key_file.clone(), passphrase.clone()).await?;
+
+    if store_credentials {
+        let stored = StoredConnection {
+            kind: ConnectionKind::Pass,
+            server: ServerConfig::default(),
+            email: store_root.clone(),
+            master_password: (*passphrase).clone(),
+            path: Some(store_root.clone()),
+            keyfile: Some(key_file.clone()),
+        };
+        appunlock::seal_connection(&vmk, &stored)?;
+    } else {
+        secrets::delete_cred(&store_root)?;
+    }
+
+    if let Err(e) = state
+        .update_config(|cfg| {
+            cfg.upsert_account_with_keyfile(
+                ConnectionKind::Pass,
+                ServerConfig::default(),
+                &store_root,
+                store_credentials,
+                Some(key_file.clone()),
+            );
+        })
+        .await
+    {
+        if store_credentials {
+            let _ = secrets::delete_cred(&store_root); // ignore: best-effort compensation
+        }
+        return Err(e);
+    }
+    {
+        let mut session = state.session.lock().await;
+        session
+            .connections
+            .insert(store_root.clone(), crate::providers::LiveConnection::Pass(conn));
+        if session.active_email.is_none() {
+            session.active_email = Some(store_root);
+        }
+    }
+    Ok(())
+}
+
+/// Unlock one `pass` connection on demand with its key passphrase (manual
+/// connections, or retrying a failed one). The key-file path comes from the
+/// connection record; the passphrase is not persisted here.
+pub async fn unlock_pass_connection(
+    state: &AppState,
+    store_root: String,
+    passphrase: Zeroizing<String>,
+) -> AgateResult<()> {
+    let acct = state
+        .config
+        .lock()
+        .await
+        .account_for(&store_root)
+        .cloned()
+        .ok_or_else(|| AgateError::bad_request("No such connection."))?;
+    if acct.kind != ConnectionKind::Pass {
+        return Err(AgateError::bad_request("Not a pass connection."));
+    }
+    let key_file = acct
+        .keyfile
+        .clone()
+        .ok_or_else(|| AgateError::bad_request("This pass store has no OpenPGP key file configured."))?;
+
+    let conn = open_pass(store_root.clone(), key_file, passphrase).await?;
+    let mut session = state.session.lock().await;
+    session
+        .connections
+        .insert(store_root.clone(), crate::providers::LiveConnection::Pass(conn));
+    if session.active_email.is_none() {
+        session.active_email = Some(store_root);
+    }
+    Ok(())
+}
+
+/// Open a `pass` store off the async runtime (OpenPGP decrypt is CPU-bound).
+async fn open_pass(
+    store_root: String,
+    key_file: String,
+    passphrase: Zeroizing<String>,
+) -> AgateResult<crate::providers::PassConnection> {
+    tokio::task::spawn_blocking(move || {
+        crate::providers::PassConnection::open(
+            std::path::Path::new(&store_root),
+            std::path::Path::new(&key_file),
+            passphrase.as_str(),
+        )
+    })
+    .await
+    .map_err(|_| AgateError::internal("password store open was interrupted"))?
+}
+
+/// Add an Enpass 6+ vault as a connection. The vault path (folder or
+/// `vault.enpassdb`) doubles as the connection id; opens (verifies) the vault
+/// first, then seals the master password under the VMK when storing — same
+/// ordering as the KeePass path. Read-only (see `providers::enpass`).
+pub async fn add_enpass_connection(
+    state: &AppState,
+    path: String,
+    password: Zeroizing<String>,
+    keyfile: Option<String>,
+    store_credentials: bool,
+) -> AgateResult<()> {
+    let vmk = appunlock::current_vmk(state)
+        .await
+        .map_err(|_| AgateError::bad_request("Set an app password before adding a connection."))?;
+
+    let conn = open_enpass(path.clone(), password.clone(), keyfile.clone()).await?;
+
+    if store_credentials {
+        let stored = StoredConnection {
+            kind: ConnectionKind::Enpass,
+            server: ServerConfig::default(),
+            email: path.clone(),
+            master_password: (*password).clone(),
+            path: Some(path.clone()),
+            keyfile: keyfile.clone(),
+        };
+        appunlock::seal_connection(&vmk, &stored)?;
+    } else {
+        secrets::delete_cred(&path)?;
+    }
+
+    if let Err(e) = state
+        .update_config(|cfg| {
+            cfg.upsert_account_with_keyfile(
+                ConnectionKind::Enpass,
+                ServerConfig::default(),
+                &path,
+                store_credentials,
+                keyfile.clone(),
+            );
+        })
+        .await
+    {
+        if store_credentials {
+            let _ = secrets::delete_cred(&path); // ignore: best-effort compensation
+        }
+        return Err(e);
+    }
+    {
+        let mut session = state.session.lock().await;
+        session
+            .connections
+            .insert(path.clone(), crate::providers::LiveConnection::Enpass(conn));
+        if session.active_email.is_none() {
+            session.active_email = Some(path);
+        }
+    }
+    Ok(())
+}
+
+/// Unlock one Enpass connection on demand with its master password (manual
+/// connections, or retrying a failed one). The key-file path comes from the
+/// connection record; the password is not persisted here.
+pub async fn unlock_enpass_connection(
+    state: &AppState,
+    path: String,
+    password: Zeroizing<String>,
+) -> AgateResult<()> {
+    let acct = state
+        .config
+        .lock()
+        .await
+        .account_for(&path)
+        .cloned()
+        .ok_or_else(|| AgateError::bad_request("No such connection."))?;
+    if acct.kind != ConnectionKind::Enpass {
+        return Err(AgateError::bad_request("Not an Enpass connection."));
+    }
+
+    let conn = open_enpass(path.clone(), password, acct.keyfile.clone()).await?;
+    let mut session = state.session.lock().await;
+    session
+        .connections
+        .insert(path.clone(), crate::providers::LiveConnection::Enpass(conn));
+    if session.active_email.is_none() {
+        session.active_email = Some(path);
+    }
+    Ok(())
+}
+
+/// Open an Enpass vault off the async runtime (PBKDF2 + SQLCipher decrypt are
+/// CPU-bound).
+async fn open_enpass(
+    path: String,
+    password: Zeroizing<String>,
+    keyfile: Option<String>,
+) -> AgateResult<crate::providers::EnpassConnection> {
+    tokio::task::spawn_blocking(move || {
+        crate::providers::EnpassConnection::open(
+            std::path::Path::new(&path),
+            password.as_str(),
+            keyfile.as_deref().map(std::path::Path::new),
+        )
+    })
+    .await
+    .map_err(|_| AgateError::internal("vault open was interrupted"))?
+}
+
 /// Structural equality for two server configs (no `PartialEq` derive on the DTO).
 fn server_eq(a: &ServerConfig, b: &ServerConfig) -> bool {
     match (a, b) {

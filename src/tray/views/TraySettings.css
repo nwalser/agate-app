@@ -78,6 +78,88 @@
   }
 }
 
+/* ── Autofill: per-app denylist editor ───────────────────────────────────── */
+
+.tray-settings .tray-af-denylist {
+  margin-top: 10px;
+}
+
+.tray-settings .tray-af-chips {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tray-settings .tray-af-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 4px 3px 9px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card-hover);
+  color: var(--foreground);
+}
+
+.tray-settings .tray-af-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+
+.tray-settings .tray-af-chip-remove:hover:not(:disabled) {
+  color: var(--destructive);
+  background: color-mix(in srgb, var(--destructive) 14%, transparent);
+}
+
+.tray-settings .tray-af-chip-remove:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.tray-settings .tray-af-deny-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.tray-settings .tray-af-deny-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 9px;
+  font-size: 12.5px;
+  color: var(--foreground);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.tray-settings .tray-af-deny-input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.tray-settings .tray-af-deny-input::placeholder {
+  color: var(--muted-foreground);
+}
+
+.tray-settings .tray-af-deny-btn {
+  flex: 0 0 auto;
+}
+
 /* ── Updates section ─────────────────────────────────────────────────────── */
 
 .tray-settings .tray-settings-uptodate {

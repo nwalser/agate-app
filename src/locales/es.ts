@@ -324,6 +324,25 @@ export const es: PartialMessages = {
     unlockDb: 'Desbloquear {name}',
     keepass: 'KeePass',
     clearKeyfile: 'Quitar archivo de clave',
+    // pass + Enpass (solo lectura en Agate)
+    sourcePass: 'Almacén de contraseñas (pass)',
+    sourceEnpass: 'Bóveda de Enpass',
+    pass: 'pass',
+    enpass: 'Enpass',
+    proton: 'Proton Pass',
+    readOnly: 'Solo lectura en Agate: puedes ver y copiar, pero no editar.',
+    passStore: 'Carpeta del almacén',
+    chooseFolder: 'Elegir carpeta…',
+    passKeyfile: 'Clave secreta OpenPGP',
+    passPassphrase: 'Frase de la clave',
+    passPassphraseHint: '(vacío si no tiene)',
+    rememberPassphrase: 'Recordar la frase de la clave',
+    addPass: 'Añadir almacén',
+    selectStoreAndKey: 'Elige la carpeta del almacén y tu clave secreta OpenPGP exportada.',
+    enterPassphrase: 'Introduce la frase de la clave.',
+    enpassVault: 'Archivo de bóveda',
+    addEnpass: 'Añadir bóveda de Enpass',
+    selectVaultAndPassword: 'Elige tu archivo vault.enpassdb e introduce su contraseña.',
   },
 
   trayDetail: {
@@ -356,6 +375,7 @@ export const es: PartialMessages = {
     passwordReused: 'Esta contraseña ya la usan {count} de tus inicios de sesión.',
     similarExisting: 'Ya hay inicios de sesión similares en tu bóveda:',
     noUnlockedAccount: 'Desbloquea una cuenta para añadir un inicio de sesión.',
+    noFolder: 'Sin carpeta',
     strength: {
       veryWeak: 'Muy débil',
       weak: 'Débil',
@@ -384,6 +404,17 @@ export const es: PartialMessages = {
     noneFound: 'No se encontró inicio de sesión para {target}',
     unknownTarget: 'la ventana enfocada',
     fill: 'Rellenar',
+    submit: 'Enviar tras autocompletar',
+    submitHint:
+      'Pulsa Enter para enviar el formulario tras autocompletar. Desactivado por defecto: algunos formularios fallan si se envían antes de tiempo.',
+    denylist: 'Nunca autocompletar en estas apps',
+    denylistHint:
+      'Agate nunca ofrece autocompletar en las apps que añadas aquí. Usa el nombre del proceso, p. ej. «discord».',
+    denylistAdd: 'Añadir',
+    denylistPlaceholder: 'nombre del proceso',
+    rememberHere: 'Usar aquí',
+    rememberHereTooltip: 'Recordar este acceso para {target}',
+    remembered: 'Recordado para {target}.',
   },
 
   generator: {

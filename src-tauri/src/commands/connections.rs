@@ -110,6 +110,114 @@ async fn pick_file(
     .map_err(|_| crate::error::AgateError::internal("file picker was interrupted"))
 }
 
+async fn pick_folder(app: tauri::AppHandle) -> AgateResult<Option<String>> {
+    use tauri_plugin_dialog::DialogExt;
+    tokio::task::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .blocking_pick_folder()
+            .and_then(|f| f.into_path().ok())
+            .map(|p| p.to_string_lossy().into_owned())
+    })
+    .await
+    .map_err(|_| crate::error::AgateError::internal("folder picker was interrupted"))
+}
+
+/// Native picker for a `pass` store root directory; `None` when cancelled.
+#[tauri::command]
+pub async fn pick_pass_store(app: tauri::AppHandle) -> AgateResult<Option<String>> {
+    pick_folder(app).await
+}
+
+/// Native picker for an exported OpenPGP secret-key file (any extension);
+/// `None` when cancelled.
+#[tauri::command]
+pub async fn pick_pass_keyfile(app: tauri::AppHandle) -> AgateResult<Option<String>> {
+    pick_file(app, None).await
+}
+
+#[tauri::command]
+pub async fn add_pass_connection(
+    app: tauri::AppHandle,
+    state: State<'_>,
+    store_root: String,
+    key_file: String,
+    passphrase: String,
+    store_credentials: bool,
+) -> AgateResult<()> {
+    let res = connections::add_pass_connection(
+        &state,
+        store_root,
+        key_file,
+        Zeroizing::new(passphrase),
+        store_credentials,
+    )
+    .await;
+    if res.is_ok() {
+        super::emit_session_changed(&app);
+    }
+    res
+}
+
+#[tauri::command]
+pub async fn unlock_pass_connection(
+    app: tauri::AppHandle,
+    state: State<'_>,
+    store_root: String,
+    passphrase: String,
+) -> AgateResult<()> {
+    let res =
+        connections::unlock_pass_connection(&state, store_root, Zeroizing::new(passphrase)).await;
+    if res.is_ok() {
+        super::emit_session_changed(&app);
+    }
+    res
+}
+
+/// Native picker for an Enpass `vault.enpassdb` file; `None` when cancelled.
+#[tauri::command]
+pub async fn pick_enpass_vault(app: tauri::AppHandle) -> AgateResult<Option<String>> {
+    pick_file(app, Some(("Enpass vault", &["enpassdb"]))).await
+}
+
+#[tauri::command]
+pub async fn add_enpass_connection(
+    app: tauri::AppHandle,
+    state: State<'_>,
+    path: String,
+    password: String,
+    keyfile: Option<String>,
+    store_credentials: bool,
+) -> AgateResult<()> {
+    let res = connections::add_enpass_connection(
+        &state,
+        path,
+        Zeroizing::new(password),
+        keyfile,
+        store_credentials,
+    )
+    .await;
+    if res.is_ok() {
+        super::emit_session_changed(&app);
+    }
+    res
+}
+
+#[tauri::command]
+pub async fn unlock_enpass_connection(
+    app: tauri::AppHandle,
+    state: State<'_>,
+    path: String,
+    password: String,
+) -> AgateResult<()> {
+    let res =
+        connections::unlock_enpass_connection(&state, path, Zeroizing::new(password)).await;
+    if res.is_ok() {
+        super::emit_session_changed(&app);
+    }
+    res
+}
+
 #[tauri::command]
 pub async fn add_keepass_connection(
     app: tauri::AppHandle,

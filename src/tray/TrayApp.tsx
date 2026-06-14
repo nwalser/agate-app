@@ -29,6 +29,7 @@ import {
   Globe,
   Info,
   KeyRound,
+  Link,
   LockKeyhole,
   LockOpen,
   LogIn,
@@ -71,6 +72,7 @@ import {
   createTrayStore,
   draftFromContext,
   fillPopupHeight,
+  fillTargetLabel as fillTargetLabelOf,
   loginNameFromUri,
   type FillRow,
 } from './trayStore.ts';
@@ -127,6 +129,10 @@ export default function TrayApp() {
     onTwoFactorPending: (emails) => {
       pushToast('info', t('tray.twoFactorPending', { emails: emails.join(', ') }));
       setView('vaults');
+    },
+    // "Use here" succeeded — name the target the same way the fill header does.
+    onAssociated: (label) => {
+      pushToast('success', t('autofill.remembered', { target: label ?? t('autofill.unknownTarget') }));
     },
   });
   const [selected, setSelected] = createSignal(0);
@@ -199,10 +205,12 @@ export default function TrayApp() {
   });
 
   /** The app a fill would land in (window title, else process name). */
-  const fillTargetLabel = () => {
-    const c = store.pending()?.context;
-    return c?.windowTitle || c?.processName || t('autofill.unknownTarget');
-  };
+  const fillTargetLabel = () =>
+    fillTargetLabelOf(store.pending()?.context) ?? t('autofill.unknownTarget');
+
+  /** Whether the current detection can be remembered for this app/site — the
+   *  "Use here" affordance only shows when the backend gave us an association URI. */
+  const canAssociate = () => store.pending()?.context.associateUri != null;
 
   /** Cancel an autofill prompt: drop the backend detection and hide the popup. */
   function cancelFill() {
@@ -556,6 +564,21 @@ export default function TrayApp() {
         </Show>
       </span>
       <span class="tray-actions">
+        {/* "Use here": remember this login for the detected app/site instead of
+            filling — only when the backend gave us an association URI. */}
+        <Show when={canAssociate()}>
+          <button
+            title={t('autofill.rememberHereTooltip', { target: fillTargetLabel() })}
+            aria-label={t('autofill.rememberHere')}
+            disabled={store.filling()}
+            onClick={(e) => {
+              e.stopPropagation();
+              void store.associate(r);
+            }}
+          >
+            <Link size={14} />
+          </button>
+        </Show>
         <button
           title={t('autofill.fill')}
           disabled={store.filling()}
@@ -880,6 +903,20 @@ export default function TrayApp() {
                     >
                       <For each={store.accounts()}>
                         {(email) => <option value={email}>{email}</option>}
+                      </For>
+                    </select>
+                  </Show>
+                  {/* Destination folder/group within the chosen vault. Hidden when
+                      the vault has none — there's nothing but the root to pick. */}
+                  <Show when={store.folderOptions().length > 0}>
+                    <select
+                      class="tray-add-folder"
+                      value={store.folderId() ?? ''}
+                      onChange={(e) => store.setFolderId(e.currentTarget.value || null)}
+                    >
+                      <option value="">{t('tray.noFolder')}</option>
+                      <For each={store.folderOptions()}>
+                        {(f) => <option value={f.id ?? ''}>{f.name}</option>}
                       </For>
                     </select>
                   </Show>

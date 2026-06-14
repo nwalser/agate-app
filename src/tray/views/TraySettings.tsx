@@ -22,7 +22,7 @@
 // after a successful logout (the settings no longer apply to a logged-out app).
 // Shared controls come from SettingsControls.tsx — never a hand-rolled toggle.
 
-import { createSignal, onMount, Show, type JSX } from 'solid-js';
+import { createSignal, For, onMount, Show, type JSX } from 'solid-js';
 import { getVersion } from '@tauri-apps/api/app';
 import {
   AlertTriangle,
@@ -32,9 +32,11 @@ import {
   KeyRound,
   LogOut,
   Palette,
+  Plus,
   Power,
   RefreshCw,
   Wand2,
+  X,
 } from 'lucide-solid';
 import { ipc } from '../../lib/ipc.ts';
 import { LOCALES, locale, setLocale, t } from '../../lib/i18n.ts';
@@ -101,6 +103,10 @@ export default function TraySettings(props: { onBack: () => void }): JSX.Element
   const [afSupported, setAfSupported] = createSignal(true);
   const [afHotkey, setAfHotkey] = createSignal('');
   const [afBusy, setAfBusy] = createSignal(false);
+  const [afSubmit, setAfSubmit] = createSignal(false);
+  const [afDenylist, setAfDenylist] = createSignal<string[]>([]);
+  // The draft in the "add a process name" input under the denylist editor.
+  const [denyDraft, setDenyDraft] = createSignal('');
 
   // ── Updates / danger ────────────────────────────────────────────────────────
   const [version, setVersion] = createSignal('');
@@ -137,6 +143,8 @@ export default function TraySettings(props: { onBack: () => void }): JSX.Element
         setAfMode(s.mode);
         setAfSupported(s.supported);
         setAfHotkey(s.hotkey);
+        setAfSubmit(s.submit);
+        setAfDenylist(s.denylist);
       } catch (err) {
         toastError(err);
       }
@@ -213,6 +221,57 @@ export default function TraySettings(props: { onBack: () => void }): JSX.Element
     } finally {
       setAfBusy(false);
     }
+  }
+
+  // Persist first, reflect only on success — a failed write must not leave the
+  // switch lying about the stored state (same shape as toggleAutostart).
+  async function toggleAutofillSubmit(next: boolean) {
+    setAfBusy(true);
+    try {
+      await ipc.autofillSetSubmit(next);
+      setAfSubmit(next);
+    } catch (err) {
+      toastError(err);
+    } finally {
+      setAfBusy(false);
+    }
+  }
+
+  // Normalize an entry the way the matcher compares process stems: trimmed,
+  // lowercased. Empty after trim → null (ignored).
+  function normalizeDenyEntry(raw: string): string | null {
+    const v = raw.trim().toLowerCase();
+    return v.length ? v : null;
+  }
+
+  // Persist a new denylist and reflect only on success (same posture as the
+  // submit toggle). Dedupe keeps the input idempotent.
+  async function commitDenylist(next: string[]) {
+    const deduped = [...new Set(next)];
+    setAfBusy(true);
+    try {
+      await ipc.autofillSetDenylist(deduped);
+      setAfDenylist(deduped);
+    } catch (err) {
+      toastError(err);
+    } finally {
+      setAfBusy(false);
+    }
+  }
+
+  async function addDenyEntry() {
+    const entry = normalizeDenyEntry(denyDraft());
+    if (!entry) return;
+    if (afDenylist().includes(entry)) {
+      setDenyDraft('');
+      return;
+    }
+    await commitDenylist([...afDenylist(), entry]);
+    setDenyDraft('');
+  }
+
+  async function removeDenyEntry(entry: string) {
+    await commitDenylist(afDenylist().filter((e) => e !== entry));
   }
 
   const afOptions = (): { value: AutofillMode; label: string }[] => [
@@ -386,6 +445,64 @@ export default function TraySettings(props: { onBack: () => void }): JSX.Element
             }
           />
           <p class="muted settings-help">{t('autofill.securityNote')}</p>
+          {/* Auto-submit + the per-app denylist only apply once a mode is armed. */}
+          <Show when={afMode() !== 'off'}>
+            <ToggleRow
+              label={t('autofill.submit')}
+              desc={t('autofill.submitHint')}
+              checked={afSubmit()}
+              disabled={afBusy()}
+              onChange={(v) => void toggleAutofillSubmit(v)}
+            />
+            <div class="tray-af-denylist">
+              <span class="setting-row-label">{t('autofill.denylist')}</span>
+              <p class="muted settings-help">{t('autofill.denylistHint')}</p>
+              <Show when={afDenylist().length > 0}>
+                <ul class="tray-af-chips">
+                  <For each={afDenylist()}>
+                    {(entry) => (
+                      <li class="tray-af-chip">
+                        <span class="tray-af-chip-text">{entry}</span>
+                        <button
+                          type="button"
+                          class="tray-af-chip-remove"
+                          title={t('common.remove')}
+                          aria-label={t('common.remove')}
+                          disabled={afBusy()}
+                          onClick={() => void removeDenyEntry(entry)}
+                        >
+                          <X size={12} strokeWidth={2} />
+                        </button>
+                      </li>
+                    )}
+                  </For>
+                </ul>
+              </Show>
+              <form
+                class="tray-af-deny-add"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void addDenyEntry();
+                }}
+              >
+                <input
+                  class="tray-af-deny-input"
+                  type="text"
+                  value={denyDraft()}
+                  placeholder={t('autofill.denylistPlaceholder')}
+                  aria-label={t('autofill.denylist')}
+                  onInput={(e) => setDenyDraft(e.currentTarget.value)}
+                />
+                <button
+                  type="submit"
+                  class="tray-settings-btn tray-af-deny-btn"
+                  disabled={afBusy() || normalizeDenyEntry(denyDraft()) === null}
+                >
+                  <Plus size={14} strokeWidth={1.75} /> {t('autofill.denylistAdd')}
+                </button>
+              </form>
+            </div>
+          </Show>
         </Show>
       </section>
 

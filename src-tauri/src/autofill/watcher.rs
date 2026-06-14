@@ -72,6 +72,20 @@ fn suppress_until() -> &'static Mutex<Option<Instant>> {
     SUPPRESS.get_or_init(|| Mutex::new(None))
 }
 
+/// The per-app denylist snapshot. The watcher thread is synchronous and can't await
+/// the config mutex, so `set_denylist_snapshot` mirrors the persisted list here for
+/// `detect_focused` to consult. Independent of the watcher thread's lifetime, so it
+/// survives mode restarts.
+fn denylist() -> &'static Mutex<Vec<String>> {
+    static DENYLIST: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
+    DENYLIST.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// Replace the live denylist snapshot (called on every denylist change + at launch).
+pub fn set_denylist_snapshot(list: Vec<String>) {
+    *lock(denylist()) = list;
+}
+
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
@@ -233,8 +247,9 @@ fn run_thread(app: tauri::AppHandle, mode: Mode, tx: std::sync::mpsc::Sender<u32
             break; // 0 = WM_QUIT, -1 = error
         }
         if mode == Mode::Hotkey && msg.message == WM_HOTKEY {
-            // Explicit press: offer for the focused field if it's a password one.
-            if let Some(det) = uia::detect_focused(own_pid) {
+            // Explicit press: offer for the focused field if it's a login one and
+            // the app isn't on the denylist.
+            if let Some(det) = uia::detect_focused(own_pid, &lock(denylist())) {
                 offer(&app, det);
             }
         }
@@ -282,7 +297,7 @@ unsafe extern "system" fn win_event_proc(
 /// autofill when the focused control is a login field, CLOSE any open autofill
 /// popup when focus moved to a non-login control, skip bounce-back refocuses.
 fn on_watch_focus(app: &tauri::AppHandle, own_pid: u32, fg: isize) {
-    let detected = uia::detect_focused(own_pid);
+    let detected = uia::detect_focused(own_pid, &lock(denylist()));
     let key = detected.as_ref().map(|d| (d.hwnd, d.context.field));
     let action = {
         let mut last = lock(last_detected());

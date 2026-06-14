@@ -14,9 +14,16 @@ import { clearMocks, mockIPC, mockWindows } from '@tauri-apps/api/mocks';
 import { emit } from '@tauri-apps/api/event';
 import TrayApp from './TrayApp.tsx';
 import { dismissToast, toasts } from '../state/toast.ts';
-import { makeConnection, makeDetail, makeItem, makeLoginDetail } from '../testing/factories.ts';
+import {
+  makeConnection,
+  makeDetail,
+  makeFolder,
+  makeItem,
+  makeLoginDetail,
+} from '../testing/factories.ts';
 import type {
   AutofillPending,
+  Folder,
   ItemInput,
   SessionStatus,
   UnlockOutcome,
@@ -35,6 +42,8 @@ interface BackendState {
   items: VaultItem[];
   /** itemId → cleartext password returned by item_detail. */
   passwords: Record<string, string>;
+  /** Folders/groups the add-form picker offers (per the unified list_folders). */
+  folders: Folder[];
   pending: AutofillPending | null;
   clipboard: string;
 }
@@ -70,6 +79,7 @@ function makeBackend(over: Partial<BackendState> = {}) {
     status: makeStatus(),
     items: [],
     passwords: {},
+    folders: [],
     pending: null,
     clipboard: '',
     ...over,
@@ -117,8 +127,14 @@ function makeBackend(over: Partial<BackendState> = {}) {
       case 'autofill_dismiss':
         state.pending = null;
         return null;
+      case 'autofill_associate':
+        // Backend would add the association URI to the login + re-rank; the
+        // subsequent autofill_pending re-sync returns whatever the test set.
+        return null;
       case 'list_connections':
         return [makeConnection({ email: 'me@x.com' })];
+      case 'list_folders':
+        return state.folders.map((f) => ({ ...f }));
       case 'generate_password':
         return 'Gen3rated!Pass';
       case 'save_item': {
@@ -494,6 +510,33 @@ describe('TrayApp integration — add-login form', () => {
     // The saved login is back in the (refreshed) list view.
     await screen.findByText('Example Site');
     expect(screen.getByPlaceholderText('Search vault…')).toBeTruthy();
+  });
+
+  it('lets the user pick a destination folder, which is sent on save', async () => {
+    const backend = makeBackend({
+      folders: [
+        makeFolder({ id: 'work', name: 'Work', accountEmail: 'me@x.com' }),
+        makeFolder({ id: 'personal', name: 'Personal', accountEmail: 'me@x.com' }),
+      ],
+    });
+    renderTray(backend);
+    await screen.findByPlaceholderText('Search vault…');
+
+    fireEvent.click(screen.getByTitle('Add login'));
+    const name = await screen.findByPlaceholderText('Name');
+    fireEvent.input(name, { target: { value: 'Example Site' } });
+
+    // The folder picker shows once list_folders resolves (single connection, so
+    // it's the only <select> in the form). Choose "Work".
+    const folderSelect = (await screen.findByRole('combobox')) as HTMLSelectElement;
+    await waitFor(() => expect(folderSelect.querySelector('option[value="work"]')).toBeTruthy());
+    fireEvent.change(folderSelect, { target: { value: 'work' } });
+
+    fireEvent.submit(name.closest('form')!);
+
+    await screen.findByText('Login saved.');
+    const args = backend.invoked('save_item')[0]!.args;
+    expect((args.input as ItemInput).folderId).toBe('work');
   });
 
   it('pins the popup while adding and releases it once the login is saved', async () => {

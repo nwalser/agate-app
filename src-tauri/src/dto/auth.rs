@@ -64,6 +64,12 @@ pub enum ConnectionKind {
     #[default]
     Bitwarden,
     Keepass,
+    /// The `pass` standard unix password store (GPG-encrypted file tree).
+    Pass,
+    /// A local Enpass 6+ vault (SQLCipher database).
+    Enpass,
+    /// Proton Pass (end-to-end-encrypted Proton account vault).
+    Proton,
 }
 
 /// add-connection quick-pick. Non-secret (server + email only).

@@ -17,6 +17,7 @@ export type {
   TwoFactorInput,
   LoginResult,
   SessionStatus,
+  ConnectionKind,
   ConnectionSummary,
   UnlockOutcome,
   // ---- vault read shapes ----
