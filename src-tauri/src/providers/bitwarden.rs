@@ -6,16 +6,21 @@
 //! sync, writes) stay in `auth.rs` / `vault::reads` / `mutate`, which snapshot
 //! client handles out of the lock first.
 
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine as _;
+use bitwarden_api_api::models::CipherRequestModel;
 use bitwarden_collections::collection::{Collection as SdkCollection, CollectionView};
 use bitwarden_pm::PasswordManagerClient;
 use bitwarden_vault::{
-    generate_totp, Cipher, CipherRepromptType, CipherView, Fido2CredentialView,
-    Folder as SdkFolder, FolderView,
+    generate_totp, Cipher, CipherRepromptType, CipherView, Fido2CredentialFullView,
+    Fido2CredentialView, Folder as SdkFolder, FolderView,
 };
 use chrono::Utc;
 
 use crate::dto::{Collection, Folder, ItemDetail, PasskeyCredential, TotpCode, VaultItem};
 use crate::error::{AgateError, AgateResult, ErrorKind};
+use crate::passkey::codec::pkcs8_pem_to_der;
+use crate::passkey::{PasskeyTarget, StoredPasskey};
 use crate::vault::{view_to_detail, view_to_list_item};
 
 /// One live, unlocked Bitwarden connection: its SDK client plus the last sync's
@@ -197,6 +202,131 @@ impl BitwardenConnection {
         }
         count
     }
+
+    /// Store a freshly-minted passkey on a Bitwarden cipher at `target`: attach it
+    /// to an existing login (`target.item_id`) or create a new login in
+    /// `target.folder_id`. Uses the SDK's `CipherView::set_new_fido2_credentials`
+    /// and the same encrypt → `CipherRequestModel` → POST/PUT flow as `save_item`.
+    ///
+    /// ⚠️ UNVERIFIED LIVE: built against the SDK's confirmed types and the
+    /// confirmed key format (`keyValue` = base64url of the PKCS#8 DER, matching
+    /// the SDK's own `cose_key_to_pkcs8`), but NOT exercised against a real
+    /// Bitwarden account. The server round-trip, the base64url variant, and
+    /// cross-client interop (credential-id encoding) still need verification with
+    /// a real account. The caller re-syncs after a successful write.
+    pub async fn create_passkey(
+        &mut self,
+        passkey: StoredPasskey,
+        target: &PasskeyTarget,
+    ) -> AgateResult<()> {
+        let key_der = pkcs8_pem_to_der(&passkey.private_key_pem)?;
+        let full = Fido2CredentialFullView {
+            credential_id: URL_SAFE_NO_PAD.encode(&passkey.credential_id),
+            key_type: "public-key".to_string(),
+            key_algorithm: "ECDSA".to_string(),
+            key_curve: "P-256".to_string(),
+            key_value: URL_SAFE_NO_PAD.encode(&*key_der),
+            rp_id: passkey.rp_id.clone(),
+            user_handle: (!passkey.user_handle.is_empty())
+                .then(|| URL_SAFE_NO_PAD.encode(&passkey.user_handle)),
+            user_name: passkey.user_name.clone(),
+            counter: "0".to_string(),
+            rp_name: passkey.rp_name.clone(),
+            user_display_name: passkey.user_display_name.clone(),
+            discoverable: "true".to_string(),
+            creation_date: Utc::now(),
+        };
+
+        // Attach to an existing login, or build a new login cipher to hold it.
+        let mut view: CipherView = match &target.item_id {
+            Some(item_id) => {
+                let existing = self.decrypt_view(item_id)?;
+                if existing.login.is_none() {
+                    return Err(AgateError::bad_request("Passkeys can only be added to logins."));
+                }
+                existing
+            }
+            None => new_passkey_login_view(&passkey, target.folder_id.as_deref())?,
+        };
+        let cipher_id = view.id;
+
+        let internal = &self.client.0.internal;
+        let user_id = internal.get_user_id().ok_or_else(AgateError::not_authenticated)?;
+        let key_store = internal.get_key_store();
+        {
+            let mut ctx = key_store.context();
+            view.set_new_fido2_credentials(&mut ctx, vec![full]).map_err(|e| {
+                AgateError::new(ErrorKind::Crypto, format!("could not attach the passkey: {e}"))
+            })?;
+        }
+        let cipher: Cipher = key_store
+            .encrypt(view)
+            .map_err(|e| AgateError::new(ErrorKind::Crypto, format!("encrypt failed: {e}")))?;
+        let mut model: CipherRequestModel = cipher
+            .try_into()
+            .map_err(|e| AgateError::new(ErrorKind::Internal, format!("serialize cipher: {e}")))?;
+        model.encrypted_for = Some(user_id.into());
+
+        let api = internal.get_api_configurations();
+        let ciphers_api = api.api_client.ciphers_api();
+        match cipher_id {
+            Some(id) => ciphers_api
+                .put(id.into(), Some(model))
+                .await
+                .map(|_| ())
+                .map_err(|e| AgateError::new(ErrorKind::Network, format!("Save failed: {e}")))?,
+            None => ciphers_api
+                .post(Some(model))
+                .await
+                .map(|_| ())
+                .map_err(|e| AgateError::new(ErrorKind::Network, format!("Create failed: {e}")))?,
+        }
+        Ok(())
+    }
+}
+
+/// Build a fresh login `CipherView` to hold a new passkey (mirrors the field set
+/// of `mutate::writes::create_view_json` for a login). The server is
+/// authoritative for dates on create.
+fn new_passkey_login_view(passkey: &StoredPasskey, folder_id: Option<&str>) -> AgateResult<CipherView> {
+    let now = Utc::now().to_rfc3339();
+    let title = passkey.rp_name.clone().unwrap_or_else(|| passkey.rp_id.clone());
+    let v = serde_json::json!({
+        "id": null,
+        "organizationId": null,
+        "folderId": folder_id,
+        "collectionIds": [],
+        "key": null,
+        "name": title,
+        "notes": null,
+        "type": 1,
+        "login": {
+            "username": passkey.user_name,
+            "password": null,
+            "totp": null,
+            "uris": [{ "uri": format!("https://{}", passkey.rp_id), "match": null, "uriChecksum": null }],
+            "autofillOnPageLoad": null,
+        },
+        "identity": null, "card": null, "secureNote": null, "sshKey": null,
+        "bankAccount": null, "driversLicense": null, "passport": null,
+        "favorite": false,
+        "reprompt": 0,
+        "organizationUseTotp": false,
+        "edit": true,
+        "permissions": null,
+        "viewPassword": true,
+        "localData": null,
+        "attachments": null,
+        "attachmentDecryptionFailures": null,
+        "fields": [],
+        "passwordHistory": null,
+        "creationDate": now,
+        "deletedDate": null,
+        "revisionDate": now,
+        "archivedDate": null,
+    });
+    serde_json::from_value(v)
+        .map_err(|e| AgateError::new(ErrorKind::Internal, format!("could not build cipher: {e}")))
 }
 
 fn passkey_to_dto(c: Fido2CredentialView) -> PasskeyCredential {

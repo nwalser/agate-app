@@ -30,13 +30,16 @@ use passkey_types::Passkey;
 
 use crate::error::{AgateError, AgateResult, ErrorKind};
 use crate::passkey::codec::{passkey_to_stored, stored_to_passkey};
+use crate::passkey::PasskeyTarget;
 use crate::providers::LiveConnection;
 
 /// A [`CredentialStore`] over a single live connection. Provider-blind: converts
 /// `StoredPasskey` ↔ `Passkey` and dispatches through `LiveConnection`'s passkey
-/// methods.
+/// methods. `target` is where a newly-created credential is stored (chosen by the
+/// user before the ceremony); it is unused for assertions.
 struct ConnectionStore<'a> {
     conn: &'a mut LiveConnection,
+    target: PasskeyTarget,
 }
 
 /// Map a provider/storage failure to a CTAP status. The detail is logged (never
@@ -87,7 +90,7 @@ impl CredentialStore for ConnectionStore<'_> {
         _options: Options,
     ) -> Result<(), StatusCode> {
         let stored = passkey_to_stored(&cred, &user, &rp).map_err(store_status)?;
-        self.conn.create_passkey(stored).map_err(store_status)
+        self.conn.create_passkey(stored, &self.target).await.map_err(store_status)
     }
 
     async fn update_credential(&mut self, _cred: Passkey) -> Result<(), StatusCode> {
@@ -113,18 +116,20 @@ fn ceremony_status(status: StatusCode) -> AgateError {
 }
 
 /// Run a make-credential (registration) ceremony, storing the new credential in
-/// `conn`. `user_validation` is the consent/verification gate — the OS shim
-/// supplies a Windows Hello / Touch ID backed implementation.
+/// `conn` at `target` (the item/folder the user chose). `user_validation` is the
+/// consent/verification gate — the OS shim supplies a Windows Hello / Touch ID
+/// backed implementation.
 #[allow(dead_code)] // entry point for the OS integration shim (Layer C); not yet wired.
 pub async fn make_credential<U>(
     conn: &mut LiveConnection,
     request: MakeCredentialRequest,
+    target: PasskeyTarget,
     user_validation: U,
 ) -> AgateResult<MakeCredentialResponse>
 where
     U: UserValidationMethod<PasskeyItem = Passkey> + Send + Sync,
 {
-    let store = ConnectionStore { conn };
+    let store = ConnectionStore { conn, target };
     let mut authenticator = Authenticator::new(agate_aaguid(), store, user_validation);
     authenticator.make_credential(request).await.map_err(ceremony_status)
 }
@@ -139,7 +144,8 @@ pub async fn get_assertion<U>(
 where
     U: UserValidationMethod<PasskeyItem = Passkey> + Send + Sync,
 {
-    let store = ConnectionStore { conn };
+    // Assertions never store, so the target is irrelevant here.
+    let store = ConnectionStore { conn, target: PasskeyTarget::default() };
     let mut authenticator = Authenticator::new(agate_aaguid(), store, user_validation);
     authenticator.get_assertion(request).await.map_err(ceremony_status)
 }
@@ -232,7 +238,7 @@ mod tests {
     async fn make_then_get_assertion_round_trips_through_keepass() {
         let (_dir, mut conn) = temp_conn();
 
-        make_credential(&mut conn, make_request(), GrantAll).await.unwrap();
+        make_credential(&mut conn, make_request(), PasskeyTarget::default(), GrantAll).await.unwrap();
 
         // Persisted as a KeePassXC-style ES256 passkey.
         let stored = conn.find_passkeys_for_rp(RP).unwrap();

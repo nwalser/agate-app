@@ -43,7 +43,7 @@ use crate::dto::{
     LoginDetail, LoginUri, PasskeyCredential, TotpCode, VaultItem,
 };
 use crate::error::{AgateError, AgateResult, ErrorKind};
-use crate::passkey::{CoseAlgorithm, StoredPasskey};
+use crate::passkey::{CoseAlgorithm, PasskeyTarget, StoredPasskey};
 
 /// KeePassXC's favorite convention: a literal "Favorite" tag on the entry.
 const FAVORITE_TAG: &str = "Favorite";
@@ -501,31 +501,51 @@ impl KeepassConnection {
         Ok(None)
     }
 
-    /// Store a freshly-minted passkey as a new entry (title = relying party,
-    /// username = the passkey's account name), then save atomically.
-    pub fn create_passkey(&mut self, passkey: &StoredPasskey) -> AgateResult<()> {
-        self.mutate_and_save(|db| {
-            let title = passkey.rp_name.clone().unwrap_or_else(|| passkey.rp_id.clone());
-            let cred_b64 = URL_SAFE_NO_PAD.encode(&passkey.credential_id);
-            let handle_b64 = URL_SAFE_NO_PAD.encode(&passkey.user_handle);
-            db.root_mut().add_entry().edit(|e| {
-                e.set_unprotected(kpf::TITLE, title.as_str());
-                if let Some(name) = &passkey.user_name {
-                    e.set_unprotected(kpf::USERNAME, name.as_str());
-                    e.set_unprotected(PASSKEY_USERNAME, name.as_str());
-                }
-                e.set_unprotected(PASSKEY_RELYING_PARTY, passkey.rp_id.as_str());
-                e.set_unprotected(PASSKEY_CREDENTIAL_ID, cred_b64.as_str());
-                e.set_unprotected(PASSKEY_USER_HANDLE, handle_b64.as_str());
-                // The private key is the one secret here → store it protected.
-                e.set_protected(PASSKEY_PRIVATE_KEY_PEM, passkey.private_key_pem.as_str());
-                e.set_unprotected(PASSKEY_ALGORITHM, passkey.algorithm.label());
-                e.set_unprotected(PASSKEY_FLAG_BE, bool_str(passkey.backup_eligible));
-                e.set_unprotected(PASSKEY_FLAG_BS, bool_str(passkey.backup_state));
-                e.tags.push(PASSKEY_TAG.to_string());
-            });
-            Ok(())
-        })
+    /// Store a freshly-minted passkey at `target`, then save atomically:
+    /// - `target.item_id` set → attach it to that existing entry (e.g. the
+    ///   user's existing login for the site); refuses if the entry already holds
+    ///   a passkey (one passkey per entry, the KeePassXC convention).
+    /// - otherwise → create a new entry in `target.folder_id` (or the root),
+    ///   titled by the relying party.
+    pub fn create_passkey(&mut self, passkey: &StoredPasskey, target: &PasskeyTarget) -> AgateResult<()> {
+        match &target.item_id {
+            Some(item_id) => {
+                let eid = EntryId::from_uuid(parse_uuid(item_id, "No such item.")?);
+                self.mutate_and_save(|db| {
+                    match db.entry(eid) {
+                        Some(entry) if entry.get(PASSKEY_CREDENTIAL_ID).is_some_and(|v| !v.is_empty()) => {
+                            return Err(AgateError::bad_request("That item already has a passkey."));
+                        }
+                        Some(_) => {}
+                        None => return Err(AgateError::bad_request("No such item.")),
+                    }
+                    let mut entry = db
+                        .entry_mut(eid)
+                        .ok_or_else(|| AgateError::bad_request("No such item."))?;
+                    entry.edit_tracking(|tracked| {
+                        set_passkey_attrs(tracked, passkey);
+                        tracked.times.last_modification = Some(Times::now());
+                    });
+                    Ok(())
+                })
+            }
+            None => {
+                self.mutate_and_save(|db| {
+                    let group_id = resolve_target_group(db, target.folder_id.as_deref())?;
+                    let title = passkey.rp_name.clone().unwrap_or_else(|| passkey.rp_id.clone());
+                    let mut group = db
+                        .group_mut(group_id)
+                        .ok_or_else(|| AgateError::bad_request("No such folder."))?;
+                    let mut entry = group.add_entry();
+                    entry.set_unprotected(kpf::TITLE, title.as_str());
+                    if let Some(name) = &passkey.user_name {
+                        entry.set_unprotected(kpf::USERNAME, name.as_str());
+                    }
+                    set_passkey_attrs(&mut entry, passkey);
+                    Ok(())
+                })
+            }
+        }
     }
 
     /// Persist a new signature counter. KeePass passkeys report counter `0`
@@ -1043,13 +1063,33 @@ fn entry_has_passkey(entry: &EntryRef<'_>) -> bool {
     entry.get(PASSKEY_CREDENTIAL_ID).is_some_and(|v| !v.is_empty())
 }
 
-// Used only by the (currently-unwired) passkey create path.
-#[allow(dead_code)]
 fn bool_str(value: bool) -> &'static str {
     if value {
         "true"
     } else {
         "false"
+    }
+}
+
+/// Write the `KPEX_PASSKEY_*` attributes (+ `Passkey` tag) for a passkey onto an
+/// entry, leaving the entry's other fields (title/username/etc.) untouched — so
+/// it works both for a fresh entry and for attaching to an existing login.
+fn set_passkey_attrs(entry: &mut Entry, passkey: &StoredPasskey) {
+    let cred_b64 = URL_SAFE_NO_PAD.encode(&passkey.credential_id);
+    let handle_b64 = URL_SAFE_NO_PAD.encode(&passkey.user_handle);
+    if let Some(name) = &passkey.user_name {
+        entry.set_unprotected(PASSKEY_USERNAME, name.as_str());
+    }
+    entry.set_unprotected(PASSKEY_RELYING_PARTY, passkey.rp_id.as_str());
+    entry.set_unprotected(PASSKEY_CREDENTIAL_ID, cred_b64.as_str());
+    entry.set_unprotected(PASSKEY_USER_HANDLE, handle_b64.as_str());
+    // The private key is the one secret here → store it protected.
+    entry.set_protected(PASSKEY_PRIVATE_KEY_PEM, passkey.private_key_pem.as_str());
+    entry.set_unprotected(PASSKEY_ALGORITHM, passkey.algorithm.label());
+    entry.set_unprotected(PASSKEY_FLAG_BE, bool_str(passkey.backup_eligible));
+    entry.set_unprotected(PASSKEY_FLAG_BS, bool_str(passkey.backup_state));
+    if !entry.tags.iter().any(|t| t == PASSKEY_TAG) {
+        entry.tags.push(PASSKEY_TAG.to_string());
     }
 }
 
@@ -2122,7 +2162,7 @@ mod tests {
     fn passkey_create_find_get_roundtrips_through_disk() {
         let fx = fixture();
         let mut conn = open_conn(&fx.path);
-        conn.create_passkey(&sample_passkey("github.com")).unwrap();
+        conn.create_passkey(&sample_passkey("github.com"), &PasskeyTarget::default()).unwrap();
 
         // reopened from disk → the credential persisted
         let conn2 = open_conn(&fx.path);
@@ -2147,7 +2187,7 @@ mod tests {
     fn passkey_flags_has_passkey_and_detail_metadata_without_leaking_the_key() {
         let fx = fixture();
         let mut conn = open_conn(&fx.path);
-        conn.create_passkey(&sample_passkey("github.com")).unwrap();
+        conn.create_passkey(&sample_passkey("github.com"), &PasskeyTarget::default()).unwrap();
         let conn2 = open_conn(&fx.path);
 
         let items = conn2.list_items("kp", "KeePass");
@@ -2176,7 +2216,7 @@ mod tests {
     fn passkey_uses_keepassxc_compatible_attributes() {
         let fx = fixture();
         let mut conn = open_conn(&fx.path);
-        conn.create_passkey(&sample_passkey("github.com")).unwrap();
+        conn.create_passkey(&sample_passkey("github.com"), &PasskeyTarget::default()).unwrap();
 
         // Open the file with the raw crate (no Agate) and assert the exact
         // KeePassXC attribute names + that the private key is stored protected.
@@ -2199,7 +2239,7 @@ mod tests {
     fn passkey_delete_removes_it_from_active_lookups() {
         let fx = fixture();
         let mut conn = open_conn(&fx.path);
-        conn.create_passkey(&sample_passkey("github.com")).unwrap();
+        conn.create_passkey(&sample_passkey("github.com"), &PasskeyTarget::default()).unwrap();
         conn.delete_passkey(&[1, 2, 3, 4, 5, 6, 7, 8]).unwrap();
 
         // gone from the live connection and from a cold reopen
@@ -2212,5 +2252,47 @@ mod tests {
         let mut conn3 = open_conn(&fx.path);
         let err = conn3.delete_passkey(&[0, 0]).unwrap_err();
         assert!(matches!(err.kind, ErrorKind::BadRequest), "got: {err}");
+    }
+
+    #[test]
+    fn passkey_attaches_to_an_existing_item() {
+        let fx = fixture();
+        let mut conn = open_conn(&fx.path);
+        // attach a passkey to the user's existing GitHub login
+        let target = PasskeyTarget { item_id: Some(fx.github_id.clone()), folder_id: None };
+        conn.create_passkey(&sample_passkey("github.com"), &target).unwrap();
+
+        let conn2 = open_conn(&fx.path);
+        // no NEW entry was created — still the fixture's 3 items
+        assert_eq!(conn2.list_items("kp", "KeePass").len(), 3);
+        // the GitHub item now carries the passkey AND keeps its login fields
+        let detail = conn2.item_detail("kp", "KeePass", &fx.github_id).unwrap();
+        assert_eq!(detail.passkeys.len(), 1);
+        let login = detail.login.as_ref().unwrap();
+        assert_eq!(login.username.as_deref(), Some("octocat"));
+        assert_eq!(login.password.as_deref(), Some("hunter2"), "attaching a passkey preserves the login");
+
+        // a second passkey on the same item is refused
+        let mut conn3 = open_conn(&fx.path);
+        let err = conn3.create_passkey(&sample_passkey("github.com"), &target).unwrap_err();
+        assert!(matches!(err.kind, ErrorKind::BadRequest), "got: {err}");
+    }
+
+    #[test]
+    fn passkey_creates_new_item_in_target_folder() {
+        let fx = fixture();
+        let mut conn = open_conn(&fx.path);
+        let target = PasskeyTarget { item_id: None, folder_id: Some(fx.work_id.clone()) };
+        conn.create_passkey(&sample_passkey("example.com"), &target).unwrap();
+
+        let conn2 = open_conn(&fx.path);
+        let items = conn2.list_items("kp", "KeePass");
+        let created = items.iter().find(|i| i.has_passkey).expect("a new passkey item exists");
+        assert_eq!(
+            created.folder_id.as_deref(),
+            Some(fx.work_id.as_str()),
+            "the new passkey item lands in the chosen folder"
+        );
+        assert_eq!(conn2.find_passkeys_for_rp("example.com").unwrap().len(), 1);
     }
 }

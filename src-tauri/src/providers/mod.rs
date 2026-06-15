@@ -24,7 +24,7 @@ pub use proton::ProtonConnection;
 
 use crate::dto::{Collection, ConnectionKind, Folder, ItemDetail, TotpCode, VaultItem};
 use crate::error::{AgateError, AgateResult};
-use crate::passkey::StoredPasskey;
+use crate::passkey::{PasskeyTarget, StoredPasskey};
 
 /// One live, unlocked connection.
 // large_enum_variant allow: a KeepassConnection embeds the decrypted Database
@@ -204,15 +204,17 @@ impl LiveConnection {
         }
     }
 
-    /// Store a freshly-minted passkey (a make-credential ceremony).
-    pub fn create_passkey(&mut self, passkey: StoredPasskey) -> AgateResult<()> {
+    /// Store a freshly-minted passkey (a make-credential ceremony), at `target`
+    /// (attached to an existing item, or a new item in a folder). Async because
+    /// the Bitwarden path writes via the API; the KeePass path is synchronous.
+    pub async fn create_passkey(
+        &mut self,
+        passkey: StoredPasskey,
+        target: &PasskeyTarget,
+    ) -> AgateResult<()> {
         match self {
-            LiveConnection::Keepass(k) => k.create_passkey(&passkey),
-            // SDK Fido2 *write* support is not confirmed at the pinned rev — gate
-            // it loudly rather than silently dropping a credential.
-            LiveConnection::Bitwarden(_) => Err(AgateError::bad_request(
-                "Storing passkeys to a Bitwarden vault isn't supported yet.",
-            )),
+            LiveConnection::Keepass(k) => k.create_passkey(&passkey, target),
+            LiveConnection::Bitwarden(b) => b.create_passkey(passkey, target).await,
             LiveConnection::Pass(_) | LiveConnection::Enpass(_) | LiveConnection::Proton(_) => {
                 Err(AgateError::bad_request(
                     "This vault is read-only and can't store passkeys.",

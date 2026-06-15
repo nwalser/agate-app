@@ -109,6 +109,19 @@ pub struct StoredPasskey {
     pub backup_state: bool,
 }
 
+/// Where a newly-created passkey should be stored: attached to an existing item,
+/// or as a new item in a folder. The ceremony's caller (the popup chooser
+/// surfaced by the OS integration shim) decides this — "save this passkey to
+/// which item / folder".
+#[derive(Debug, Clone, Default)]
+pub struct PasskeyTarget {
+    /// Attach the passkey to this existing item; `None` = create a new item.
+    pub item_id: Option<String>,
+    /// Folder for the new item (provider-specific id; ignored when attaching to
+    /// an existing item). `None` = the vault root / no folder.
+    pub folder_id: Option<String>,
+}
+
 /// Redacted: never prints the private key (or any byte material that could
 /// fingerprint a credential).
 impl std::fmt::Debug for StoredPasskey {

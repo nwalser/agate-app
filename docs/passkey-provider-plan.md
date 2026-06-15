@@ -23,14 +23,28 @@ Built + tested:
 - `src-tauri/src/passkey/authenticator.rs` — `ConnectionStore` implementing the
   `passkey-authenticator` `CredentialStore` over `&mut LiveConnection`
   (provider-blind), plus `make_credential` / `get_assertion` ceremony entry
-  points generic over `UserValidationMethod`. **137 Rust tests pass, clippy
-  clean**, incl. a full register→store-in-KeePass→sign-in integration test.
+  points generic over `UserValidationMethod`. Incl. a full
+  register→store-in-KeePass→sign-in integration test.
+- **Destination-targeted creation** — `PasskeyTarget { item_id, folder_id }`
+  threads through the ceremony so the user chooses where a new passkey lands.
+  KeePass: attach to an existing login (preserving it) OR create a new item in a
+  folder — both tested. `create_passkey` is now async (Bitwarden writes via API).
+- **Bitwarden creation (implemented, ⚠️ unverified live)** —
+  `BitwardenConnection::create_passkey` builds a `Fido2CredentialFullView`
+  (`keyValue` = base64url(PKCS#8 DER), the SDK-confirmed format) and writes via
+  `set_new_fido2_credentials` + the same encrypt→POST/PUT flow as `save_item`.
+  Compiles + the key conversion is unit-tested, but the server round-trip, the
+  base64url variant, and cross-client credential-id interop need a **real
+  Bitwarden account** to confirm.
+- **140 Rust tests pass, clippy `-D warnings` clean.**
 
 Not built yet (clearly staged):
-- **Bitwarden persistence** — gated `BadRequest` (SDK Fido2 write unconfirmed at
-  the pinned rev).
-- **User-facing commands** (popup list/delete passkeys) — read metadata already
-  flows via `item_detail`; a delete command is the small next piece.
+- **Bitwarden assertion read** — `find_passkeys_for_rp` / `get_passkey` still
+  return empty for Bitwarden, so Agate can store a Bitwarden passkey but can't yet
+  assert one from it (the create side is the user's ask; the read/sign side is the
+  follow-up).
+- **User-facing commands** (popup chooser: which vault / item / folder; list /
+  delete) — the backend capability exists; the popup wiring is the next piece.
 - **OS integration (Layer C)** — §5; the `make_credential` / `get_assertion`
   entry points exist and are tested, but nothing calls them yet (the native shim
   isn't buildable/verifiable here), so they sit under documented

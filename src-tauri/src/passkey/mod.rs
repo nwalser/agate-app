@@ -26,4 +26,4 @@ pub mod authenticator;
 pub mod codec;
 pub mod store;
 
-pub use store::{CoseAlgorithm, StoredPasskey};
+pub use store::{CoseAlgorithm, PasskeyTarget, StoredPasskey};

@@ -80,6 +80,19 @@ pub fn pkcs8_pem_to_cose_key(pem: &str) -> AgateResult<CoseKey> {
     Ok(cose_from_secret(&secret))
 }
 
+/// The PKCS#8 **DER** bytes of a PEM-encoded key — the form Bitwarden's
+/// `Fido2Credential.keyValue` stores (it holds base64url of these bytes; this
+/// matches the SDK's own `cose_key_to_pkcs8`, which is `to_pkcs8_der`).
+pub fn pkcs8_pem_to_der(pem: &str) -> AgateResult<Zeroizing<Vec<u8>>> {
+    let secret = SecretKey::from_pkcs8_pem(pem).map_err(|e| {
+        AgateError::new(ErrorKind::Crypto, format!("could not parse passkey key: {e}"))
+    })?;
+    let der = secret.to_pkcs8_der().map_err(|e| {
+        AgateError::new(ErrorKind::Crypto, format!("could not encode passkey key: {e}"))
+    })?;
+    Ok(Zeroizing::new(der.as_bytes().to_vec()))
+}
+
 /// Convert a freshly-minted [`Passkey`] (plus the ceremony's user/rp entities)
 /// into Agate's [`StoredPasskey`] for persistence.
 pub fn passkey_to_stored(
@@ -145,6 +158,17 @@ mod tests {
 
         let verifying = SigningKey::from(&secret).verifying_key().to_owned();
         verifying.verify(message, &signature).expect("signature must verify");
+    }
+
+    #[test]
+    fn pem_to_pkcs8_der_round_trips() {
+        // The Bitwarden keyValue form (base64url of these DER bytes) must parse
+        // back to the same key.
+        let secret = SecretKey::random(&mut rand::thread_rng());
+        let pem = secret.to_pkcs8_pem(LineEnding::LF).unwrap();
+        let der = pkcs8_pem_to_der(&pem).unwrap();
+        let restored = SecretKey::from_pkcs8_der(&der).unwrap();
+        assert_eq!(secret.to_bytes(), restored.to_bytes());
     }
 
     #[test]
