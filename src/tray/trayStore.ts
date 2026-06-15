@@ -21,6 +21,8 @@ import { FIELD_KIND_TO_INT, fieldStringToLabel } from '../lib/fieldKinds.ts';
 import type {
   AutofillContext,
   AutofillPending,
+  Collection,
+  ConnectionKind,
   FieldInput,
   Folder,
   ItemDetail,
@@ -48,6 +50,7 @@ export type TrayIpc = Pick<
   | 'autofillAssociate'
   | 'listConnections'
   | 'listFolders'
+  | 'listCollections'
   | 'generatePassword'
   | 'saveItem'
   | 'passwordInUse'
@@ -68,26 +71,6 @@ export interface FillTarget {
  *  "remember here" toast name the same target. Pure. */
 export function fillTargetLabel(context: AutofillContext | undefined): string | null {
   return context?.windowTitle || context?.processName || null;
-}
-
-/** A fill-mode row: a target plus the label fields the popup renders. */
-export interface FillRow extends FillTarget {
-  name: string;
-  username: string | null;
-}
-
-// ── Fill-mode popup sizing (logical px) ─────────────────────────────────────
-// The autofill picker is a compact chooser, not the full popup: it sizes to its
-// candidates but never past FILL_MAX_ROWS — longer lists scroll.
-const FILL_ROW_H = 42; // ~ one candidate row (name + username)
-const FILL_CHROME_H = 48; // header + list padding + window borders
-const FILL_NOT_FOUND_H = 120; // note + the "add login for this app" action
-const FILL_MAX_ROWS = 3;
-
-/** Window height for the autofill fill view given the candidate count. Pure. */
-export function fillPopupHeight(count: number): number {
-  if (count === 0) return FILL_NOT_FOUND_H;
-  return FILL_CHROME_H + Math.min(count, FILL_MAX_ROWS) * FILL_ROW_H;
 }
 
 export interface TrayStoreDeps {
@@ -156,15 +139,39 @@ export function filterTrayItems(items: VaultItem[], query: string): VaultItem[] 
     .map((e) => e.it);
 }
 
-/** The add-form's draft login. */
+/** The add/edit-form's draft login. The form now owns every field common to both
+ *  writable providers (Bitwarden + KeePass): the four quick-capture fields plus
+ *  TOTP, notes, and the favorite/reprompt flags. `reprompt` is a Bitwarden-only
+ *  abstraction (KeePass has no per-item master-password gate) — the view hides its
+ *  toggle for KeePass, and the KeePass provider ignores the flag on write. */
 export interface AddDraft {
   name: string;
   username: string;
   password: string;
   uri: string;
+  totp: string;
+  notes: string;
+  favorite: boolean;
+  reprompt: boolean;
 }
 
-const EMPTY_DRAFT: AddDraft = { name: '', username: '', password: '', uri: '' };
+const EMPTY_DRAFT: AddDraft = {
+  name: '',
+  username: '',
+  password: '',
+  uri: '',
+  totp: '',
+  notes: '',
+  favorite: false,
+  reprompt: false,
+};
+
+/** The writable providers: only these can back a created/edited item, so only
+ *  these appear in the create form's destination picker. pass / Enpass / Proton
+ *  are read-only in Agate (see `mutate::route_for`). */
+export function isWritableKind(kind: ConnectionKind): boolean {
+  return kind === 'bitwarden' || kind === 'keepass';
+}
 
 /** Generator options for the add-form's one-click password (same defaults as
  *  the main Generator page). */
@@ -177,15 +184,15 @@ const ADD_GEN_OPTIONS = {
   avoidAmbiguous: false,
 };
 
-/** Build a lossless EDIT payload for a LOGIN from its current detail. The compact
- *  popup form exposes only four fields (name / username / password / first URI);
- *  this overrides exactly those and carries everything else through unchanged —
- *  TOTP, notes, custom fields, extra URIs, org, favorite, reprompt,
- *  autofill-on-load — so a quick edit never silently wipes the richer data the
- *  main editor owns. The destination `folderId` is explicit (the form's folder
- *  picker owns it); pass `original.folderId` to keep the item where it is. Only
- *  logins are editable here, so non-login payloads are null on a login detail and
- *  stay that way. Pure, unit-tested. */
+/** Build a lossless EDIT payload for a LOGIN from its current detail. The form
+ *  exposes name / username / password / first URI / TOTP / notes / favorite /
+ *  reprompt and overrides exactly those from the `draft`; everything it can't
+ *  touch — custom fields, extra URIs, org, autofill-on-load — carries through
+ *  unchanged so a quick edit never silently wipes the richer data the main editor
+ *  owns. The destination `folderId` is explicit (the form's folder picker owns
+ *  it); pass `original.folderId` to keep the item where it is. Only logins are
+ *  editable here, so non-login payloads are null on a login detail and stay that
+ *  way. Pure, unit-tested. */
 export function buildEditInput(
   original: ItemDetail,
   draft: AddDraft,
@@ -215,13 +222,18 @@ export function buildEditInput(
     name: draft.name.trim(),
     folderId,
     organizationId: original.organizationId,
-    favorite: original.favorite,
-    reprompt: original.reprompt,
-    notes: original.notes,
+    // Collection membership is preserved as-is; the backend ignores it on edit
+    // (changing collections is a heavier "move" the main client owns).
+    collectionIds: original.collectionIds,
+    favorite: draft.favorite,
+    reprompt: draft.reprompt,
+    notes: draft.notes.trim() || null,
     login: {
       username: draft.username.trim() || null,
       password: draft.password || null,
-      totp: login?.totp ?? null,
+      // The form owns TOTP now: a cleared field clears the secret (the backend no
+      // longer restores the previous TOTP — see mutate::writes save_item).
+      totp: draft.totp.trim() || null,
       uris,
       autofillOnPageLoad: login?.autofillOnPageLoad ?? null,
     },
@@ -295,6 +307,17 @@ export function draftFromContext(ctx: AutofillContext | null | undefined): Parti
   if (name) patch.name = name;
   if (uri) patch.uri = uri;
   return patch;
+}
+
+/** The search filter to pre-apply when the popup opens for a detected autofill
+ *  target: the registrable site label (from the real URL or the app-association
+ *  URI), else the process name. The popup shows the normal list filtered by
+ *  this — the matching login surfaces first, but the search box stays editable
+ *  so the user can type to reach any other item. Empty string when the context
+ *  yields nothing usable (the list then shows everything). Pure. */
+export function fillQueryFromContext(ctx: AutofillContext | null | undefined): string {
+  if (!ctx) return '';
+  return (loginNameFromUri(ctx.url || ctx.associateUri || '') || ctx.processName || '').trim();
 }
 
 /** Whether two list entries are field-for-field identical (VaultItem is a flat
@@ -440,15 +463,17 @@ export function createTrayStore(deps: TrayStoreDeps) {
    *  for "is a detection awaiting a pick". Called on every show/focus and on the
    *  `autofill://detected` event (and after an unlock, so candidates are computed
    *  against the now-unlocked vault). The tray-icon open path clears the backend
-   *  pending, so a normal open reconciles to off here. A fresh detection resets the
-   *  query so the candidate list — not a stale search — shows first. */
+   *  pending, so a normal open reconciles to off here. A fresh detection seeds the
+   *  search with a best-guess filter for the detected app (see
+   *  fillQueryFromContext) so the matching login surfaces first — the box stays
+   *  editable, so the user can still search for any other item. */
   async function syncFill(): Promise<void> {
     try {
       const p = await deps.ipc.autofillPending();
       const wasOff = !fillMode();
       setPending(p);
       setFillMode(p !== null);
-      if (p && wasOff) setQuery('');
+      if (p && wasOff) setQuery(fillQueryFromContext(p.context));
     } catch (err) {
       deps.onError(err);
       setFillMode(false);
@@ -513,15 +538,29 @@ export function createTrayStore(deps: TrayStoreDeps) {
   const [draft, setDraftSignal] = createSignal<AddDraft>(EMPTY_DRAFT);
   const [account, setAccountSignal] = createSignal('');
   const [accounts, setAccounts] = createSignal<string[]>([]);
+  // Provider kind per selectable account, so the form can render provider-specific
+  // fields (e.g. the Bitwarden-only reprompt toggle, the folder-vs-group label).
+  const [accountKinds, setAccountKinds] = createSignal<Map<string, ConnectionKind>>(new Map());
   // Destination folder/group for the new (or moved) item, scoped to `account`.
   // null = the vault root ("no folder"). Folders are per-connection, so every
   // unlocked vault's folders are loaded together and filtered by account below.
   const [folders, setFolders] = createSignal<Folder[]>([]);
   const [folderId, setFolderId] = createSignal<string | null>(null);
+  // Bitwarden collections (org-shared groupings) of the unlocked vaults. The
+  // create form can file a NEW item directly into one collection (→ an org
+  // cipher); null = the personal vault. Account-scoped, like folders. Collections
+  // are a Bitwarden-only concept, so this stays empty for KeePass.
+  const [collections, setCollections] = createSignal<Collection[]>([]);
+  const [collectionId, setCollectionId] = createSignal<string | null>(null);
   const [saving, setSaving] = createSignal(false);
   const [reuseCount, setReuseCount] = createSignal(0);
   // zxcvbn strength of the draft password (0–4), null when the field is empty.
   const [strength, setStrength] = createSignal<number | null>(null);
+
+  /** The provider backing the selected destination vault, or null when unknown
+   *  (no account, or the connection list couldn't be read). Drives provider-
+   *  specific form chrome (reprompt toggle, folder-vs-group label, collections). */
+  const accountKind = (): ConnectionKind | null => accountKinds().get(account()) ?? null;
 
   /** Folders (Bitwarden) / groups (KeePass) of the selected destination vault,
    *  name-sorted — the form's "store in" options. A folder id is account-scoped,
@@ -531,12 +570,21 @@ export function createTrayStore(deps: TrayStoreDeps) {
       .filter((f) => f.accountEmail === account() && f.id != null)
       .sort((a, b) => a.name.localeCompare(b.name));
 
-  /** Pick the destination vault. Folder ids are per-vault, so switching vaults
-   *  drops any chosen folder back to the root — an id from the old vault would be
-   *  meaningless (or, worse, a real folder) in the new one. */
+  /** Bitwarden collections of the selected destination vault, name-sorted — the
+   *  create form's "save into a shared collection" options. Account-scoped, so
+   *  this MUST follow `account()`. Empty for KeePass (no collections). */
+  const collectionOptions = (): Collection[] =>
+    collections()
+      .filter((c) => c.accountEmail === account())
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+  /** Pick the destination vault. Folder/collection ids are per-vault, so switching
+   *  vaults drops any chosen folder/collection back to the default — an id from the
+   *  old vault would be meaningless (or, worse, a real one) in the new one. */
   function setAccount(email: string): void {
     setAccountSignal(email);
     setFolderId(null);
+    setCollectionId(null);
   }
 
   function setDraft(patch: Partial<AddDraft>): void {
@@ -554,6 +602,18 @@ export function createTrayStore(deps: TrayStoreDeps) {
     }
   }
 
+  /** Load every unlocked vault's Bitwarden collections for the create form's
+   *  picker. Advisory: a failure leaves it empty (personal vault only), never
+   *  blocks the form. */
+  async function loadCollections(): Promise<void> {
+    try {
+      setCollections(await deps.ipc.listCollections());
+    } catch (err) {
+      setCollections([]);
+      deps.onError(err);
+    }
+  }
+
   /** Open the add form. Default prefill is the name from the current query (the
    *  user was probably searching for the thing that doesn't exist yet); callers
    *  can override with a richer `prefill` — e.g. `draftFromContext` when the
@@ -564,18 +624,24 @@ export function createTrayStore(deps: TrayStoreDeps) {
     setReuseCount(0);
     setStrength(null);
     setFolders([]);
+    setCollections([]);
     setAddMode(true);
     try {
+      // Only unlocked, WRITABLE connections can take a new item — pass / Enpass /
+      // Proton are read-only, so they never appear as a create destination.
       const cons = await deps.ipc.listConnections();
-      const emails = cons.filter((c) => c.unlocked).map((c) => c.email);
+      const writable = cons.filter((c) => c.unlocked && isWritableKind(c.kind));
+      setAccountKinds(new Map(writable.map((c) => [c.email, c.kind])));
+      const emails = writable.map((c) => c.email);
       setAccounts(emails);
       setAccount(emails[0] ?? '');
     } catch (err) {
       deps.onError(err);
+      setAccountKinds(new Map());
       setAccounts([]);
       setAccount('');
     }
-    await loadFolders();
+    await Promise.all([loadFolders(), loadCollections()]);
   }
 
   /** Open the form to EDIT an existing login: fetch its detail, seed the draft
@@ -594,10 +660,27 @@ export function createTrayStore(deps: TrayStoreDeps) {
         username: detail.login?.username ?? '',
         password: detail.login?.password ?? '',
         uri: detail.login?.uris[0]?.uri ?? '',
+        totp: detail.login?.totp ?? '',
+        notes: detail.notes ?? '',
+        favorite: detail.favorite,
+        reprompt: detail.reprompt,
       });
       setAccounts([item.accountEmail]);
       setAccount(item.accountEmail);
+      // Learn the edited item's provider so the form renders the right fields.
+      // Advisory: a failed lookup just leaves provider chrome at its neutral
+      // default (no reprompt toggle), never blocks the edit.
+      try {
+        const cons = await deps.ipc.listConnections();
+        const kind = cons.find((c) => c.email === item.accountEmail)?.kind;
+        setAccountKinds(kind ? new Map([[item.accountEmail, kind]]) : new Map());
+      } catch {
+        setAccountKinds(new Map());
+      }
       setFolders([]);
+      // Collections aren't editable in the compact form (a collection move is a
+      // heavier op the main client owns), so the edit form never loads them.
+      setCollections([]);
       setReuseCount(0);
       setStrength(null);
       setAddMode(true);
@@ -616,6 +699,9 @@ export function createTrayStore(deps: TrayStoreDeps) {
     setDraftSignal(EMPTY_DRAFT);
     setFolders([]);
     setFolderId(null);
+    setCollections([]);
+    setCollectionId(null);
+    setAccountKinds(new Map());
     setReuseCount(0);
     setStrength(null);
   }
@@ -667,19 +753,24 @@ export function createTrayStore(deps: TrayStoreDeps) {
     const d = draft();
     const name = d.name.trim();
     if (!name || !account()) return false;
+    // A chosen Bitwarden collection makes this an ORG cipher: it carries the
+    // collection's organization + the collection id. No collection → a personal
+    // cipher (no org). KeePass has no collections, so this is always null there.
+    const collection = collectionOptions().find((c) => c.id === collectionId());
     const input: ItemInput = {
       id: null,
       itemType: 'login',
       name,
       folderId: folderId(),
-      organizationId: null,
-      favorite: false,
-      reprompt: false,
-      notes: null,
+      organizationId: collection?.organizationId ?? null,
+      collectionIds: collection ? [collection.id] : [],
+      favorite: d.favorite,
+      reprompt: d.reprompt,
+      notes: d.notes.trim() || null,
       login: {
         username: d.username.trim() || null,
         password: d.password || null,
-        totp: null,
+        totp: d.totp.trim() || null,
         uris: d.uri.trim() ? [{ uri: d.uri.trim(), matchType: null }] : [],
         autofillOnPageLoad: null,
       },
@@ -729,19 +820,6 @@ export function createTrayStore(deps: TrayStoreDeps) {
     return editing() ? saveEdit() : saveNew();
   }
 
-  /** The fill-mode rows: the ranked candidates for the detected target. Empty when
-   *  nothing matched — the popup then shows a brief "no password found" message
-   *  rather than the full vault. */
-  function fillRows(): FillRow[] {
-    return (pending()?.candidates ?? []).map((c) => ({
-      accountEmail: c.accountEmail,
-      itemId: c.itemId,
-      reprompt: c.reprompt,
-      name: c.name,
-      username: c.username,
-    }));
-  }
-
   return {
     ready,
     unlocked,
@@ -766,7 +844,6 @@ export function createTrayStore(deps: TrayStoreDeps) {
     exitFill,
     fill,
     associate,
-    fillRows,
     // add / edit form
     addMode,
     editing,
@@ -775,9 +852,13 @@ export function createTrayStore(deps: TrayStoreDeps) {
     account,
     setAccount,
     accounts,
+    accountKind,
     folderOptions,
     folderId,
     setFolderId,
+    collectionOptions,
+    collectionId,
+    setCollectionId,
     saving,
     reuseCount,
     strength,

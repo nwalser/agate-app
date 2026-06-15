@@ -5,8 +5,11 @@
    when no `data-theme` is set yet. */
 
 :root {
-  --radius: 4px;
-  --radius-sm: 3px;
+  /* Block-based, square design: no rounded corners anywhere. These tokens are
+     kept (every component references them) but pinned to 0 so the whole UI is
+     square in one place. */
+  --radius: 0;
+  --radius-sm: 0;
 
   /* Left navigation sidebar width — shared by the Vault rail and the Settings
      sub-nav so every sidebar lines up. Reference this, never a bare px. */
@@ -96,6 +99,16 @@
 
 * {
   box-sizing: border-box;
+}
+
+/* Block-based, square design: no rounded corners ANYWHERE. The --radius tokens
+   are already 0, and this overrides every component's hardcoded radius too
+   (status dots, the unlock switch knob, avatars, pill badges, the decrypt
+   orbs). One rule keeps the whole UI square. */
+*,
+*::before,
+*::after {
+  border-radius: 0 !important;
 }
 
 html,

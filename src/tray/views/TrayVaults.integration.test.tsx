@@ -23,6 +23,7 @@ const TFA_UNLOCK = 'tfa@x.com';
 const TFA_ADD = 'tfa-add@x.com';
 /** What the fake native file pickers return. */
 const KDBX_PATH = 'C:\\vaults\\personal.kdbx';
+const NEW_KDBX_PATH = 'C:\\vaults\\new.kdbx';
 const KEYFILE_PATH = 'C:\\vaults\\personal.keyx';
 
 function makeBackend(initial: ConnectionSummary[]) {
@@ -82,9 +83,12 @@ function makeBackend(initial: ConnectionSummary[]) {
       }
       case 'pick_keepass_database':
         return KDBX_PATH;
+      case 'pick_keepass_new_database':
+        return NEW_KDBX_PATH;
       case 'pick_keepass_keyfile':
         return KEYFILE_PATH;
-      case 'add_keepass_connection': {
+      case 'add_keepass_connection':
+      case 'create_keepass_connection': {
         state.connections.push(
           makeConnection({
             kind: 'keepass',
@@ -284,6 +288,69 @@ describe('TrayVaults', () => {
       keyfile: null, // untouched optional key file goes over as null
       storeCredentials: true, // "remember database password" defaults on
     });
+  });
+
+  it('creates a new KeePass database: toggle → pick location → password + confirm', async () => {
+    const { calls } = makeBackend([]);
+    render(() => <TrayVaults onBack={() => {}} />);
+
+    fireEvent.click(await screen.findByTitle(t('trayVaults.addVault')));
+    fireEvent.click(screen.getByText(t('trayVaults.sourceKeepass')));
+
+    // Default mode is "open" — no confirm field until we switch to "create".
+    expect(screen.queryByLabelText(t('trayVaults.confirmDbPassword'))).toBeNull();
+    fireEvent.click(screen.getByText(t('trayVaults.createNew')));
+
+    // The save-as picker button shows the chosen file NAME (path as title).
+    fireEvent.click(screen.getByText(t('trayVaults.chooseLocation')));
+    const fileBtn = await screen.findByText('new.kdbx');
+    expect(fileBtn.getAttribute('title')).toBe(NEW_KDBX_PATH);
+
+    fireEvent.input(screen.getByLabelText(t('trayVaults.dbPassword')), {
+      target: { value: 'db-pw' },
+    });
+    fireEvent.input(screen.getByLabelText(t('trayVaults.confirmDbPassword')), {
+      target: { value: 'db-pw' },
+    });
+    fireEvent.click(screen.getByText(t('trayVaults.createKeepass')));
+
+    // Back on the refreshed list, new row by file name.
+    await waitFor(() =>
+      expect(screen.queryByLabelText(t('trayVaults.confirmDbPassword'))).toBeNull(),
+    );
+    expect(await screen.findByText('new.kdbx')).toBeTruthy();
+    const call = calls.find((c) => c.cmd === 'create_keepass_connection');
+    expect(call?.args).toEqual({
+      path: NEW_KDBX_PATH,
+      password: 'db-pw',
+      keyfile: null,
+      storeCredentials: true,
+    });
+    // Creating must never go through the open-existing path.
+    expect(calls.some((c) => c.cmd === 'add_keepass_connection')).toBe(false);
+  });
+
+  it('refuses to create a database when the confirm password does not match', async () => {
+    const { calls } = makeBackend([]);
+    render(() => <TrayVaults onBack={() => {}} />);
+
+    fireEvent.click(await screen.findByTitle(t('trayVaults.addVault')));
+    fireEvent.click(screen.getByText(t('trayVaults.sourceKeepass')));
+    fireEvent.click(screen.getByText(t('trayVaults.createNew')));
+    fireEvent.click(screen.getByText(t('trayVaults.chooseLocation')));
+    await screen.findByText('new.kdbx');
+
+    fireEvent.input(screen.getByLabelText(t('trayVaults.dbPassword')), {
+      target: { value: 'db-pw' },
+    });
+    fireEvent.input(screen.getByLabelText(t('trayVaults.confirmDbPassword')), {
+      target: { value: 'mismatch' },
+    });
+    fireEvent.click(screen.getByText(t('trayVaults.createKeepass')));
+
+    // The mismatch bails before any IPC; the form stays open.
+    expect(calls.some((c) => c.cmd === 'create_keepass_connection')).toBe(false);
+    expect(screen.getByLabelText(t('trayVaults.confirmDbPassword'))).toBeTruthy();
   });
 
   it('renders a KeePass row by file name and unlocks it with the database password', async () => {

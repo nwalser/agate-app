@@ -7,6 +7,7 @@
 // passes them explicitly (or keeps a thin local wrapper with its own defaults).
 
 import type {
+  Collection,
   ConnectionSummary,
   Folder,
   ItemDetail,
@@ -29,6 +30,17 @@ export function makeConnection(
 
 export function makeFolder(over: Partial<Folder> & { id: string; name: string }): Folder {
   return {
+    accountEmail: 'tester@example.com',
+    accountLabel: 'Test vault',
+    ...over,
+  };
+}
+
+export function makeCollection(
+  over: Partial<Collection> & { id: string; name: string },
+): Collection {
+  return {
+    organizationId: 'org-1',
     accountEmail: 'tester@example.com',
     accountLabel: 'Test vault',
     ...over,

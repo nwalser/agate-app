@@ -12,10 +12,12 @@
   overflow: hidden;
 }
 
-/* ── Autofill fill-mode target header ───────────────────────────────────── */
+/* ── Autofill fill-mode banner ──────────────────────────────────────────── */
 
-/* Shown above the search in fill mode: which app a fill would land in, plus a
-   cancel button. Tinted with the accent so fill mode reads as a distinct state. */
+/* Shown above the search in fill mode: which app a click would fill into, plus a
+   cancel button. The list below is the normal, searchable vault list (the popup
+   never changes size); this banner is the only thing that marks fill mode.
+   Tinted with the accent so fill mode reads as a distinct state. */
 .tray-fill-target {
   display: flex;
   align-items: center;
@@ -51,41 +53,6 @@
 .tray-fill-cancel:hover {
   color: var(--foreground);
   background: var(--card-hover);
-}
-
-/* No-match note: a brief, compact message (the window is sized down to it) shown
-   when autofill found no login for the detected app, then auto-dismissed. */
-.tray-fill-empty {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 14px;
-  text-align: center;
-  font-size: 12.5px;
-  color: var(--muted-foreground);
-}
-
-/* "Add login" offered when a detected app has no matching login. */
-.tray-add-from-app {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 2px;
-  background: var(--card);
-  color: var(--foreground);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 6px 12px;
-  font-size: 12.5px;
-  cursor: pointer;
-}
-
-.tray-add-from-app:hover {
-  background: var(--card-hover);
-  border-color: var(--primary);
 }
 
 /* ── Search ─────────────────────────────────────────────────────────────── */
@@ -399,6 +366,90 @@
 
 .tray-add-website input:focus {
   border: none;
+}
+
+/* Labeled field: a small caption above a select (destination vault, folder/group). */
+.tray-add-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tray-add-field-label {
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+
+/* TOTP row: a leading key icon + the authenticator-key input (mirrors website). */
+.tray-add-totp {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0 10px;
+  color: var(--muted-foreground);
+}
+
+.tray-add-totp:focus-within {
+  border-color: var(--primary);
+}
+
+.tray-add-totp input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  padding: 8px 0;
+}
+
+/* Notes: a short multi-line field sharing the input look. */
+.tray-add-notes {
+  width: 100%;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--foreground);
+  outline: none;
+  resize: vertical;
+  min-height: 38px;
+}
+
+.tray-add-notes:focus {
+  border-color: var(--primary);
+}
+
+.tray-add-notes::placeholder {
+  color: var(--subtle-foreground);
+}
+
+/* Boolean toggles: favorite (+ Bitwarden-only reprompt), one row each. */
+.tray-add-toggles {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tray-add-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--foreground);
+}
+
+.tray-add-toggle > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.tray-add-toggle > svg {
+  color: var(--muted-foreground);
+  flex-shrink: 0;
 }
 
 /* Callouts: reused password (warn) + similar logins (info). */

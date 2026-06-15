@@ -25,6 +25,7 @@ import {
   KeyRound,
   Pencil,
   Plus,
+  ShieldCheck,
   Terminal,
   Trash2,
   X,
@@ -833,7 +834,14 @@ function RemoveConfirm(props: {
 // Step 1: pick the source — a Bitwarden account or a KeePass database. The
 // header's back button steps back to the choice (or to the list from there).
 
-type AddSource = 'choose' | 'bitwarden' | 'keepass' | 'pass' | 'enpass';
+type AddSource = 'choose' | 'bitwarden' | 'keepass' | 'pass' | 'enpass' | 'proton';
+
+// Proton Pass is shown in the picker but not yet selectable: its login pipeline
+// (Proton's hardened SRP + the OpenPGP key hierarchy) isn't implemented, so the
+// source sits behind this flag with a "coming soon" badge. Flip to true once the
+// pipeline lands — then add the `proton` branch's real AddProtonForm + the
+// `add_proton_connection` ipc wrapper (the backend command is already wired).
+const PROTON_AVAILABLE: boolean = false;
 
 function AddVault(props: { onDone: () => void; onCancel: () => void }) {
   const [source, setSource] = createSignal<AddSource>('choose');
@@ -869,6 +877,19 @@ function AddVault(props: { onDone: () => void; onCancel: () => void }) {
             <Database size={16} strokeWidth={1.75} />
             <span>{t('trayVaults.sourceEnpass')}</span>
           </button>
+          <button
+            type="button"
+            class="tv-source-btn"
+            disabled={!PROTON_AVAILABLE}
+            title={PROTON_AVAILABLE ? undefined : t('trayVaults.comingSoon')}
+            onClick={() => setSource('proton')}
+          >
+            <ShieldCheck size={16} strokeWidth={1.75} />
+            <span>{t('trayVaults.sourceProton')}</span>
+            <Show when={!PROTON_AVAILABLE}>
+              <span class="tv-soon">{t('trayVaults.comingSoon')}</span>
+            </Show>
+          </button>
         </div>
       </Show>
       <Show when={source() === 'bitwarden'}>
@@ -882,6 +903,11 @@ function AddVault(props: { onDone: () => void; onCancel: () => void }) {
       </Show>
       <Show when={source() === 'enpass'}>
         <AddEnpassForm onDone={props.onDone} />
+      </Show>
+      <Show when={source() === 'proton'}>
+        <div class="tv-form">
+          <p class="tv-note">{t('trayVaults.protonComingSoon')}</p>
+        </div>
       </Show>
     </>
   );
@@ -1031,21 +1057,40 @@ function AddBitwardenForm(props: { onDone: () => void }) {
 }
 
 // ── Add a KeePass database ────────────────────────────────────────────────────
-// Local-only flow, no 2FA: pick the .kdbx file, enter the database password,
-// optionally pick a key file, choose whether to remember the password (sealed
-// under the VMK, same semantics as the Bitwarden store-credentials toggle).
+// Local-only flow, no 2FA. Two modes via a top toggle:
+//  - "open": pick an existing .kdbx file, enter its database password.
+//  - "create": pick a destination (save dialog), set a NEW database password
+//    (with a confirm field — a typo here would lock the new vault), and a fresh
+//    empty KDBX4 database is created there.
+// Both optionally take a key file and choose whether to remember the password
+// (sealed under the VMK, same semantics as the Bitwarden store-credentials
+// toggle).
+
+type KeepassMode = 'open' | 'create';
 
 function AddKeepassForm(props: { onDone: () => void }) {
+  const [mode, setMode] = createSignal<KeepassMode>('open');
   const [path, setPath] = createSignal<string | null>(null);
   const [password, setPassword] = createSignal('');
+  const [confirm, setConfirm] = createSignal('');
   const [keyfile, setKeyfile] = createSignal<string | null>(null);
   // Default mirrors the Bitwarden form: remember (auto-unlock with the app).
   const [storeCredentials, setStoreCredentials] = createSignal(true);
   const [busy, setBusy] = createSignal(false);
 
+  // Open and create use different native pickers (existing file vs save-as), so
+  // a chosen path is meaningless after a mode switch — reset it.
+  function switchMode(m: KeepassMode) {
+    if (m === mode()) return;
+    setMode(m);
+    setPath(null);
+    setConfirm('');
+  }
+
   async function pickDatabase() {
     try {
-      const picked = await ipc.pickKeepassDatabase();
+      const picked =
+        mode() === 'create' ? await ipc.pickNewKeepassDatabase() : await ipc.pickKeepassDatabase();
       if (picked !== null) setPath(picked);
     } catch (err) {
       toastError(err);
@@ -1061,16 +1106,29 @@ function AddKeepassForm(props: { onDone: () => void }) {
     }
   }
 
-  async function add() {
+  async function submit() {
     const p = path();
+    const creating = mode() === 'create';
     if (!p || !password()) {
-      pushToast('error', t('trayVaults.selectDbAndPassword'));
+      pushToast(
+        'error',
+        creating ? t('trayVaults.chooseLocationAndPassword') : t('trayVaults.selectDbAndPassword'),
+      );
+      return;
+    }
+    if (creating && password() !== confirm()) {
+      pushToast('error', t('trayVaults.dbPasswordsDontMatch'));
       return;
     }
     setBusy(true);
     try {
-      await ipc.addKeepassConnection(p, password(), keyfile(), storeCredentials());
-      pushToast('success', t('trayVaults.added'));
+      if (creating) {
+        await ipc.createKeepassConnection(p, password(), keyfile(), storeCredentials());
+        pushToast('success', t('trayVaults.created'));
+      } else {
+        await ipc.addKeepassConnection(p, password(), keyfile(), storeCredentials());
+        pushToast('success', t('trayVaults.added'));
+      }
       props.onDone();
     } catch (err) {
       toastError(err);
@@ -1079,9 +1137,11 @@ function AddKeepassForm(props: { onDone: () => void }) {
     }
   }
 
+  const dbPlaceholder = () =>
+    mode() === 'create' ? t('trayVaults.chooseLocation') : t('trayVaults.chooseFile');
   const dbLabel = () => {
     const p = path();
-    return p === null ? t('trayVaults.chooseFile') : fileNameOf(p);
+    return p === null ? dbPlaceholder() : fileNameOf(p);
   };
   const keyfileLabel = () => {
     const k = keyfile();
@@ -1093,11 +1153,42 @@ function AddKeepassForm(props: { onDone: () => void }) {
       class="tv-form"
       onSubmit={(e) => {
         e.preventDefault();
-        void add();
+        void submit();
       }}
     >
+      <div class="tv-seg" role="tablist">
+        <button
+          type="button"
+          class="tv-seg-btn"
+          classList={{ active: mode() === 'open' }}
+          role="tab"
+          aria-selected={mode() === 'open'}
+          disabled={busy()}
+          onClick={() => switchMode('open')}
+        >
+          {t('trayVaults.openExisting')}
+        </button>
+        <button
+          type="button"
+          class="tv-seg-btn"
+          classList={{ active: mode() === 'create' }}
+          role="tab"
+          aria-selected={mode() === 'create'}
+          disabled={busy()}
+          onClick={() => switchMode('create')}
+        >
+          {t('trayVaults.createNew')}
+        </button>
+      </div>
+
+      <Show when={mode() === 'create'}>
+        <p class="tv-note">{t('trayVaults.createKeepassNote')}</p>
+      </Show>
+
       <div class="tv-field">
-        <label>{t('trayVaults.databaseFile')}</label>
+        <label>
+          {mode() === 'create' ? t('trayVaults.newDatabaseFile') : t('trayVaults.databaseFile')}
+        </label>
         <button
           type="button"
           class="tv-file-btn"
@@ -1114,11 +1205,23 @@ function AddKeepassForm(props: { onDone: () => void }) {
         <input
           aria-label={t('trayVaults.dbPassword')}
           type="password"
-          autocomplete="current-password"
+          autocomplete={mode() === 'create' ? 'new-password' : 'current-password'}
           value={password()}
           onInput={(e) => setPassword(e.currentTarget.value)}
         />
       </div>
+      <Show when={mode() === 'create'}>
+        <div class="tv-field">
+          <label>{t('trayVaults.confirmDbPassword')}</label>
+          <input
+            aria-label={t('trayVaults.confirmDbPassword')}
+            type="password"
+            autocomplete="new-password"
+            value={confirm()}
+            onInput={(e) => setConfirm(e.currentTarget.value)}
+          />
+        </div>
+      </Show>
       <div class="tv-field">
         <label>
           {t('trayVaults.keyfile')} <span class="tv-hint">{t('trayVaults.keyfileOptional')}</span>
@@ -1156,7 +1259,13 @@ function AddKeepassForm(props: { onDone: () => void }) {
         <span>{t('trayVaults.rememberDbPassword')}</span>
       </label>
       <button type="submit" class="primary tv-submit" disabled={busy()}>
-        {busy() ? t('onboarding.adding') : t('trayVaults.addKeepass')}
+        {busy()
+          ? mode() === 'create'
+            ? t('trayVaults.creating')
+            : t('onboarding.adding')
+          : mode() === 'create'
+            ? t('trayVaults.createKeepass')
+            : t('trayVaults.addKeepass')}
       </button>
     </form>
   );

@@ -4,6 +4,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import {
+  makeCollection,
   makeConnection,
   makeDetail,
   makeFolder,
@@ -19,13 +20,15 @@ import type {
   VaultItem,
 } from '../lib/types.ts';
 import {
+  type AddDraft,
   buildEditInput,
   copyActionForKey,
   createTrayStore,
   draftFromContext,
-  fillPopupHeight,
+  fillQueryFromContext,
   filterTrayItems,
   findSimilarLogins,
+  isWritableKind,
   loginNameFromUri,
   TRAY_MAX_RESULTS,
   type TrayStoreDeps,
@@ -74,6 +77,7 @@ function makeDeps(over: {
   pending?: AutofillPending | null;
   connections?: ReturnType<typeof makeConnection>[];
   folders?: ReturnType<typeof makeFolder>[];
+  collections?: ReturnType<typeof makeCollection>[];
   generated?: string;
   reuseCount?: number;
   strength?: number;
@@ -101,6 +105,7 @@ function makeDeps(over: {
       autofillAssociate: vi.fn(async () => {}),
       listConnections: vi.fn(async () => over.connections ?? [makeConnection({ email: 'me@x.com' })]),
       listFolders: vi.fn(async () => over.folders ?? []),
+      listCollections: vi.fn(async () => over.collections ?? []),
       generatePassword: vi.fn(async () => over.generated ?? 'Gen3rated!Pass'),
       saveItem: vi.fn(async () => {}),
       passwordInUse: vi.fn(async () => over.reuseCount ?? 0),
@@ -353,6 +358,33 @@ describe('draftFromContext', () => {
   });
 });
 
+describe('fillQueryFromContext', () => {
+  const ctx = (over: Partial<AutofillPending['context']>) => ({ ...makePending().context, ...over });
+
+  it('prefers the registrable site label from the real URL', () => {
+    expect(
+      fillQueryFromContext(ctx({ processName: 'msedgewebview2', url: 'https://login.github.com/x' })),
+    ).toBe('Github');
+  });
+
+  it('falls back to the app-association URI label', () => {
+    expect(
+      fillQueryFromContext(ctx({ processName: 'outlook', url: null, associateUri: 'app://outlook' })),
+    ).toBe('Outlook');
+  });
+
+  it('falls back to the process name when no URL/association is known', () => {
+    expect(fillQueryFromContext(ctx({ processName: 'discord', url: null, associateUri: null }))).toBe(
+      'discord',
+    );
+  });
+
+  it('is empty when the context yields nothing usable', () => {
+    expect(fillQueryFromContext(null)).toBe('');
+    expect(fillQueryFromContext(ctx({ processName: null, url: null, associateUri: null }))).toBe('');
+  });
+});
+
 describe('createTrayStore add-login', () => {
   it('enterAdd opens the form, prefills the name from the query and loads accounts', async () => {
     const deps = makeDeps();
@@ -364,6 +396,25 @@ describe('createTrayStore add-login', () => {
     expect(store.draft().name).toBe('GitHub');
     expect(store.account()).toBe('me@x.com');
     expect(deps.ipc.listConnections).toHaveBeenCalled();
+  });
+
+  it('offers only writable connections as destinations and tracks each provider kind', async () => {
+    const deps = makeDeps({
+      connections: [
+        makeConnection({ email: 'bw@x.com', kind: 'bitwarden' }),
+        makeConnection({ email: 'kp@x.com', kind: 'keepass' }),
+        // Read-only providers can't take a new item — excluded from the picker.
+        makeConnection({ email: 'pass@x.com', kind: 'pass' }),
+      ],
+    });
+    const store = createTrayStore(deps);
+    await store.enterAdd();
+    expect(store.accounts()).toEqual(['bw@x.com', 'kp@x.com']);
+    expect(store.account()).toBe('bw@x.com');
+    expect(store.accountKind()).toBe('bitwarden');
+    // Switching the destination re-derives the provider for the form's chrome.
+    store.setAccount('kp@x.com');
+    expect(store.accountKind()).toBe('keepass');
   });
 
   it('generateDraftPassword fills the draft from the generator', async () => {
@@ -467,6 +518,89 @@ describe('createTrayStore add-login', () => {
     expect(deps.ipc.listItems.mock.calls.length).toBeGreaterThan(listCallsBefore);
   });
 
+  it('offers Bitwarden collections scoped to the selected account, reset on switch', async () => {
+    const deps = makeDeps({
+      connections: [
+        makeConnection({ email: 'bw@x.com', kind: 'bitwarden' }),
+        makeConnection({ email: 'kp@x.com', kind: 'keepass' }),
+      ],
+      collections: [
+        makeCollection({ id: 'c-eng', name: 'Engineering', accountEmail: 'bw@x.com', organizationId: 'org-9' }),
+        makeCollection({ id: 'c-other', name: 'Other', accountEmail: 'someone@else.com' }),
+      ],
+    });
+    const store = createTrayStore(deps);
+    await store.enterAdd();
+    // Only the selected Bitwarden account's collections show.
+    expect(store.collectionOptions().map((c) => c.id)).toEqual(['c-eng']);
+    store.setCollectionId('c-eng');
+    // Switching the destination drops the chosen collection (ids are per-vault).
+    store.setAccount('kp@x.com');
+    expect(store.collectionId()).toBeNull();
+    expect(store.collectionOptions()).toEqual([]);
+  });
+
+  it('saveNew into a collection creates an org cipher (org + collectionIds from the collection)', async () => {
+    const deps = makeDeps({
+      connections: [makeConnection({ email: 'bw@x.com', kind: 'bitwarden' })],
+      collections: [
+        makeCollection({ id: 'c-eng', name: 'Engineering', accountEmail: 'bw@x.com', organizationId: 'org-9' }),
+      ],
+    });
+    const store = createTrayStore(deps);
+    await store.refresh();
+    await store.enterAdd();
+    store.setDraft({ name: 'CI bot' });
+    store.setCollectionId('c-eng');
+    await expect(store.saveNew()).resolves.toBe(true);
+    expect(deps.ipc.saveItem).toHaveBeenCalledWith(
+      'bw@x.com',
+      expect.objectContaining({ organizationId: 'org-9', collectionIds: ['c-eng'] }),
+    );
+  });
+
+  it('saveNew with no collection creates a personal cipher (no org, empty collectionIds)', async () => {
+    const deps = makeDeps({
+      connections: [makeConnection({ email: 'bw@x.com', kind: 'bitwarden' })],
+      collections: [
+        makeCollection({ id: 'c-eng', name: 'Engineering', accountEmail: 'bw@x.com', organizationId: 'org-9' }),
+      ],
+    });
+    const store = createTrayStore(deps);
+    await store.refresh();
+    await store.enterAdd();
+    store.setDraft({ name: 'Personal note' });
+    await expect(store.saveNew()).resolves.toBe(true);
+    expect(deps.ipc.saveItem).toHaveBeenCalledWith(
+      'bw@x.com',
+      expect.objectContaining({ organizationId: null, collectionIds: [] }),
+    );
+  });
+
+  it('saveNew sends the TOTP, notes, favorite and reprompt from the draft', async () => {
+    const deps = makeDeps();
+    const store = createTrayStore(deps);
+    await store.refresh();
+    await store.enterAdd();
+    store.setDraft({
+      name: 'GitHub',
+      totp: 'JBSWY3DPEHPK3PXP',
+      notes: 'work account',
+      favorite: true,
+      reprompt: true,
+    });
+    await expect(store.saveNew()).resolves.toBe(true);
+    expect(deps.ipc.saveItem).toHaveBeenCalledWith(
+      'me@x.com',
+      expect.objectContaining({
+        favorite: true,
+        reprompt: true,
+        notes: 'work account',
+        login: expect.objectContaining({ totp: 'JBSWY3DPEHPK3PXP' }),
+      }),
+    );
+  });
+
   it('a failed save surfaces onError and keeps the form open', async () => {
     const deps = makeDeps();
     deps.ipc.saveItem.mockRejectedValueOnce(new Error('offline'));
@@ -487,7 +621,16 @@ describe('createTrayStore add-login', () => {
     store.setFolderId('f-1');
     store.exitAdd();
     expect(store.addMode()).toBe(false);
-    expect(store.draft()).toEqual({ name: '', username: '', password: '', uri: '' });
+    expect(store.draft()).toEqual({
+      name: '',
+      username: '',
+      password: '',
+      uri: '',
+      totp: '',
+      notes: '',
+      favorite: false,
+      reprompt: false,
+    });
     expect(store.reuseCount()).toBe(0);
     expect(store.folderId()).toBeNull();
   });
@@ -749,33 +892,17 @@ describe('createTrayStore unlock', () => {
   });
 });
 
-describe('fillPopupHeight', () => {
-  it('grows with the candidate count up to three rows', () => {
-    expect(fillPopupHeight(2)).toBeGreaterThan(fillPopupHeight(1));
-    expect(fillPopupHeight(3)).toBeGreaterThan(fillPopupHeight(2));
-  });
-
-  it('caps at three rows — longer lists scroll instead of growing the window', () => {
-    expect(fillPopupHeight(4)).toBe(fillPopupHeight(3));
-    expect(fillPopupHeight(20)).toBe(fillPopupHeight(3));
-  });
-
-  it('uses the compact not-found height when nothing matched', () => {
-    expect(fillPopupHeight(0)).toBeLessThan(fillPopupHeight(3));
-    expect(fillPopupHeight(0)).toBeGreaterThan(0);
-  });
-});
-
 describe('createTrayStore autofill fill-mode', () => {
-  it('syncFill enters fill mode when the backend has a detection; candidates become the rows', async () => {
+  it('syncFill enters fill mode and seeds the search filter from the detected app', async () => {
     const deps = makeDeps({
-      pending: makePending({ candidates: [makeCandidate({ itemId: 'a', name: 'GitHub' })] }),
+      pending: makePending({ context: { field: 'password', processName: 'outlook', windowTitle: 'Sign in', url: 'https://login.github.com', associateUri: null } }),
     });
     const store = createTrayStore(deps);
     await store.syncFill();
     expect(store.fillMode()).toBe(true);
     expect(store.pending()?.token).toBe('tok-1');
-    expect(store.fillRows().map((r) => r.itemId)).toEqual(['a']);
+    // The popup shows the normal list pre-filtered to the detected target.
+    expect(store.query()).toBe('Github');
   });
 
   it('syncFill resolves to off (no fill mode) when nothing is pending', async () => {
@@ -817,26 +944,12 @@ describe('createTrayStore autofill fill-mode', () => {
     expect(store.fillMode()).toBe(true);
   });
 
-  it('fillRows are the ranked candidates for the detected target', async () => {
-    const deps = makeDeps({
-      pending: makePending({
-        candidates: [
-          makeCandidate({ itemId: 'a', name: 'GitHub' }),
-          makeCandidate({ itemId: 'b', name: 'GitLab' }),
-        ],
-      }),
-    });
-    const store = createTrayStore(deps);
-    await store.syncFill();
-    expect(store.fillRows().map((r) => r.itemId)).toEqual(['a', 'b']);
-  });
-
-  it('fillRows is empty when nothing matched (popup shows the brief no-match message)', async () => {
+  it('enters fill mode even when the detection matched nothing (the user can still search)', async () => {
     const deps = makeDeps({ pending: makePending({ candidates: [] }) });
     const store = createTrayStore(deps);
     await store.syncFill();
     expect(store.fillMode()).toBe(true);
-    expect(store.fillRows()).toEqual([]);
+    expect(store.pending()?.candidates).toEqual([]);
   });
 
   it('exitFill drops the backend detection and leaves fill mode', async () => {
@@ -872,9 +985,9 @@ describe('createTrayStore autofill fill-mode', () => {
     await store.associate({ accountEmail: 'me@x.com', itemId: 'x', reprompt: false });
 
     expect(deps.ipc.autofillAssociate).toHaveBeenCalledWith('me@x.com', 'x', 'app://discord');
-    // The success path names the target (window title) and re-syncs the rows.
+    // The success path names the target (window title) and re-syncs the candidates.
     expect(deps.onAssociated).toHaveBeenCalledWith('Discord');
-    expect(store.fillRows().map((r) => r.itemId)).toEqual(['x', 'y']);
+    expect(store.pending()?.candidates.map((c) => c.itemId)).toEqual(['x', 'y']);
     expect(deps.onError).not.toHaveBeenCalled();
   });
 
@@ -981,15 +1094,33 @@ describe('buildEditInput', () => {
       ],
     });
 
-  it('overrides only name/username/password/first-uri and preserves everything else', () => {
+  // A full draft (the form owns every editable field now); tests override only
+  // what they exercise.
+  const draft = (over: Partial<AddDraft> = {}): AddDraft => ({
+    name: 'X',
+    username: '',
+    password: '',
+    uri: '',
+    totp: '',
+    notes: '',
+    favorite: false,
+    reprompt: false,
+    ...over,
+  });
+
+  it('writes name/username/password/first-uri/totp/notes/favorite/reprompt from the draft and preserves the rest', () => {
     const input = buildEditInput(
       rich(),
-      {
+      draft({
         name: '  GitHub Work  ',
         username: '  morpheus  ',
         password: 'new-pw',
         uri: 'https://github.com/login',
-      },
+        totp: 'JBSWY3DPEHPK3PXP',
+        notes: 'keep me',
+        favorite: true,
+        reprompt: true,
+      }),
       'fold-1',
     );
     expect(input.id).toBe('i1');
@@ -1002,12 +1133,13 @@ describe('buildEditInput', () => {
       { uri: 'https://github.com/login', matchType: 3 },
       { uri: 'https://gist.github.com', matchType: null },
     ]);
-    // Preserved, can't-edit-here fields.
+    // Form-owned fields come from the draft (here unchanged from the original).
     expect(input.login?.totp).toBe('JBSWY3DPEHPK3PXP');
-    expect(input.login?.autofillOnPageLoad).toBe(true);
     expect(input.notes).toBe('keep me');
     expect(input.favorite).toBe(true);
     expect(input.reprompt).toBe(true);
+    // Preserved, can't-edit-here fields.
+    expect(input.login?.autofillOnPageLoad).toBe(true);
     expect(input.folderId).toBe('fold-1');
     expect(input.organizationId).toBe('org-1');
     // Custom fields survive, with the string kind mapped back to its int code
@@ -1018,21 +1150,46 @@ describe('buildEditInput', () => {
     ]);
   });
 
-  it('empty username/password become null (not empty strings)', () => {
-    const input = buildEditInput(rich(), { name: 'X', username: '   ', password: '', uri: 'x' }, 'fold-1');
+  it('empty username/password/totp/notes become null (not empty strings)', () => {
+    const input = buildEditInput(
+      rich(),
+      draft({ username: '   ', password: '', uri: 'x', totp: '   ', notes: '  ' }),
+      'fold-1',
+    );
     expect(input.login?.username).toBeNull();
     expect(input.login?.password).toBeNull();
+    // The form owns TOTP/notes now: emptied fields clear them, they are NOT
+    // restored from the original (regression guard for the "form owns it" pivot).
+    expect(input.login?.totp).toBeNull();
+    expect(input.notes).toBeNull();
+  });
+
+  it('persists toggled favorite/reprompt from the draft, not the original', () => {
+    // The original is favorite:true / reprompt:true; the draft turns both off.
+    const input = buildEditInput(rich(), draft({ favorite: false, reprompt: false }), 'fold-1');
+    expect(input.favorite).toBe(false);
+    expect(input.reprompt).toBe(false);
   });
 
   it('clearing the URI drops the first URI but keeps the rest', () => {
-    const input = buildEditInput(rich(), { name: 'X', username: 'u', password: 'p', uri: '   ' }, 'fold-1');
+    const input = buildEditInput(rich(), draft({ username: 'u', password: 'p', uri: '   ' }), 'fold-1');
     expect(input.login?.uris).toEqual([{ uri: 'https://gist.github.com', matchType: null }]);
   });
 
   it('adds a first URI when the original had none', () => {
     const detail = makeDetail({ id: 'i1', name: 'X', login: makeLoginDetail({ uris: [] }) });
-    const input = buildEditInput(detail, { name: 'X', username: '', password: '', uri: 'site.com' }, null);
+    const input = buildEditInput(detail, draft({ uri: 'site.com' }), null);
     expect(input.login?.uris).toEqual([{ uri: 'site.com', matchType: null }]);
+  });
+});
+
+describe('isWritableKind', () => {
+  it('accepts the writable providers and rejects the read-only ones', () => {
+    expect(isWritableKind('bitwarden')).toBe(true);
+    expect(isWritableKind('keepass')).toBe(true);
+    expect(isWritableKind('pass')).toBe(false);
+    expect(isWritableKind('enpass')).toBe(false);
+    expect(isWritableKind('proton')).toBe(false);
   });
 });
 
@@ -1061,10 +1218,16 @@ describe('createTrayStore edit-login', () => {
       username: 'neo',
       password: 's3cret',
       uri: 'https://github.com',
+      totp: '',
+      notes: '',
+      favorite: false,
+      reprompt: false,
     });
     // Account is fixed to the item's owner — no account picker on edit.
     expect(store.accounts()).toEqual(['me@x.com']);
     expect(store.account()).toBe('me@x.com');
+    // The owner's provider is learned so the form renders the right fields.
+    expect(store.accountKind()).toBe('bitwarden');
   });
 
   it('enterEdit on a reprompt item defers to the main window: no fetch, no form', async () => {

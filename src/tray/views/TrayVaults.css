@@ -217,6 +217,62 @@
   color: var(--muted-foreground);
 }
 
+.tray-vaults .tv-source-btn:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.tray-vaults .tv-source-btn:disabled:hover {
+  background: var(--card);
+}
+
+/* "Coming soon" badge on a not-yet-available source (e.g. Proton Pass). */
+.tray-vaults .tv-soon {
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--card-hover);
+  color: var(--muted-foreground);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* ── Segmented toggle (KeePass: open existing vs create new) ─────────────── */
+
+.tray-vaults .tv-seg {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+
+.tray-vaults .tv-seg-btn {
+  flex: 1;
+  font-size: 12.5px;
+  padding: 6px 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+
+.tray-vaults .tv-seg-btn:hover:not(.active):not(:disabled) {
+  background: var(--card-hover);
+  color: var(--foreground);
+}
+
+.tray-vaults .tv-seg-btn.active {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.tray-vaults .tv-seg-btn:disabled {
+  cursor: default;
+}
+
 /* ── KeePass file pickers (database / key file) ─────────────────────────── */
 
 .tray-vaults .tv-file-row {

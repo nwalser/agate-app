@@ -294,6 +294,14 @@ pub struct ItemInput {
     pub name: String,
     pub folder_id: Option<String>,
     pub organization_id: Option<String>,
+    /// Bitwarden collections to create the item into (an org cipher belongs to one
+    /// or more collections). Create-only: a non-empty list routes the create
+    /// through `POST /ciphers/create` as an org cipher. Empty = a personal cipher.
+    /// Ignored on edit (collection membership is changed in the main client) and by
+    /// non-Bitwarden providers. Defaults to empty so older / personal payloads and
+    /// the edit path round-trip without it.
+    #[serde(default)]
+    pub collection_ids: Vec<String>,
     pub favorite: bool,
     pub reprompt: bool,
     pub notes: Option<String>,

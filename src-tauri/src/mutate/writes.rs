@@ -13,7 +13,7 @@
 //! to `None`); edit round-trips the decrypted `CipherView` through JSON so fields
 //! we don't enumerate (key, password_history, dates…) are preserved.
 
-use bitwarden_api_api::models::CipherRequestModel;
+use bitwarden_api_api::models::{CipherCreateRequestModel, CipherRequestModel};
 use bitwarden_pm::PasswordManagerClient;
 use bitwarden_vault::{Cipher, CipherId, CipherView};
 use chrono::Utc;
@@ -120,7 +120,7 @@ fn create_view_json(input: &ItemInput) -> AgateResult<Value> {
         "id": null,
         "organizationId": input.organization_id,
         "folderId": input.folder_id,
-        "collectionIds": [],
+        "collectionIds": input.collection_ids,
         "key": null,
         "name": input.name,
         "notes": input.notes,
@@ -175,11 +175,38 @@ fn set_type_payload(v: &mut Value, input: &ItemInput) -> AgateResult<()> {
     Ok(())
 }
 
-/// Encrypt a `CipherView` and POST (create) or PUT (edit) it to the server.
+/// After `set_type_payload` rebuilds the login sub-view from the editor's input,
+/// restore the login fields the editor doesn't model (and must not drop): stored
+/// passkeys and the password-revision date. TOTP is deliberately NOT restored —
+/// the editor owns the TOTP field now, so an emptied field clears the secret
+/// rather than silently reviving the old one.
+fn restore_uneditable_login_fields(prev_login: &Value, new_login: &mut Value) {
+    for k in ["fido2Credentials", "passwordRevisionDate"] {
+        if let Some(val) = prev_login.get(k) {
+            new_login[k] = val.clone();
+        }
+    }
+}
+
+/// What to do with an encrypted cipher: create it as a personal cipher, create it
+/// as an org cipher in one or more collections, or PUT an edit of an existing one.
+#[derive(Debug)]
+enum Push {
+    /// `POST /ciphers` — a personal cipher (no organization).
+    Create,
+    /// `POST /ciphers/create` — an org cipher placed into these collections. The
+    /// view MUST carry the matching `organizationId` so it encrypts under the org
+    /// key.
+    CreateInCollections(Vec<uuid::Uuid>),
+    /// `PUT /ciphers/{id}` — edit an existing cipher in place.
+    Edit(CipherId),
+}
+
+/// Encrypt a `CipherView` and push it to the server per `how`.
 async fn encrypt_and_push(
     client: &PasswordManagerClient,
     view: CipherView,
-    edit_id: Option<CipherId>,
+    how: Push,
 ) -> AgateResult<()> {
     let internal = &client.0.internal;
     let user_id = internal.get_user_id().ok_or_else(AgateError::not_authenticated)?;
@@ -194,21 +221,51 @@ async fn encrypt_and_push(
 
     let api = internal.get_api_configurations();
     let ciphers_api = api.api_client.ciphers_api();
-    match edit_id {
-        Some(id) => {
+    match how {
+        Push::Edit(id) => {
             ciphers_api
                 .put(id.into(), Some(model))
                 .await
                 .map_err(|e| op_err(ErrorKind::Network, "Save failed", e))?;
         }
-        None => {
+        Push::Create => {
             ciphers_api
                 .post(Some(model))
                 .await
                 .map_err(|e| op_err(ErrorKind::Network, "Create failed", e))?;
         }
+        Push::CreateInCollections(collection_ids) => {
+            // An org cipher is created via the dedicated endpoint that takes the
+            // collections to file it under (`POST /ciphers` is personal-only).
+            let req = CipherCreateRequestModel {
+                collection_ids: Some(collection_ids),
+                cipher: Box::new(model),
+            };
+            ciphers_api
+                .post_create(Some(req))
+                .await
+                .map_err(|e| op_err(ErrorKind::Network, "Create failed", e))?;
+        }
     }
     Ok(())
+}
+
+/// Resolve how a CREATE should be pushed from its requested collections: a personal
+/// cipher when none, else an org cipher (which requires the org to be set and every
+/// collection id to parse).
+fn create_push(input: &ItemInput) -> AgateResult<Push> {
+    if input.collection_ids.is_empty() {
+        return Ok(Push::Create);
+    }
+    if input.organization_id.is_none() {
+        return Err(AgateError::bad_request("A collection requires an organization."));
+    }
+    let ids = input
+        .collection_ids
+        .iter()
+        .map(|s| uuid::Uuid::parse_str(s).map_err(|_| AgateError::bad_request("invalid collection id")))
+        .collect::<AgateResult<Vec<_>>>()?;
+    Ok(Push::CreateInCollections(ids))
 }
 
 /// Create a new item or edit an existing one (edit when `input.id` is present), in
@@ -224,8 +281,9 @@ pub async fn save_item(state: &AppState, account_email: &str, input: ItemInput) 
 
     match &input.id {
         None => {
+            let push = create_push(&input)?;
             let view: CipherView = serde_json::from_value(create_view_json(&input)?).map_err(build_err)?;
-            encrypt_and_push(&client, view, None).await
+            encrypt_and_push(&client, view, push).await
         }
         Some(id) => {
             let existing = decrypt_one(state, account_email, id).await?;
@@ -239,29 +297,19 @@ pub async fn save_item(state: &AppState, account_email: &str, input: ItemInput) 
             v["fields"] = json!(build_fields(&input));
             set_type_payload(&mut v, &input)?;
 
-            // Restore login fields the editor form can't carry (passkeys, password
-            // revision date, and a TOTP the editor couldn't show). NOT
-            // autofillOnPageLoad — the editor now owns that toggle, so `build_login`
-            // already wrote the user's value and we must not clobber it from `prev`.
+            // Restore login fields the editor form can't model (stored passkeys,
+            // the password-revision date). NOT autofillOnPageLoad and NOT TOTP —
+            // the editor now owns both, so `build_login` already wrote the user's
+            // value (a cleared TOTP must stay cleared) and we must not clobber it.
             if matches!(input.item_type, ItemType::Login) {
                 if let (Some(prev), Some(new_login)) = (prev_login.as_ref(), v.get_mut("login")) {
-                    for k in ["fido2Credentials", "passwordRevisionDate"] {
-                        if let Some(val) = prev.get(k) {
-                            new_login[k] = val.clone();
-                        }
-                    }
-                    let totp_blank = new_login.get("totp").map(|t| t.is_null()).unwrap_or(true);
-                    if totp_blank {
-                        if let Some(t) = prev.get("totp") {
-                            new_login["totp"] = t.clone();
-                        }
-                    }
+                    restore_uneditable_login_fields(prev, new_login);
                 }
             }
 
             let edited: CipherView = serde_json::from_value(v).map_err(build_err)?;
             let cipher_id = parse_id::<CipherId>(id)?;
-            encrypt_and_push(&client, edited, Some(cipher_id)).await
+            encrypt_and_push(&client, edited, Push::Edit(cipher_id)).await
         }
     }
 }
@@ -301,7 +349,7 @@ pub async fn associate_uri(
     uris.push(json!({ "uri": uri, "match": null }));
     v["login"]["uris"] = json!(uris);
     let view: CipherView = serde_json::from_value(v).map_err(build_err)?;
-    encrypt_and_push(&client, view, Some(parse_id::<CipherId>(item_id)?)).await
+    encrypt_and_push(&client, view, Push::Edit(parse_id::<CipherId>(item_id)?)).await
 }
 
 /// Duplicate an item into a new personal cipher named "… - Clone".
@@ -321,7 +369,7 @@ pub async fn clone_item(state: &AppState, account_email: &str, id: &str) -> Agat
     v["key"] = Value::Null;
     v["passwordHistory"] = Value::Null;
     let view: CipherView = serde_json::from_value(v).map_err(build_err)?;
-    encrypt_and_push(&client, view, None).await
+    encrypt_and_push(&client, view, Push::Create).await
 }
 
 /// Toggle favorite on one item (full edit so it works without edit-permission tricks).
@@ -334,7 +382,7 @@ pub async fn set_favorite(state: &AppState, account_email: &str, id: &str, favor
     let mut v = serde_json::to_value(&existing).map_err(build_err)?;
     v["favorite"] = json!(favorite);
     let view: CipherView = serde_json::from_value(v).map_err(build_err)?;
-    encrypt_and_push(&client, view, Some(parse_id::<CipherId>(id)?)).await
+    encrypt_and_push(&client, view, Push::Edit(parse_id::<CipherId>(id)?)).await
 }
 
 /// Move items to a folder within one account (None clears the folder).
@@ -436,6 +484,7 @@ mod tests {
             name: "x".into(),
             folder_id: None,
             organization_id: None,
+            collection_ids: Vec::new(),
             favorite: false,
             reprompt: false,
             notes: None,
@@ -445,6 +494,65 @@ mod tests {
             ssh_key: None,
             fields: Vec::new(),
         }
+    }
+
+    /// A create with no collections is a personal cipher; one with collections is
+    /// an org cipher (every id parsed) and REQUIRES the organization to be set.
+    #[test]
+    fn create_push_routes_personal_vs_org_collections() {
+        // No collections → personal POST.
+        let personal = login_input();
+        assert!(matches!(create_push(&personal).unwrap(), Push::Create));
+
+        // Collections without an org → rejected (an org cipher needs its org).
+        let mut orphan = login_input();
+        orphan.collection_ids = vec!["11111111-1111-1111-1111-111111111111".into()];
+        assert!(matches!(create_push(&orphan).unwrap_err().kind, ErrorKind::BadRequest));
+
+        // Collections + org → org create with the parsed ids.
+        let mut org = login_input();
+        org.organization_id = Some("22222222-2222-2222-2222-222222222222".into());
+        org.collection_ids = vec!["11111111-1111-1111-1111-111111111111".into()];
+        match create_push(&org).unwrap() {
+            Push::CreateInCollections(ids) => {
+                assert_eq!(ids, vec![uuid::Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap()]);
+            }
+            _ => panic!("expected an org create"),
+        }
+
+        // A malformed collection id is rejected (bad input at the trust boundary).
+        let mut bad = login_input();
+        bad.organization_id = Some("22222222-2222-2222-2222-222222222222".into());
+        bad.collection_ids = vec!["not-a-uuid".into()];
+        assert!(matches!(create_push(&bad).unwrap_err().kind, ErrorKind::BadRequest));
+    }
+
+    /// The edit merge restores passkeys + the password-revision date the editor
+    /// can't model, but must NOT restore the TOTP: the editor owns it now, so a
+    /// cleared field has to stay cleared (regression for the provider-aware form).
+    #[test]
+    fn edit_restores_passkeys_and_revision_but_lets_the_editor_clear_totp() {
+        let prev = json!({
+            "username": "old",
+            "totp": "OLDSEED",
+            "fido2Credentials": [{ "credentialId": "abc" }],
+            "passwordRevisionDate": "2025-01-01T00:00:00Z",
+            "uris": [],
+        });
+        // What `build_login` produced for an edit that cleared the TOTP.
+        let mut new_login = json!({
+            "username": "new",
+            "password": "new",
+            "totp": null,
+            "uris": [],
+            "autofillOnPageLoad": null,
+        });
+        restore_uneditable_login_fields(&prev, &mut new_login);
+        // Passkeys + revision date carry through (the editor can't model them).
+        assert_eq!(new_login["fido2Credentials"], json!([{ "credentialId": "abc" }]));
+        assert_eq!(new_login["passwordRevisionDate"], json!("2025-01-01T00:00:00Z"));
+        // A cleared TOTP STAYS cleared — not revived from `prev`.
+        assert!(new_login["totp"].is_null());
     }
 
     /// Regression: `build_fields` once hardcoded `linkedId: null`, dropping the

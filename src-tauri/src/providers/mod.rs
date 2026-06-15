@@ -23,7 +23,8 @@ pub use pass::PassConnection;
 pub use proton::ProtonConnection;
 
 use crate::dto::{Collection, ConnectionKind, Folder, ItemDetail, TotpCode, VaultItem};
-use crate::error::AgateResult;
+use crate::error::{AgateError, AgateResult};
+use crate::passkey::StoredPasskey;
 
 /// One live, unlocked connection.
 // large_enum_variant allow: a KeepassConnection embeds the decrypted Database
@@ -164,6 +165,88 @@ impl LiveConnection {
             LiveConnection::Pass(p) => p.count_password_use(candidate),
             LiveConnection::Enpass(e) => e.count_password_use(candidate),
             LiveConnection::Proton(p) => p.count_password_use(candidate),
+        }
+    }
+}
+
+// ── passkeys (FIDO2 / WebAuthn) ──────────────────────────────────────────────
+//
+// The provider-agnostic boundary the passkey ceremony layer talks to. Reads
+// return whatever the provider can surface (empty for providers that don't store
+// passkeys yet); writes require a writable provider and otherwise return a typed
+// `BadRequest`, mirroring `mutate::route_for`. The only caller is the ceremony
+// adapter (next slice), so allow this surface to sit unused until then.
+#[allow(dead_code)]
+impl LiveConnection {
+    /// Every stored passkey for a relying-party id — the candidate set for a
+    /// get-assertion (sign-in) ceremony.
+    pub fn find_passkeys_for_rp(&self, rp_id: &str) -> AgateResult<Vec<StoredPasskey>> {
+        match self {
+            LiveConnection::Keepass(k) => k.find_passkeys_for_rp(rp_id),
+            // No passkey storage for these (yet): Bitwarden reads land here once
+            // the SDK Fido2 surface is wired; the rest are read-only sources that
+            // don't carry passkeys.
+            LiveConnection::Bitwarden(_)
+            | LiveConnection::Pass(_)
+            | LiveConnection::Enpass(_)
+            | LiveConnection::Proton(_) => Ok(Vec::new()),
+        }
+    }
+
+    /// One stored passkey by credential id, if this connection holds it.
+    pub fn get_passkey(&self, credential_id: &[u8]) -> AgateResult<Option<StoredPasskey>> {
+        match self {
+            LiveConnection::Keepass(k) => k.get_passkey(credential_id),
+            LiveConnection::Bitwarden(_)
+            | LiveConnection::Pass(_)
+            | LiveConnection::Enpass(_)
+            | LiveConnection::Proton(_) => Ok(None),
+        }
+    }
+
+    /// Store a freshly-minted passkey (a make-credential ceremony).
+    pub fn create_passkey(&mut self, passkey: StoredPasskey) -> AgateResult<()> {
+        match self {
+            LiveConnection::Keepass(k) => k.create_passkey(&passkey),
+            // SDK Fido2 *write* support is not confirmed at the pinned rev — gate
+            // it loudly rather than silently dropping a credential.
+            LiveConnection::Bitwarden(_) => Err(AgateError::bad_request(
+                "Storing passkeys to a Bitwarden vault isn't supported yet.",
+            )),
+            LiveConnection::Pass(_) | LiveConnection::Enpass(_) | LiveConnection::Proton(_) => {
+                Err(AgateError::bad_request(
+                    "This vault is read-only and can't store passkeys.",
+                ))
+            }
+        }
+    }
+
+    /// Persist a new signature counter after a successful assertion (a no-op for
+    /// providers that report counter `0`).
+    pub fn update_passkey_sign_count(
+        &mut self,
+        credential_id: &[u8],
+        sign_count: u32,
+    ) -> AgateResult<()> {
+        match self {
+            LiveConnection::Keepass(k) => k.update_passkey_sign_count(credential_id, sign_count),
+            LiveConnection::Bitwarden(_)
+            | LiveConnection::Pass(_)
+            | LiveConnection::Enpass(_)
+            | LiveConnection::Proton(_) => Ok(()),
+        }
+    }
+
+    /// Remove a stored passkey by credential id.
+    pub fn delete_passkey(&mut self, credential_id: &[u8]) -> AgateResult<()> {
+        match self {
+            LiveConnection::Keepass(k) => k.delete_passkey(credential_id),
+            LiveConnection::Bitwarden(_) => Err(AgateError::bad_request(
+                "Managing Bitwarden passkeys isn't supported yet.",
+            )),
+            LiveConnection::Pass(_) | LiveConnection::Enpass(_) | LiveConnection::Proton(_) => {
+                Err(AgateError::bad_request("This vault is read-only."))
+            }
         }
     }
 }

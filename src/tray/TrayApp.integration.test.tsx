@@ -135,6 +135,8 @@ function makeBackend(over: Partial<BackendState> = {}) {
         return [makeConnection({ email: 'me@x.com' })];
       case 'list_folders':
         return state.folders.map((f) => ({ ...f }));
+      case 'list_collections':
+        return [];
       case 'generate_password':
         return 'Gen3rated!Pass';
       case 'save_item': {
@@ -428,21 +430,38 @@ describe('TrayApp integration — backend event channel', () => {
 // ── Autofill fill mode ───────────────────────────────────────────────────────
 
 describe('TrayApp integration — autofill fill mode', () => {
-  const candidate = {
-    accountEmail: 'me@x.com',
-    accountLabel: 'Bitwarden',
-    itemId: 'gh',
-    name: 'Acme Login',
-    username: 'neo',
-    uri: 'https://acme.com',
-    reprompt: false,
-    score: 100,
-  };
-
-  it('autofill://detected enters fill mode; clicking a candidate fills via the one-shot token', async () => {
+  it('autofill://detected shows the normal list pre-filtered to the app; clicking the match fills + dismisses', async () => {
     const backend = makeBackend({
-      items: [makeItem({ id: 'gh', name: 'Acme Login' })],
-      pending: makePending({ token: 'tok-9', candidates: [candidate] }),
+      items: [makeItem({ id: 'gh', name: 'Outlook', username: 'neo', uri: 'https://outlook.com' })],
+      pending: makePending({ token: 'tok-9' }),
+    });
+    renderTray(backend);
+    await screen.findByPlaceholderText('Search vault…');
+
+    await emit('autofill://detected');
+    await screen.findByText('Fill into Sign in – Outlook');
+    // The detection seeds the normal search box with a filter for the app.
+    const search = screen.getByPlaceholderText('Search vault…') as HTMLInputElement;
+    await waitFor(() => expect(search.value).toBe('outlook'));
+
+    fireEvent.click(screen.getByText('Outlook'));
+
+    await waitFor(() => expect(backend.invoked('autofill_fill')).toHaveLength(1));
+    expect(backend.invoked('autofill_fill')[0]?.args).toMatchObject({
+      token: 'tok-9',
+      accountEmail: 'tester@example.com',
+      itemId: 'gh',
+    });
+    await waitFor(() => expect(screen.queryByText('Fill into Sign in – Outlook')).toBeNull());
+  });
+
+  it('fill mode stays searchable: typing finds another item and clicking fills it; the window never resizes', async () => {
+    const backend = makeBackend({
+      items: [
+        makeItem({ id: 'ms', name: 'Outlook', uri: 'https://outlook.com' }),
+        makeItem({ id: 'gh', name: 'GitHub', uri: 'https://github.com' }),
+      ],
+      pending: makePending({ token: 'tok-7' }),
     });
     renderTray(backend);
     await screen.findByPlaceholderText('Search vault…');
@@ -450,20 +469,28 @@ describe('TrayApp integration — autofill fill mode', () => {
     await emit('autofill://detected');
     await screen.findByText('Fill into Sign in – Outlook');
 
-    fireEvent.click(screen.getByText('Acme Login'));
+    // Pre-filtered to the detected app: Outlook shown, GitHub hidden.
+    const search = screen.getByPlaceholderText('Search vault…') as HTMLInputElement;
+    await waitFor(() => expect(search.value).toBe('outlook'));
+    expect(screen.getByText('Outlook')).toBeTruthy();
+    expect(screen.queryByText('GitHub')).toBeNull();
 
+    // The user can still search for a different item, then fill it.
+    fireEvent.input(search, { target: { value: 'github' } });
+    await screen.findByText('GitHub');
+    expect(screen.queryByText('Outlook')).toBeNull();
+
+    fireEvent.click(screen.getByText('GitHub'));
     await waitFor(() => expect(backend.invoked('autofill_fill')).toHaveLength(1));
-    expect(backend.invoked('autofill_fill')[0]?.args).toMatchObject({
-      token: 'tok-9',
-      accountEmail: 'me@x.com',
-      itemId: 'gh',
-    });
-    await waitFor(() => expect(screen.queryByText('Fill into Sign in – Outlook')).toBeNull());
+    expect(backend.invoked('autofill_fill')[0]?.args).toMatchObject({ token: 'tok-7', itemId: 'gh' });
+
+    // One fixed window size — autofill never resizes the popup.
+    expect(backend.invoked('plugin:window|set_size')).toHaveLength(0);
   });
 
   it('Escape in fill mode dismisses the backend detection and hides the popup', async () => {
     const backend = makeBackend({
-      pending: makePending({ candidates: [candidate] }),
+      pending: makePending(),
     });
     renderTray(backend);
     await screen.findByPlaceholderText('Search vault…');
@@ -512,6 +539,17 @@ describe('TrayApp integration — add-login form', () => {
     expect(screen.getByPlaceholderText('Search vault…')).toBeTruthy();
   });
 
+  it('shows the destination-vault picker even with a single connection', async () => {
+    const backend = makeBackend();
+    renderTray(backend);
+    await screen.findByPlaceholderText('Search vault…');
+
+    fireEvent.click(screen.getByTitle('Add login'));
+    await screen.findByPlaceholderText('Name');
+    // The lone connection is still offered as an explicit destination.
+    await screen.findByRole('option', { name: 'me@x.com' });
+  });
+
   it('lets the user pick a destination folder, which is sent on save', async () => {
     const backend = makeBackend({
       folders: [
@@ -526,9 +564,11 @@ describe('TrayApp integration — add-login form', () => {
     const name = await screen.findByPlaceholderText('Name');
     fireEvent.input(name, { target: { value: 'Example Site' } });
 
-    // The folder picker shows once list_folders resolves (single connection, so
-    // it's the only <select> in the form). Choose "Work".
-    const folderSelect = (await screen.findByRole('combobox')) as HTMLSelectElement;
+    // The folder picker shows once list_folders resolves; find it via its unique
+    // "No folder" option (the vault picker is also a combobox). Choose "Work".
+    const folderSelect = (await screen.findByRole('option', { name: 'No folder' })).closest(
+      'select',
+    ) as HTMLSelectElement;
     await waitFor(() => expect(folderSelect.querySelector('option[value="work"]')).toBeTruthy());
     fireEvent.change(folderSelect, { target: { value: 'work' } });
 

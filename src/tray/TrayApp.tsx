@@ -18,7 +18,6 @@
 import { createEffect, createMemo, createSignal, For, Match, on, onCleanup, onMount, Show, Switch } from 'solid-js';
 import { Dynamic } from 'solid-js/web';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { PhysicalPosition, PhysicalSize } from '@tauri-apps/api/dpi';
 import { listen } from '@tauri-apps/api/event';
 import {
   AppWindow,
@@ -32,13 +31,14 @@ import {
   Link,
   LockKeyhole,
   LockOpen,
-  LogIn,
   Pencil,
   Plus,
   RefreshCw,
   Search,
   Settings as SettingsIcon,
   ShieldAlert,
+  ShieldCheck,
+  Star,
   Timer,
   UserRound,
   Users,
@@ -48,6 +48,7 @@ import {
 import ToastHost from '../components/Toast.tsx';
 import Favicon from '../components/Favicon.tsx';
 import CopyButton from '../components/CopyButton.tsx';
+import { Switch as ToggleSwitch } from '../components/settings/SettingsControls.tsx';
 import { ipc } from '../lib/ipc.ts';
 import { t } from '../lib/i18n.ts';
 import { copyWithAutoClear } from '../lib/clipboard.ts';
@@ -71,10 +72,8 @@ import {
   copyActionForKey,
   createTrayStore,
   draftFromContext,
-  fillPopupHeight,
   fillTargetLabel as fillTargetLabelOf,
   loginNameFromUri,
-  type FillRow,
 } from './trayStore.ts';
 import './TrayApp.css';
 
@@ -218,36 +217,9 @@ export default function TrayApp() {
     void ipc.hideTrayWindow().catch(toastError);
   }
 
-  // ── Autofill popup sizing ───────────────────────────────────────────────────
-  // In fill mode the popup is a compact chooser sized by fillPopupHeight (capped
-  // at a few rows; longer lists scroll), anchored at the bottom so it grows
-  // upward from the tray. Every other view keeps the default height.
-  const DEFAULT_POPUP_H = 520;
-
-  // Resize keeping the bottom edge fixed (it sits just above the taskbar), so the
-  // popup grows/shrinks upward. Best-effort: sizing is cosmetic.
-  async function setPopupHeight(logicalH: number) {
-    const win = getCurrentWindow();
-    try {
-      const scale = await win.scaleFactor();
-      const target = Math.round(logicalH * scale);
-      const size = await win.outerSize();
-      if (Math.abs(size.height - target) < 2) return;
-      const pos = await win.outerPosition();
-      await win.setSize(new PhysicalSize(size.width, target));
-      await win.setPosition(new PhysicalPosition(pos.x, pos.y + (size.height - target)));
-    } catch {
-      // ignore: best-effort cosmetics; the popup works at any size
-    }
-  }
-
-  // Size the window to the active view — only the unlocked fill view is custom;
-  // the guard in setPopupHeight makes the default case a no-op (no flicker).
-  createEffect(() => {
-    const custom = store.fillMode() && store.unlocked();
-    const count = store.pending()?.candidates.length ?? 0;
-    void setPopupHeight(custom ? fillPopupHeight(count) : DEFAULT_POPUP_H);
-  });
+  // The popup is a single fixed-size surface (380×520, set in tauri.conf.json):
+  // autofill no longer resizes it into a compact chooser — it shows the normal
+  // list with a pre-applied filter — so there is exactly one window size.
 
   // Pin the popup against click-outside-to-hide while any form-bearing surface
   // is up: the add/edit-login form, every non-list view (settings, vaults,
@@ -263,16 +235,6 @@ export default function TrayApp() {
     void ipc.setTrayPinned(pinned).catch(toastError);
   });
 
-  // No match for the detected app → show the brief note, then auto-dismiss.
-  let emptyHideTimer: ReturnType<typeof setTimeout> | undefined;
-  createEffect(() => {
-    const empty =
-      store.fillMode() && store.unlocked() && (store.pending()?.candidates.length ?? 0) === 0;
-    clearTimeout(emptyHideTimer);
-    if (empty) emptyHideTimer = setTimeout(() => cancelFill(), 1800);
-  });
-  onCleanup(() => clearTimeout(emptyHideTimer));
-
   async function onFocus() {
     syncThemeFromStorage();
     setShowFavicons(readColumnConfig().favicons);
@@ -284,10 +246,10 @@ export default function TrayApp() {
       passwordEl?.focus();
       return;
     }
-    // Select (not clear) the previous query so typing starts a fresh search; in
-    // fill mode the query was reset, so there's nothing to select.
+    // Focus + select the search so typing starts fresh — including the filter
+    // pre-applied in fill mode, which a keystroke then replaces to search wider.
     searchEl?.focus();
-    if (!store.fillMode()) searchEl?.select();
+    searchEl?.select();
   }
 
   // ── Add-login form wiring ───────────────────────────────────────────────────
@@ -312,11 +274,17 @@ export default function TrayApp() {
   async function addFromDetection() {
     setRevealPw(false);
     const ctx = store.pending()?.context ?? null;
-    clearTimeout(emptyHideTimer);
     store.exitFill();
     await store.enterAdd(draftFromContext(ctx));
     nameEl?.focus();
   }
+
+  // Provider-specific grouping labels: Bitwarden organizes into "folders",
+  // KeePass into "groups". The picker + its root option follow the destination.
+  const groupingLabel = () =>
+    store.accountKind() === 'keepass' ? t('tray.group') : t('tray.folder');
+  const rootGroupingLabel = () =>
+    store.accountKind() === 'keepass' ? t('tray.noGroup') : t('tray.noFolder');
 
   async function saveLogin() {
     const wasEdit = store.editing() !== null;
@@ -358,7 +326,7 @@ export default function TrayApp() {
   }
 
   // Solid re-renders synchronously on set, so the new .selected row exists by
-  // the time we scroll it into view. Shared by the copy list and the fill list.
+  // the time we scroll it into view. The one list serves both copy and fill.
   const move = (delta: number, length: number) => {
     setSelected((i) => Math.max(0, Math.min(i + delta, Math.max(length - 1, 0))));
     listEl?.querySelector('.selected')?.scrollIntoView({ block: 'nearest' });
@@ -378,33 +346,34 @@ export default function TrayApp() {
     }
     if (!store.unlocked()) return;
 
-    // Fill mode: arrow-navigate the candidate / search rows, Enter fills.
+    // Add form + sub-views own their keyboard (Enter submits natively) — only
+    // Escape (handled above) is global, mirroring the locked unlock form.
+    if (store.addMode() || view() !== 'list') return;
+
+    const list = store.filtered();
+
+    // Fill mode: the popup is the normal filtered list; Enter fills the selected
+    // login into the detected target instead of copying it.
     if (store.fillMode()) {
-      const rows = store.fillRows();
       switch (e.key) {
         case 'ArrowDown':
           e.preventDefault();
-          move(1, rows.length);
+          move(1, list.length);
           break;
         case 'ArrowUp':
           e.preventDefault();
-          move(-1, rows.length);
+          move(-1, list.length);
           break;
         case 'Enter': {
           e.preventDefault();
-          const r = rows[selected()];
-          if (r) void store.fill(r);
+          const item = list[selected()];
+          if (item) fillItem(item);
           break;
         }
       }
       return;
     }
 
-    // Add form + sub-views own their keyboard (Enter submits natively) — only
-    // Escape (handled above) is global, mirroring the locked unlock form.
-    if (store.addMode() || view() !== 'list') return;
-
-    const list = store.filtered();
     switch (e.key) {
       case 'ArrowDown':
         e.preventDefault();
@@ -460,12 +429,15 @@ export default function TrayApp() {
       if (!store.unlocked()) setExtUnlocking(true);
     });
     // Autofill: the backend detected a login field in another app and showed the
-    // popup by the tray. Refresh session state, then enter fill mode (which sizes
-    // the window to the candidate list).
+    // popup by the tray. Refresh session state, then enter fill mode — the normal
+    // list with a pre-applied filter (the window size never changes). Force the
+    // list view so the fill banner + list are what shows, not a stale sub-view.
     const unlistenDetected = listen('autofill://detected', () => {
       void (async () => {
         await store.refresh();
         await store.syncFill();
+        setView('list');
+        setDetailItem(null);
         setSelected(0);
       })();
     });
@@ -480,12 +452,20 @@ export default function TrayApp() {
     });
   });
 
+  /** Fill a login row into the detected target (fill mode only; logins only). */
+  const fillItem = (item: VaultItem) => {
+    if (item.itemType !== 'login') return;
+    void store.fill({ accountEmail: item.accountEmail, itemId: item.id, reprompt: item.reprompt });
+  };
+
+  // One row for both modes: normally a click opens the detail view; while a fill
+  // is pending it injects the login into the detected target instead.
   const row = (item: VaultItem, index: () => number) => (
     <li
       class="tray-row"
       classList={{ selected: index() === selected() }}
       onMouseEnter={() => setSelected(index())}
-      onClick={() => openDetail(item)}
+      onClick={() => (store.fillMode() ? fillItem(item) : openDetail(item))}
     >
       <span class="tray-type-icon">
         <Show
@@ -512,9 +492,28 @@ export default function TrayApp() {
           title={`${item.accountLabel} · ${item.accountEmail}`}
         />
       </Show>
-      {/* Action clicks must not bubble into the row's open-detail click. */}
+      {/* Action clicks must not bubble into the row's open-detail / fill click. */}
       <span class="tray-actions" onClick={(e) => e.stopPropagation()}>
         <Show when={item.itemType === 'login'}>
+          {/* Fill mode: "Use here" remembers this login for the detected app/site
+              (instead of filling) — only when the backend gave us an association
+              URI. */}
+          <Show when={store.fillMode() && canAssociate()}>
+            <button
+              title={t('autofill.rememberHereTooltip', { target: fillTargetLabel() })}
+              aria-label={t('autofill.rememberHere')}
+              disabled={store.filling()}
+              onClick={() =>
+                void store.associate({
+                  accountEmail: item.accountEmail,
+                  itemId: item.id,
+                  reprompt: item.reprompt,
+                })
+              }
+            >
+              <Link size={14} />
+            </button>
+          </Show>
           <Show when={item.username}>
             <CopyButton
               size={14}
@@ -541,54 +540,6 @@ export default function TrayApp() {
             <Pencil size={14} />
           </button>
         </Show>
-      </span>
-    </li>
-  );
-
-  // Fill-mode row: clicking anywhere (or the action) types the login into the
-  // detected target. No clipboard is involved.
-  const fillRow = (r: FillRow, index: () => number) => (
-    <li
-      class="tray-row"
-      classList={{ selected: index() === selected() }}
-      onMouseEnter={() => setSelected(index())}
-      onClick={() => void store.fill(r)}
-    >
-      <span class="tray-type-icon">
-        <KeyRound size={15} />
-      </span>
-      <span class="tray-text">
-        <span class="tray-name">{r.name}</span>
-        <Show when={r.username}>
-          <span class="tray-username">{r.username}</span>
-        </Show>
-      </span>
-      <span class="tray-actions">
-        {/* "Use here": remember this login for the detected app/site instead of
-            filling — only when the backend gave us an association URI. */}
-        <Show when={canAssociate()}>
-          <button
-            title={t('autofill.rememberHereTooltip', { target: fillTargetLabel() })}
-            aria-label={t('autofill.rememberHere')}
-            disabled={store.filling()}
-            onClick={(e) => {
-              e.stopPropagation();
-              void store.associate(r);
-            }}
-          >
-            <Link size={14} />
-          </button>
-        </Show>
-        <button
-          title={t('autofill.fill')}
-          disabled={store.filling()}
-          onClick={(e) => {
-            e.stopPropagation();
-            void store.fill(r);
-          }}
-        >
-          <LogIn size={14} />
-        </button>
       </span>
     </li>
   );
@@ -666,236 +617,167 @@ export default function TrayApp() {
           }
         >
           <Show
-            when={store.fillMode()}
+            when={store.addMode()}
             fallback={
-              <Show
-                when={store.addMode()}
-                fallback={
-                  <Switch>
-                    <Match when={view() === 'detail' && detailItem()}>
-                      {(item) => (
-                        <TrayDetail
-                          item={item()}
-                          onBack={() => {
-                            setView('list');
-                            setDetailItem(null);
-                          }}
-                          onEdit={(it) => {
-                            setView('list');
-                            setDetailItem(null);
-                            void openEdit(it);
-                          }}
-                          onChanged={() => void store.refresh()}
-                        />
-                      )}
-                    </Match>
-                    <Match when={view() === 'generator'}>
-                      <TrayGenerator onBack={() => setView('list')} />
-                    </Match>
-                    <Match when={view() === 'vaults'}>
-                      <TrayVaults onBack={() => setView('list')} />
-                    </Match>
-                    <Match when={view() === 'settings'}>
-                      <div class="tray-subhead">
-                        <button
-                          class="tray-subhead-back"
-                          title={t('common.back')}
-                          onClick={() => setView('list')}
-                        >
-                          <ArrowLeft size={15} />
-                        </button>
-                        <span class="tray-subhead-title">{t('settings.title')}</span>
-                      </div>
-                      <TraySettings onBack={() => setView('list')} />
-                    </Match>
-                    <Match when={view() === 'list'}>
-                      <div class="tray-search">
-                        <Search size={14} />
-                        <input
-                          ref={searchEl}
-                          placeholder={t('tray.searchPlaceholder')}
-                          value={store.query()}
-                          onInput={(e) => {
-                            store.setQuery(e.currentTarget.value);
-                            setSelected(0);
-                          }}
-                        />
-                        <button
-                          class="tray-add-btn"
-                          title={t('tray.addLogin')}
-                          onClick={() => void openAdd()}
-                        >
-                          <Plus size={15} />
-                        </button>
-                      </div>
-                      <ul class="tray-list" ref={listEl}>
-                        <For
-                          each={store.filtered()}
-                          fallback={<li class="tray-status">{t('tray.noMatches')}</li>}
-                        >
-                          {row}
-                        </For>
-                      </ul>
-                      <footer class="tray-footer">
-                        <div class="tray-footer-nav">
-                          <button
-                            class="tray-footer-btn"
-                            title={t('generator.title')}
-                            onClick={() => setView('generator')}
-                          >
-                            <Wand2 size={15} />
-                          </button>
-                          <button
-                            class="tray-footer-btn"
-                            title={t('trayVaults.title')}
-                            onClick={() => setView('vaults')}
-                          >
-                            <Users size={15} />
-                          </button>
-                          <button
-                            class="tray-footer-btn"
-                            title={t('settings.title')}
-                            onClick={() => setView('settings')}
-                          >
-                            <SettingsIcon size={15} />
-                          </button>
-                        </div>
-                        <button class="tray-footer-btn tray-footer-lock" title={t('tray.lock')} onClick={() => void doLock()}>
-                          <LockKeyhole size={15} />
-                        </button>
-                      </footer>
-                    </Match>
-                  </Switch>
-                }
-              >
-                {/* Add/edit-login form: quick capture (or a quick edit of the
-                    four exposed fields) with generation, dedupe hints and a
-                    reused-password callout. Anything richer (folders, custom
-                    fields, …) belongs to the main window's editor; an edit here
-                    preserves those untouched (see buildEditInput). */}
-                <div class="tray-add-head">
-                  <Show when={store.editing()} fallback={<Plus size={14} />}>
-                    <Pencil size={14} />
-                  </Show>
-                  <span class="tray-add-title">
-                    {store.editing() ? t('tray.editLogin') : t('tray.newLogin')}
-                  </span>
-                  <button
-                    class="tray-fill-cancel"
-                    title={t('common.cancel')}
-                    onClick={() => store.exitAdd()}
-                  >
-                    <X size={14} />
-                  </button>
-                </div>
-                <form
-                  class="tray-add-form"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    void saveLogin();
-                  }}
-                >
-                  <input
-                    ref={nameEl}
-                    placeholder={t('common.name')}
-                    value={store.draft().name}
-                    onInput={(e) => store.setDraft({ name: e.currentTarget.value })}
-                  />
-                  <input
-                    placeholder={t('common.username')}
-                    autocomplete="off"
-                    value={store.draft().username}
-                    onInput={(e) => store.setDraft({ username: e.currentTarget.value })}
-                  />
-                  <div class="tray-add-password">
-                    <input
-                      type={revealPw() ? 'text' : 'password'}
-                      placeholder={t('common.password')}
-                      autocomplete="new-password"
-                      value={store.draft().password}
-                      onInput={(e) => store.setDraft({ password: e.currentTarget.value })}
+              <Switch>
+                <Match when={view() === 'detail' && detailItem()}>
+                  {(item) => (
+                    <TrayDetail
+                      item={item()}
+                      onBack={() => {
+                        setView('list');
+                        setDetailItem(null);
+                      }}
+                      onEdit={(it) => {
+                        setView('list');
+                        setDetailItem(null);
+                        void openEdit(it);
+                      }}
+                      onChanged={() => void store.refresh()}
                     />
+                  )}
+                </Match>
+                <Match when={view() === 'generator'}>
+                  <TrayGenerator onBack={() => setView('list')} />
+                </Match>
+                <Match when={view() === 'vaults'}>
+                  <TrayVaults onBack={() => setView('list')} />
+                </Match>
+                <Match when={view() === 'settings'}>
+                  <div class="tray-subhead">
                     <button
-                      type="button"
-                      title={revealPw() ? t('common.hide') : t('common.show')}
-                      onClick={() => setRevealPw((v) => !v)}
+                      class="tray-subhead-back"
+                      title={t('common.back')}
+                      onClick={() => setView('list')}
                     >
-                      {revealPw() ? <EyeOff size={14} /> : <Eye size={14} />}
+                      <ArrowLeft size={15} />
                     </button>
-                    <button
-                      type="button"
-                      title={t('tray.generatePassword')}
-                      onClick={() => void store.generateDraftPassword()}
-                    >
-                      <RefreshCw size={14} />
-                    </button>
+                    <span class="tray-subhead-title">{t('settings.title')}</span>
                   </div>
-                  <Show when={store.draft().password.length > 0 && store.strength() !== null}>
-                    <div class="tray-strength" classList={{ [`s${store.strength()}`]: true }}>
-                      <div class="tray-strength-track">
-                        <div class="tray-strength-fill" />
-                      </div>
-                      <span class="tray-strength-label">
-                        {strengthLabel(store.strength() ?? 0)}
+                  <TraySettings onBack={() => setView('list')} />
+                </Match>
+                <Match when={view() === 'list'}>
+                  {/* Fill mode: a login field was detected in another app.
+                      The popup is the normal list with the search
+                      pre-filtered to that app; this banner names the target
+                      a click would fill, and lets the user abort (✕ / Esc). */}
+                  <Show when={store.fillMode()}>
+                    <div class="tray-fill-target">
+                      <AppWindow size={14} />
+                      <span class="tray-fill-target-name" title={fillTargetLabel()}>
+                        {t('autofill.fillInto', { target: fillTargetLabel() })}
                       </span>
-                    </div>
-                  </Show>
-                  {/* Dedupe hints are for capturing NEW logins; on an edit the
-                      item's own stored password would always read as "reused",
-                      so hide the callout. */}
-                  <Show when={!store.editing() && store.reuseCount() > 0}>
-                    <div class="tray-add-callout warn">
-                      <ShieldAlert size={13} />
-                      <span>{t('tray.passwordReused', { count: store.reuseCount() })}</span>
-                    </div>
-                  </Show>
-                  <div class="tray-add-website">
-                    <span class="tray-add-website-icon">
-                      <Show
-                        when={showFavicons() && store.draft().uri.trim().length > 0}
-                        fallback={<Globe size={14} />}
+                      <button
+                        class="tray-fill-cancel"
+                        title={t('common.cancel')}
+                        onClick={cancelFill}
                       >
-                        <Favicon
-                          uri={store.draft().uri}
-                          size={14}
-                          fallback={<Globe size={14} />}
-                        />
-                      </Show>
-                    </span>
+                        <X size={14} />
+                      </button>
+                    </div>
+                  </Show>
+                  <div class="tray-search">
+                    <Search size={14} />
                     <input
-                      placeholder={t('column.website')}
-                      autocomplete="off"
-                      value={store.draft().uri}
+                      ref={searchEl}
+                      placeholder={t('tray.searchPlaceholder')}
+                      value={store.query()}
                       onInput={(e) => {
-                        const uri = e.currentTarget.value;
-                        // Guess the name from the site while it's still untouched.
-                        if (!store.draft().name.trim())
-                          store.setDraft({ uri, name: loginNameFromUri(uri) });
-                        else store.setDraft({ uri });
+                        store.setQuery(e.currentTarget.value);
+                        setSelected(0);
                       }}
                     />
+                    <button
+                      class="tray-add-btn"
+                      title={t('tray.addLogin')}
+                      onClick={() => void (store.fillMode() ? addFromDetection() : openAdd())}
+                    >
+                      <Plus size={15} />
+                    </button>
                   </div>
-                  <Show when={!store.editing() && store.similar().length > 0}>
-                    <div class="tray-add-callout info">
-                      <div class="tray-add-callout-head">
-                        <Info size={13} />
-                        <span>{t('tray.similarExisting')}</span>
-                      </div>
-                      <ul class="tray-add-similar">
-                        <For each={store.similar()}>
-                          {(it) => (
-                            <li>
-                              <span class="tray-name">{it.name}</span>
-                              <Show when={it.username}>
-                                <span class="tray-username">{it.username}</span>
-                              </Show>
-                            </li>
-                          )}
-                        </For>
-                      </ul>
+                  <ul class="tray-list" ref={listEl}>
+                    <For
+                      each={store.filtered()}
+                      fallback={<li class="tray-status">{t('tray.noMatches')}</li>}
+                    >
+                      {row}
+                    </For>
+                  </ul>
+                  <footer class="tray-footer">
+                    <div class="tray-footer-nav">
+                      <button
+                        class="tray-footer-btn"
+                        title={t('generator.title')}
+                        onClick={() => setView('generator')}
+                      >
+                        <Wand2 size={15} />
+                      </button>
+                      <button
+                        class="tray-footer-btn"
+                        title={t('trayVaults.title')}
+                        onClick={() => setView('vaults')}
+                      >
+                        <Users size={15} />
+                      </button>
+                      <button
+                        class="tray-footer-btn"
+                        title={t('settings.title')}
+                        onClick={() => setView('settings')}
+                      >
+                        <SettingsIcon size={15} />
+                      </button>
                     </div>
-                  </Show>
-                  <Show when={store.accounts().length > 1}>
+                    <button class="tray-footer-btn tray-footer-lock" title={t('tray.lock')} onClick={() => void doLock()}>
+                      <LockKeyhole size={15} />
+                    </button>
+                  </footer>
+                </Match>
+              </Switch>
+            }
+          >
+            {/* Add/edit-login form: quick capture (or a quick edit of the
+                four exposed fields) with generation, dedupe hints and a
+                reused-password callout. Anything richer (folders, custom
+                fields, …) belongs to the main window's editor; an edit here
+                preserves those untouched (see buildEditInput). */}
+            <div class="tray-add-head">
+              <Show when={store.editing()} fallback={<Plus size={14} />}>
+                <Pencil size={14} />
+              </Show>
+              <span class="tray-add-title">
+                {store.editing() ? t('tray.editLogin') : t('tray.newLogin')}
+              </span>
+              <button
+                class="tray-fill-cancel"
+                title={t('common.cancel')}
+                onClick={() => store.exitAdd()}
+              >
+                <X size={14} />
+              </button>
+            </div>
+            <form
+              class="tray-add-form"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void saveLogin();
+              }}
+            >
+              {/* Destination: WHERE the item is created. Create-only — an edit is
+                  pinned to the item's existing vault (an item can't move across
+                  providers here). The picker lists only writable, unlocked
+                  connections, so the rest of the form can be provider-specific. */}
+              <Show when={!store.editing()}>
+                <Show
+                  when={store.accounts().length > 0}
+                  fallback={
+                    <div class="tray-add-callout warn">
+                      <ShieldAlert size={13} />
+                      <span>{t('tray.noUnlockedAccount')}</span>
+                    </div>
+                  }
+                >
+                  <label class="tray-add-field">
+                    <span class="tray-add-field-label">{t('tray.destinationVault')}</span>
                     <select
                       class="tray-add-account"
                       value={store.account()}
@@ -905,78 +787,212 @@ export default function TrayApp() {
                         {(email) => <option value={email}>{email}</option>}
                       </For>
                     </select>
-                  </Show>
-                  {/* Destination folder/group within the chosen vault. Hidden when
-                      the vault has none — there's nothing but the root to pick. */}
-                  <Show when={store.folderOptions().length > 0}>
-                    <select
-                      class="tray-add-folder"
-                      value={store.folderId() ?? ''}
-                      onChange={(e) => store.setFolderId(e.currentTarget.value || null)}
-                    >
-                      <option value="">{t('tray.noFolder')}</option>
-                      <For each={store.folderOptions()}>
-                        {(f) => <option value={f.id ?? ''}>{f.name}</option>}
-                      </For>
-                    </select>
-                  </Show>
-                  <Show when={store.accounts().length === 0}>
-                    <div class="tray-add-callout warn">
-                      <ShieldAlert size={13} />
-                      <span>{t('tray.noUnlockedAccount')}</span>
-                    </div>
-                  </Show>
-                  <button
-                    type="submit"
-                    class="tray-unlock-btn"
-                    disabled={
-                      store.saving() || !store.draft().name.trim() || store.accounts().length === 0
-                    }
-                  >
-                    <Show when={store.editing()} fallback={<Plus size={14} />}>
-                      <Pencil size={14} />
-                    </Show>
-                    {store.saving()
-                      ? t('tray.saving')
-                      : store.editing()
-                        ? t('tray.saveChanges')
-                        : t('tray.saveLogin')}
-                  </button>
-                </form>
+                  </label>
+                </Show>
               </Show>
-            }
-          >
-            {/* Autofill fill mode: a login field was detected in another app.
-                Matches → a list (window sized to it); no match → a brief note
-                that auto-dismisses. */}
-            <Show
-              when={(store.pending()?.candidates.length ?? 0) > 0}
-              fallback={
-                <div
-                  class="tray-fill-empty"
-                  onMouseEnter={() => clearTimeout(emptyHideTimer)}
+
+              <input
+                ref={nameEl}
+                placeholder={t('common.name')}
+                value={store.draft().name}
+                onInput={(e) => store.setDraft({ name: e.currentTarget.value })}
+              />
+              <input
+                placeholder={t('common.username')}
+                autocomplete="off"
+                value={store.draft().username}
+                onInput={(e) => store.setDraft({ username: e.currentTarget.value })}
+              />
+              <div class="tray-add-password">
+                <input
+                  type={revealPw() ? 'text' : 'password'}
+                  placeholder={t('common.password')}
+                  autocomplete="new-password"
+                  value={store.draft().password}
+                  onInput={(e) => store.setDraft({ password: e.currentTarget.value })}
+                />
+                <button
+                  type="button"
+                  title={revealPw() ? t('common.hide') : t('common.show')}
+                  onClick={() => setRevealPw((v) => !v)}
                 >
-                  <AppWindow size={18} />
-                  <span>{t('autofill.noneFound', { target: fillTargetLabel() })}</span>
-                  <button class="tray-add-from-app" onClick={() => void addFromDetection()}>
-                    <Plus size={14} /> {t('tray.addLogin')}
-                  </button>
-                </div>
-              }
-            >
-              <div class="tray-fill-target">
-                <AppWindow size={14} />
-                <span class="tray-fill-target-name" title={fillTargetLabel()}>
-                  {t('autofill.fillInto', { target: fillTargetLabel() })}
-                </span>
-                <button class="tray-fill-cancel" title={t('common.cancel')} onClick={cancelFill}>
-                  <X size={14} />
+                  {revealPw() ? <EyeOff size={14} /> : <Eye size={14} />}
+                </button>
+                <button
+                  type="button"
+                  title={t('tray.generatePassword')}
+                  onClick={() => void store.generateDraftPassword()}
+                >
+                  <RefreshCw size={14} />
                 </button>
               </div>
-              <ul class="tray-list" ref={listEl}>
-                <For each={store.fillRows()}>{fillRow}</For>
-              </ul>
-            </Show>
+              <Show when={store.draft().password.length > 0 && store.strength() !== null}>
+                <div class="tray-strength" classList={{ [`s${store.strength()}`]: true }}>
+                  <div class="tray-strength-track">
+                    <div class="tray-strength-fill" />
+                  </div>
+                  <span class="tray-strength-label">
+                    {strengthLabel(store.strength() ?? 0)}
+                  </span>
+                </div>
+              </Show>
+              {/* Dedupe hints are for capturing NEW logins; on an edit the
+                  item's own stored password would always read as "reused",
+                  so hide the callout. */}
+              <Show when={!store.editing() && store.reuseCount() > 0}>
+                <div class="tray-add-callout warn">
+                  <ShieldAlert size={13} />
+                  <span>{t('tray.passwordReused', { count: store.reuseCount() })}</span>
+                </div>
+              </Show>
+              <div class="tray-add-website">
+                <span class="tray-add-website-icon">
+                  <Show
+                    when={showFavicons() && store.draft().uri.trim().length > 0}
+                    fallback={<Globe size={14} />}
+                  >
+                    <Favicon
+                      uri={store.draft().uri}
+                      size={14}
+                      fallback={<Globe size={14} />}
+                    />
+                  </Show>
+                </span>
+                <input
+                  placeholder={t('column.website')}
+                  autocomplete="off"
+                  value={store.draft().uri}
+                  onInput={(e) => {
+                    const uri = e.currentTarget.value;
+                    // Guess the name from the site while it's still untouched.
+                    if (!store.draft().name.trim())
+                      store.setDraft({ uri, name: loginNameFromUri(uri) });
+                    else store.setDraft({ uri });
+                  }}
+                />
+              </div>
+              {/* TOTP authenticator key — both writable providers store one. */}
+              <div class="tray-add-totp">
+                <KeyRound size={14} />
+                <input
+                  placeholder={t('tray.totpKey')}
+                  autocomplete="off"
+                  value={store.draft().totp}
+                  onInput={(e) => store.setDraft({ totp: e.currentTarget.value })}
+                />
+              </div>
+              {/* Notes — both providers. */}
+              <textarea
+                class="tray-add-notes"
+                placeholder={t('tray.notes')}
+                rows={2}
+                value={store.draft().notes}
+                onInput={(e) => store.setDraft({ notes: e.currentTarget.value })}
+              />
+              <Show when={!store.editing() && store.similar().length > 0}>
+                <div class="tray-add-callout info">
+                  <div class="tray-add-callout-head">
+                    <Info size={13} />
+                    <span>{t('tray.similarExisting')}</span>
+                  </div>
+                  <ul class="tray-add-similar">
+                    <For each={store.similar()}>
+                      {(it) => (
+                        <li>
+                          <span class="tray-name">{it.name}</span>
+                          <Show when={it.username}>
+                            <span class="tray-username">{it.username}</span>
+                          </Show>
+                        </li>
+                      )}
+                    </For>
+                  </ul>
+                </div>
+              </Show>
+              {/* Grouping within the chosen vault: a Bitwarden "folder" or a
+                  KeePass "group", labeled for the destination's provider. Hidden
+                  when the vault has none — there's only the root to pick. */}
+              <Show when={store.folderOptions().length > 0}>
+                <label class="tray-add-field">
+                  <span class="tray-add-field-label">{groupingLabel()}</span>
+                  <select
+                    class="tray-add-folder"
+                    value={store.folderId() ?? ''}
+                    onChange={(e) => store.setFolderId(e.currentTarget.value || null)}
+                  >
+                    <option value="">{rootGroupingLabel()}</option>
+                    <For each={store.folderOptions()}>
+                      {(f) => <option value={f.id ?? ''}>{f.name}</option>}
+                    </For>
+                  </select>
+                </label>
+              </Show>
+              {/* Bitwarden collection (the org-shared "bucket"): file a NEW item
+                  directly into a shared collection, or leave it in the personal
+                  vault. Create-only (a collection move is the main client's job)
+                  and Bitwarden-only — KeePass has no collections. */}
+              <Show
+                when={
+                  !store.editing() &&
+                  store.accountKind() === 'bitwarden' &&
+                  store.collectionOptions().length > 0
+                }
+              >
+                <label class="tray-add-field">
+                  <span class="tray-add-field-label">{t('tray.collection')}</span>
+                  <select
+                    class="tray-add-folder"
+                    value={store.collectionId() ?? ''}
+                    onChange={(e) => store.setCollectionId(e.currentTarget.value || null)}
+                  >
+                    <option value="">{t('tray.personalVault')}</option>
+                    <For each={store.collectionOptions()}>
+                      {(c) => <option value={c.id}>{c.name}</option>}
+                    </For>
+                  </select>
+                </label>
+              </Show>
+              {/* Favorite (both providers) + require-master-password ("reprompt",
+                  a Bitwarden-only abstraction — KeePass has no per-item gate). */}
+              <div class="tray-add-toggles">
+                <div class="tray-add-toggle">
+                  <Star size={14} />
+                  <span>{t('tray.favorite')}</span>
+                  <ToggleSwitch
+                    checked={store.draft().favorite}
+                    onChange={(v) => store.setDraft({ favorite: v })}
+                    label={t('tray.favorite')}
+                  />
+                </div>
+                <Show when={store.accountKind() === 'bitwarden'}>
+                  <div class="tray-add-toggle">
+                    <ShieldCheck size={14} />
+                    <span>{t('tray.requireMasterPassword')}</span>
+                    <ToggleSwitch
+                      checked={store.draft().reprompt}
+                      onChange={(v) => store.setDraft({ reprompt: v })}
+                      label={t('tray.requireMasterPassword')}
+                    />
+                  </div>
+                </Show>
+              </div>
+              <button
+                type="submit"
+                class="tray-unlock-btn"
+                disabled={
+                  store.saving() || !store.draft().name.trim() || store.accounts().length === 0
+                }
+              >
+                <Show when={store.editing()} fallback={<Plus size={14} />}>
+                  <Pencil size={14} />
+                </Show>
+                {store.saving()
+                  ? t('tray.saving')
+                  : store.editing()
+                    ? t('tray.saveChanges')
+                    : t('tray.saveLogin')}
+              </button>
+            </form>
           </Show>
         </Show>
       </Show>

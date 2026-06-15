@@ -18,6 +18,10 @@ mod hello;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod hello_unix;
 mod mutate;
+// Provider-agnostic passkey (FIDO2/WebAuthn) storage types. The per-provider
+// persistence is dispatched off `providers::LiveConnection`; the OS-integration
+// shims (Layer C) and the CredentialStore ceremony adapter build on these.
+mod passkey;
 mod providers;
 mod proxy;
 mod secrets;
@@ -91,7 +95,9 @@ pub fn run() {
             remove_connection,
             pick_keepass_database,
             pick_keepass_keyfile,
+            pick_keepass_new_database,
             add_keepass_connection,
+            create_keepass_connection,
             unlock_keepass_connection,
             pick_pass_store,
             pick_pass_keyfile,

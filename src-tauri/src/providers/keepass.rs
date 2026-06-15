@@ -28,9 +28,11 @@ use std::io::Seek;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine as _;
 use bitwarden_vault::generate_totp;
 use chrono::{NaiveDateTime, Utc};
-use keepass::config::DatabaseVersion;
+use keepass::config::{DatabaseConfig, DatabaseVersion, KdfConfig};
 use keepass::db::{fields as kpf, Database, Entry, EntryId, EntryRef, GroupId, Times};
 use keepass::error::{DatabaseKeyError, DatabaseOpenError};
 use keepass::DatabaseKey;
@@ -38,9 +40,10 @@ use zeroize::Zeroizing;
 
 use crate::dto::{
     Collection, CustomField, CustomFieldType, Folder, ItemDetail, ItemInput, ItemType,
-    LoginDetail, LoginUri, TotpCode, VaultItem,
+    LoginDetail, LoginUri, PasskeyCredential, TotpCode, VaultItem,
 };
 use crate::error::{AgateError, AgateResult, ErrorKind};
+use crate::passkey::{CoseAlgorithm, StoredPasskey};
 
 /// KeePassXC's favorite convention: a literal "Favorite" tag on the entry.
 const FAVORITE_TAG: &str = "Favorite";
@@ -55,6 +58,30 @@ const ADDITIONAL_URL_FIELD: &str = "KP2A_URL";
 /// Name for a recycle-bin group we create on first soft delete (mirrors
 /// KeePassXC's default).
 const RECYCLE_BIN_NAME: &str = "Recycle Bin";
+
+/// KeePassXC's passkey storage convention: a passkey lives on a normal entry as
+/// a set of `KPEX_PASSKEY_*` string attributes plus a `Passkey` tag, so a
+/// credential Agate writes is usable by KeePassXC and vice-versa.
+/// - `CREDENTIAL_ID` / `USER_HANDLE`: raw bytes, base64url (no padding).
+/// - `PRIVATE_KEY_PEM`: the PKCS#8 private key in PEM, stored **protected**.
+/// - `ALGORITHM`: an Agate convenience attribute ("ES256"/"EdDSA"/"RS256") so a
+///   reader needn't parse the PEM; KeePassXC ignores unknown attributes, so it's
+///   harmless to interop. A passkey written by *another* client lacks it — we
+///   then default to ES256 (the common case) until the ceremony layer (which has
+///   the crypto crate) can infer the algorithm from the key.
+const PASSKEY_CREDENTIAL_ID: &str = "KPEX_PASSKEY_CREDENTIAL_ID";
+const PASSKEY_PRIVATE_KEY_PEM: &str = "KPEX_PASSKEY_PRIVATE_KEY_PEM";
+const PASSKEY_RELYING_PARTY: &str = "KPEX_PASSKEY_RELYING_PARTY";
+const PASSKEY_USER_HANDLE: &str = "KPEX_PASSKEY_USER_HANDLE";
+const PASSKEY_USERNAME: &str = "KPEX_PASSKEY_USERNAME";
+const PASSKEY_ALGORITHM: &str = "KPEX_PASSKEY_ALGORITHM";
+const PASSKEY_FLAG_BE: &str = "KPEX_PASSKEY_FLAG_BE";
+const PASSKEY_FLAG_BS: &str = "KPEX_PASSKEY_FLAG_BS";
+const PASSKEY_FIELD_PREFIX: &str = "KPEX_PASSKEY_";
+// Only the (currently-unwired) create path tags an entry; allow until the
+// ceremony adapter calls it.
+#[allow(dead_code)]
+const PASSKEY_TAG: &str = "Passkey";
 
 /// KeePass standard fields owned by the typed parts of `ItemInput` — never
 /// surfaced or writable as custom fields. Exact match: KeePass field names are
@@ -120,6 +147,97 @@ impl KeepassConnection {
     /// "sync". Blocking, like `open`.
     pub fn reload(&mut self) -> AgateResult<()> {
         self.read_from_disk()
+    }
+
+    /// Create a brand-new, empty KDBX4 database at `path` and open it as a live
+    /// connection. REFUSES to overwrite an existing file — a new vault must
+    /// never clobber data (open the existing one instead). The database uses the
+    /// `keepass` crate's default KDBX4 + Argon2id configuration, so it is
+    /// immediately writable.
+    ///
+    /// Blocking (Argon2 KDF on the initial save) — callers wrap in
+    /// `spawn_blocking`.
+    pub fn create(path: &Path, password: &str, keyfile: Option<&Path>) -> AgateResult<Self> {
+        if path.exists() {
+            return Err(AgateError::bad_request(
+                "A file already exists there. Pick a different name, \
+                 or open the existing database instead.",
+            ));
+        }
+        let keyfile = match keyfile {
+            Some(p) => Some(Zeroizing::new(std::fs::read(p).map_err(|e| {
+                AgateError::bad_request(format!("Could not read the key file: {e}"))
+            })?)),
+            None => None,
+        };
+        let mut db = Database::with_config(new_database_config());
+        db.meta.generator = Some("Agate".to_string());
+        if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
+            db.meta.database_name = Some(name.to_string());
+            db.meta.database_name_changed = Some(Times::now());
+        }
+        let mut conn = Self {
+            path: path.to_path_buf(),
+            password: Zeroizing::new(password.to_string()),
+            keyfile,
+            db,
+            mtime: None,
+            // `Database::new()` is KDBX4 (see the crate's DatabaseConfig default).
+            writable: true,
+        };
+        conn.write_new_file()?;
+        Ok(conn)
+    }
+
+    /// Serialize a freshly-created database to its (not-yet-existing) path:
+    /// same-directory temp → reopen + verify with the key → atomic
+    /// no-clobber rename into place → record the mtime. Unlike `save_to_disk`
+    /// there is no prior file to `.bak`, and `persist_noclobber` refuses to
+    /// replace a file that appeared since `create`'s existence check.
+    fn write_new_file(&mut self) -> AgateResult<()> {
+        let dir = match self.path.parent() {
+            Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+            _ => PathBuf::from("."),
+        };
+
+        let mut tmp = tempfile::Builder::new()
+            .prefix(".agate-new-")
+            .suffix(".kdbx.tmp")
+            .tempfile_in(dir)
+            .map_err(|e| {
+                AgateError::internal(format!(
+                    "Could not create a scratch file next to the new database: {e}"
+                ))
+            })?;
+        self.db.save(tmp.as_file_mut(), self.key()?).map_err(|e| {
+            AgateError::new(
+                ErrorKind::Crypto,
+                format!("Could not serialize the new KeePass database: {e}"),
+            )
+        })?;
+        tmp.as_file()
+            .sync_all()
+            .map_err(|e| AgateError::internal(format!("Could not flush the new database: {e}")))?;
+
+        // Verify the new file reopens with the same key before committing it.
+        tmp.as_file_mut().rewind().map_err(|e| {
+            AgateError::internal(format!("Could not rewind the new database for verification: {e}"))
+        })?;
+        Database::open(tmp.as_file_mut(), self.key()?).map_err(|e| {
+            AgateError::new(
+                ErrorKind::Crypto,
+                format!("New database verification failed — it was NOT written: {e}"),
+            )
+        })?;
+
+        // No-clobber persist: never replace a file (a new vault must not destroy
+        // an existing one), closing the gap since the `path.exists()` check.
+        tmp.persist_noclobber(&self.path).map_err(|e| {
+            AgateError::internal(format!("Could not write the new database file: {e}"))
+        })?;
+
+        self.mtime = std::fs::metadata(&self.path).and_then(|m| m.modified()).ok();
+        Ok(())
     }
 
     /// Create (id absent) or edit (id present) a login / secure note, then save.
@@ -338,6 +456,108 @@ impl KeepassConnection {
     }
 }
 
+// ── passkeys (FIDO2 / WebAuthn) ──────────────────────────────────────────────
+//
+// A passkey is stored on its own entry as KeePassXC-compatible `KPEX_PASSKEY_*`
+// attributes (see the constants above) — so the same atomic-save guarantees as
+// any other write apply, and credentials interoperate with KeePassXC.
+//
+// These methods are driven by the passkey ceremony adapter (next slice); allow
+// them to sit unused until that caller lands. (Read-side display — `has_passkey`
+// and the detail metadata — is already live via `list_items` / `item_detail`.)
+#[allow(dead_code)]
+impl KeepassConnection {
+    /// Every stored passkey whose relying party matches `rp_id` (deleted entries
+    /// excluded). A malformed passkey entry is skipped with a warning, never
+    /// fatal to the lookup.
+    pub fn find_passkeys_for_rp(&self, rp_id: &str) -> AgateResult<Vec<StoredPasskey>> {
+        let bin = bin_group_ids(&self.db);
+        let mut out = Vec::new();
+        for entry in self.db.iter_all_entries() {
+            if bin.contains(&entry.parent().id()) {
+                continue;
+            }
+            if entry.get(PASSKEY_RELYING_PARTY) == Some(rp_id) {
+                if let Some(passkey) = read_stored_passkey(&entry) {
+                    out.push(passkey);
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// One stored passkey by credential id, if present and not deleted.
+    pub fn get_passkey(&self, credential_id: &[u8]) -> AgateResult<Option<StoredPasskey>> {
+        let target = URL_SAFE_NO_PAD.encode(credential_id);
+        let bin = bin_group_ids(&self.db);
+        for entry in self.db.iter_all_entries() {
+            if bin.contains(&entry.parent().id()) {
+                continue;
+            }
+            if entry.get(PASSKEY_CREDENTIAL_ID) == Some(target.as_str()) {
+                return Ok(read_stored_passkey(&entry));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Store a freshly-minted passkey as a new entry (title = relying party,
+    /// username = the passkey's account name), then save atomically.
+    pub fn create_passkey(&mut self, passkey: &StoredPasskey) -> AgateResult<()> {
+        self.mutate_and_save(|db| {
+            let title = passkey.rp_name.clone().unwrap_or_else(|| passkey.rp_id.clone());
+            let cred_b64 = URL_SAFE_NO_PAD.encode(&passkey.credential_id);
+            let handle_b64 = URL_SAFE_NO_PAD.encode(&passkey.user_handle);
+            db.root_mut().add_entry().edit(|e| {
+                e.set_unprotected(kpf::TITLE, title.as_str());
+                if let Some(name) = &passkey.user_name {
+                    e.set_unprotected(kpf::USERNAME, name.as_str());
+                    e.set_unprotected(PASSKEY_USERNAME, name.as_str());
+                }
+                e.set_unprotected(PASSKEY_RELYING_PARTY, passkey.rp_id.as_str());
+                e.set_unprotected(PASSKEY_CREDENTIAL_ID, cred_b64.as_str());
+                e.set_unprotected(PASSKEY_USER_HANDLE, handle_b64.as_str());
+                // The private key is the one secret here → store it protected.
+                e.set_protected(PASSKEY_PRIVATE_KEY_PEM, passkey.private_key_pem.as_str());
+                e.set_unprotected(PASSKEY_ALGORITHM, passkey.algorithm.label());
+                e.set_unprotected(PASSKEY_FLAG_BE, bool_str(passkey.backup_eligible));
+                e.set_unprotected(PASSKEY_FLAG_BS, bool_str(passkey.backup_state));
+                e.tags.push(PASSKEY_TAG.to_string());
+            });
+            Ok(())
+        })
+    }
+
+    /// Persist a new signature counter. KeePass passkeys report counter `0`
+    /// (not tracked) — matching KeePassXC and avoiding cross-client sync
+    /// conflicts — so there is nothing to write.
+    pub fn update_passkey_sign_count(
+        &mut self,
+        _credential_id: &[u8],
+        _sign_count: u32,
+    ) -> AgateResult<()> {
+        Ok(())
+    }
+
+    /// Soft-delete the entry holding a passkey (moves it to the recycle bin,
+    /// like any other delete — never destroys data outright).
+    pub fn delete_passkey(&mut self, credential_id: &[u8]) -> AgateResult<()> {
+        let target = URL_SAFE_NO_PAD.encode(credential_id);
+        let eid = self
+            .db
+            .iter_all_entries()
+            .find(|e| e.get(PASSKEY_CREDENTIAL_ID) == Some(target.as_str()))
+            .map(|e| e.id());
+        let Some(eid) = eid else {
+            return Err(AgateError::bad_request("No such passkey."));
+        };
+        self.mutate_and_save(move |db| {
+            let bin = ensure_recycle_bin(db);
+            move_entry(db, eid, bin)
+        })
+    }
+}
+
 // ── read surface (mirrors BitwardenConnection) ──────────────────────────────
 
 impl KeepassConnection {
@@ -394,7 +614,7 @@ impl KeepassConnection {
             .flat_map(|e| {
                 e.fields
                     .keys()
-                    .filter(|k| !RESERVED_FIELDS.contains(&k.as_str()))
+                    .filter(|k| !RESERVED_FIELDS.contains(&k.as_str()) && !is_passkey_field(k))
                     .cloned()
                     .collect::<Vec<_>>()
             })
@@ -426,7 +646,9 @@ impl KeepassConnection {
         let mut fields: Vec<CustomField> = entry
             .fields
             .iter()
-            .filter(|(name, _)| !RESERVED_FIELDS.contains(&name.as_str()))
+            // Passkey `KPEX_PASSKEY_*` attributes (incl. the private key) must
+            // never surface as user-visible/editable custom fields.
+            .filter(|(name, _)| !RESERVED_FIELDS.contains(&name.as_str()) && !is_passkey_field(name))
             .map(|(name, value)| CustomField {
                 name: Some(name.clone()),
                 value: Some(value.get().clone()),
@@ -440,6 +662,20 @@ impl KeepassConnection {
             .collect();
         // KeePass stores fields unordered; sort for a stable detail pane.
         fields.sort_by(|a, b| a.name.cmp(&b.name));
+
+        // A passkey entry surfaces display-only metadata (the private key never
+        // leaves the backend, so it is not part of the DTO).
+        let passkeys = match read_stored_passkey(&entry) {
+            Some(pk) => vec![PasskeyCredential {
+                rp_id: pk.rp_id,
+                rp_name: pk.rp_name,
+                user_name: pk.user_name,
+                user_display_name: pk.user_display_name,
+                key_algorithm: pk.algorithm.label().to_string(),
+                creation_date: pk.created,
+            }],
+            None => Vec::new(),
+        };
 
         Ok(ItemDetail {
             id: entry.id().uuid().to_string(),
@@ -460,7 +696,7 @@ impl KeepassConnection {
             revision_date: rfc3339(entry.times.last_modification),
             creation_date: rfc3339(entry.times.creation),
             collection_ids: Vec::new(),
-            passkeys: Vec::new(),
+            passkeys,
         })
     }
 
@@ -730,6 +966,30 @@ fn map_open_error(e: DatabaseOpenError) -> AgateError {
     }
 }
 
+/// Config for a database Agate creates. Starts from the crate default (KDBX4,
+/// AES-256 outer, ChaCha20 inner) but re-tunes the KDF: the crate's default is
+/// ~1 GiB Argon2 at 50 iterations (≈10 s per open in the tray) — far heavier
+/// than needed. Use Argon2id at KeePassXC-like cost so created vaults open
+/// quickly, reusing the default's argon2 *version* value (so we never pin the
+/// `argon2` crate's `Version` type ourselves).
+fn new_database_config() -> DatabaseConfig {
+    let mut config = DatabaseConfig::default();
+    let version = match &config.kdf_config {
+        KdfConfig::Argon2 { version, .. } | KdfConfig::Argon2id { version, .. } => Some(*version),
+        // AES KDF (or any future variant): keep the crate default untouched.
+        _ => None,
+    };
+    if let Some(version) = version {
+        config.kdf_config = KdfConfig::Argon2id {
+            iterations: 10,
+            memory: 64 * 1024, // 64 MiB
+            parallelism: 4,
+            version,
+        };
+    }
+    config
+}
+
 fn backup_path(path: &Path) -> PathBuf {
     let mut os = path.as_os_str().to_os_string();
     os.push(".bak");
@@ -769,6 +1029,67 @@ fn set_favorite_tag(entry: &mut Entry, favorite: bool) {
     if favorite {
         entry.tags.push(FAVORITE_TAG.to_string());
     }
+}
+
+/// Whether a field name is one of the passkey `KPEX_PASSKEY_*` attributes —
+/// managed by the passkey layer, never surfaced or editable as a custom field
+/// (the private key must never reach the frontend or be clobbered by an edit).
+fn is_passkey_field(name: &str) -> bool {
+    name.starts_with(PASSKEY_FIELD_PREFIX)
+}
+
+/// Whether an entry carries a passkey (has a non-empty credential-id attribute).
+fn entry_has_passkey(entry: &EntryRef<'_>) -> bool {
+    entry.get(PASSKEY_CREDENTIAL_ID).is_some_and(|v| !v.is_empty())
+}
+
+// Used only by the (currently-unwired) passkey create path.
+#[allow(dead_code)]
+fn bool_str(value: bool) -> &'static str {
+    if value {
+        "true"
+    } else {
+        "false"
+    }
+}
+
+/// Read a passkey off an entry, or `None` when the entry holds no passkey (or
+/// its base64 is unreadable — logged and skipped, never fatal to a lookup).
+fn read_stored_passkey(entry: &EntryRef<'_>) -> Option<StoredPasskey> {
+    let cred_b64 = entry.get(PASSKEY_CREDENTIAL_ID).filter(|s| !s.is_empty())?;
+    let credential_id = match URL_SAFE_NO_PAD.decode(cred_b64) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            log::warn!("skipping passkey entry with an unreadable credential id: {e}");
+            return None;
+        }
+    };
+    let user_handle = entry
+        .get(PASSKEY_USER_HANDLE)
+        .and_then(|s| URL_SAFE_NO_PAD.decode(s).ok())
+        .unwrap_or_default();
+    // A passkey written by another client has no ALGORITHM attribute; default to
+    // ES256 (the common case) until the ceremony layer can infer it from the key.
+    let algorithm = entry
+        .get(PASSKEY_ALGORITHM)
+        .and_then(CoseAlgorithm::from_label)
+        .unwrap_or(CoseAlgorithm::Es256);
+    Some(StoredPasskey {
+        credential_id,
+        rp_id: entry.get(PASSKEY_RELYING_PARTY).unwrap_or_default().to_string(),
+        rp_name: None,
+        user_handle,
+        user_name: non_empty(entry.get(PASSKEY_USERNAME)),
+        user_display_name: None,
+        algorithm,
+        private_key_pem: Zeroizing::new(
+            entry.get(PASSKEY_PRIVATE_KEY_PEM).unwrap_or_default().to_string(),
+        ),
+        sign_count: 0,
+        created: rfc3339(entry.times.creation),
+        backup_eligible: entry.get(PASSKEY_FLAG_BE) == Some("true"),
+        backup_state: entry.get(PASSKEY_FLAG_BS) == Some("true"),
+    })
 }
 
 /// Every group id in the recycle-bin subtree (the bin itself included), or
@@ -841,7 +1162,7 @@ fn entry_to_list_item(
         username: non_empty(entry.get_username()),
         uri: non_empty(entry.get_url()),
         has_totp: non_empty(entry.get_raw_otp_value()).is_some(),
-        has_passkey: false,
+        has_passkey: entry_has_passkey(entry),
         reprompt: false,
         favorite: has_favorite_tag(entry),
         deleted: bin.contains(&parent),
@@ -909,6 +1230,10 @@ fn apply_input(entry: &mut Entry, input: &ItemInput) {
         let Some(name) = field.name.as_deref().filter(|n| !n.is_empty()) else { continue };
         if RESERVED_FIELDS.contains(&name) {
             log::warn!("ignoring custom field that collides with a standard KeePass field");
+            continue;
+        }
+        if is_passkey_field(name) {
+            log::warn!("ignoring custom field that collides with a passkey attribute");
             continue;
         }
         match field.value.as_deref() {
@@ -1175,6 +1500,7 @@ mod tests {
             name: name.to_string(),
             folder_id,
             organization_id: None,
+            collection_ids: Vec::new(),
             favorite: false,
             reprompt: false,
             notes: None,
@@ -1210,6 +1536,41 @@ mod tests {
         let err =
             KeepassConnection::open(&dir.path().join("nope.kdbx"), PASSWORD, None).unwrap_err();
         assert!(matches!(err.kind, ErrorKind::BadRequest), "got: {err}");
+    }
+
+    #[test]
+    fn create_makes_a_writable_kdbx4_that_reopens_and_persists() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("new.kdbx");
+
+        let mut conn = KeepassConnection::create(&path, PASSWORD, None).unwrap();
+        assert!(path.exists(), "the database file was written");
+        assert!(conn.list_items("kp", "KeePass").is_empty(), "a new vault starts empty");
+
+        // It's a writable KDBX4: a create persists, and survives a cold reopen
+        // with the same password (proving the key + format are sound).
+        conn.save_item(&login_input("First", None)).unwrap();
+        let reopened = KeepassConnection::open(&path, PASSWORD, None).unwrap();
+        assert!(
+            reopened.list_items("kp", "KeePass").iter().any(|i| i.name == "First"),
+            "the created database is openable and writable"
+        );
+
+        // The wrong password cannot open it.
+        let err = KeepassConnection::open(&path, "nope", None).unwrap_err();
+        assert!(matches!(err.kind, ErrorKind::InvalidCredentials), "got: {err}");
+    }
+
+    #[test]
+    fn create_refuses_to_overwrite_an_existing_file() {
+        let fx = fixture(); // fx.path already holds a database
+        let err = KeepassConnection::create(&fx.path, PASSWORD, None).unwrap_err();
+        assert!(matches!(err.kind, ErrorKind::BadRequest), "got: {err}");
+        assert!(err.message.contains("already exists"), "got: {}", err.message);
+
+        // The original file is untouched (still openable, still has its entries).
+        let conn = open_conn(&fx.path);
+        assert_eq!(conn.list_items("kp", "KeePass").len(), 3);
     }
 
     // ── reads ───────────────────────────────────────────────────────────────
@@ -1403,6 +1764,7 @@ mod tests {
             name: before.name.clone(),
             folder_id: before.folder_id.clone(),
             organization_id: None,
+            collection_ids: Vec::new(),
             favorite: before.favorite,
             reprompt: false,
             notes: before.notes.clone(),
@@ -1463,6 +1825,7 @@ mod tests {
             name: "GitHub".into(),
             folder_id: None,
             organization_id: None,
+            collection_ids: Vec::new(),
             favorite: true,
             reprompt: false,
             notes: Some("main account".into()),
@@ -1729,5 +2092,125 @@ mod tests {
 
         // and the refreshed mtime lets saves proceed again
         conn.set_favorite(&fx.note_id, true).unwrap();
+    }
+
+    // ── passkeys ──────────────────────────────────────────────────────────────
+
+    fn sample_passkey(rp: &str) -> StoredPasskey {
+        StoredPasskey {
+            credential_id: vec![1, 2, 3, 4, 5, 6, 7, 8],
+            rp_id: rp.to_string(),
+            rp_name: Some("Example Site".into()),
+            user_handle: vec![9, 8, 7],
+            user_name: Some("octocat".into()),
+            user_display_name: Some("Octo Cat".into()),
+            algorithm: CoseAlgorithm::Es256,
+            // The storage layer treats the PEM as an opaque protected blob — a
+            // placeholder is enough here; real key material arrives with the
+            // ceremony layer.
+            private_key_pem: Zeroizing::new(
+                "-----BEGIN PRIVATE KEY-----\nMIIfake\n-----END PRIVATE KEY-----\n".into(),
+            ),
+            sign_count: 0,
+            created: String::new(),
+            backup_eligible: true,
+            backup_state: true,
+        }
+    }
+
+    #[test]
+    fn passkey_create_find_get_roundtrips_through_disk() {
+        let fx = fixture();
+        let mut conn = open_conn(&fx.path);
+        conn.create_passkey(&sample_passkey("github.com")).unwrap();
+
+        // reopened from disk → the credential persisted
+        let conn2 = open_conn(&fx.path);
+        let found = conn2.find_passkeys_for_rp("github.com").unwrap();
+        assert_eq!(found.len(), 1);
+        let pk = &found[0];
+        assert_eq!(pk.rp_id, "github.com");
+        assert_eq!(pk.credential_id, vec![1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(pk.user_handle, vec![9, 8, 7]);
+        assert_eq!(pk.user_name.as_deref(), Some("octocat"));
+        assert_eq!(pk.algorithm, CoseAlgorithm::Es256);
+        assert!(pk.backup_eligible && pk.backup_state);
+        assert!(pk.private_key_pem.contains("BEGIN PRIVATE KEY"));
+
+        // lookup by credential id; unknown ids and other RPs return nothing
+        assert!(conn2.get_passkey(&[1, 2, 3, 4, 5, 6, 7, 8]).unwrap().is_some());
+        assert!(conn2.get_passkey(&[0, 0, 0, 0]).unwrap().is_none());
+        assert!(conn2.find_passkeys_for_rp("example.org").unwrap().is_empty());
+    }
+
+    #[test]
+    fn passkey_flags_has_passkey_and_detail_metadata_without_leaking_the_key() {
+        let fx = fixture();
+        let mut conn = open_conn(&fx.path);
+        conn.create_passkey(&sample_passkey("github.com")).unwrap();
+        let conn2 = open_conn(&fx.path);
+
+        let items = conn2.list_items("kp", "KeePass");
+        let row = items.iter().find(|i| i.has_passkey).expect("a row flags has_passkey");
+
+        let detail = conn2.item_detail("kp", "KeePass", &row.id).unwrap();
+        assert_eq!(detail.passkeys.len(), 1);
+        assert_eq!(detail.passkeys[0].rp_id, "github.com");
+        assert_eq!(detail.passkeys[0].key_algorithm, "ES256");
+        assert_eq!(detail.passkeys[0].user_name.as_deref(), Some("octocat"));
+
+        // SECURITY: the KPEX_PASSKEY_* attributes (incl. the private key) must
+        // never surface as user-visible/editable custom fields.
+        assert!(
+            detail
+                .fields
+                .iter()
+                .all(|f| f.name.as_deref().is_none_or(|n| !n.starts_with("KPEX_PASSKEY_"))),
+            "passkey attributes leaked into custom fields: {:?}",
+            detail.fields
+        );
+        assert!(!conn2.custom_field_names().iter().any(|n| n.starts_with("KPEX_PASSKEY_")));
+    }
+
+    #[test]
+    fn passkey_uses_keepassxc_compatible_attributes() {
+        let fx = fixture();
+        let mut conn = open_conn(&fx.path);
+        conn.create_passkey(&sample_passkey("github.com")).unwrap();
+
+        // Open the file with the raw crate (no Agate) and assert the exact
+        // KeePassXC attribute names + that the private key is stored protected.
+        let raw = open_raw(&fx.path);
+        let entry = raw
+            .iter_all_entries()
+            .find(|e| e.get("KPEX_PASSKEY_RELYING_PARTY") == Some("github.com"))
+            .expect("a KeePassXC-named passkey entry exists");
+        assert!(entry.get("KPEX_PASSKEY_CREDENTIAL_ID").is_some());
+        assert!(entry.get("KPEX_PASSKEY_USER_HANDLE").is_some());
+        assert_eq!(entry.get("KPEX_PASSKEY_USERNAME"), Some("octocat"));
+        assert!(
+            entry.fields.get("KPEX_PASSKEY_PRIVATE_KEY_PEM").unwrap().is_protected(),
+            "the passkey private key must be stored protected"
+        );
+        assert!(entry.tags.iter().any(|t| t == "Passkey"), "passkey entry carries the Passkey tag");
+    }
+
+    #[test]
+    fn passkey_delete_removes_it_from_active_lookups() {
+        let fx = fixture();
+        let mut conn = open_conn(&fx.path);
+        conn.create_passkey(&sample_passkey("github.com")).unwrap();
+        conn.delete_passkey(&[1, 2, 3, 4, 5, 6, 7, 8]).unwrap();
+
+        // gone from the live connection and from a cold reopen
+        assert!(conn.get_passkey(&[1, 2, 3, 4, 5, 6, 7, 8]).unwrap().is_none());
+        let conn2 = open_conn(&fx.path);
+        assert!(conn2.find_passkeys_for_rp("github.com").unwrap().is_empty());
+        assert!(conn2.get_passkey(&[1, 2, 3, 4, 5, 6, 7, 8]).unwrap().is_none());
+
+        // deleting an unknown credential is a typed error, not a panic
+        let mut conn3 = open_conn(&fx.path);
+        let err = conn3.delete_passkey(&[0, 0]).unwrap_err();
+        assert!(matches!(err.kind, ErrorKind::BadRequest), "got: {err}");
     }
 }

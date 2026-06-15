@@ -155,6 +155,10 @@ export const ipc = {
   /** Native picker for a .kdbx database file; null when cancelled. */
   pickKeepassDatabase: (): Promise<string | null> => invoke('pick_keepass_database'),
 
+  /** Native "save as" picker for the path of a NEW .kdbx database (defaults the
+   *  name to vault.kdbx); null when cancelled. */
+  pickNewKeepassDatabase: (): Promise<string | null> => invoke('pick_keepass_new_database'),
+
   /** Native picker for a key file (any type); null when cancelled. */
   pickKeepassKeyfile: (): Promise<string | null> => invoke('pick_keepass_keyfile'),
 
@@ -168,6 +172,18 @@ export const ipc = {
     storeCredentials: boolean,
   ): Promise<void> =>
     invoke('add_keepass_connection', { path, password, keyfile, storeCredentials }),
+
+  /** Create a brand-new, empty KDBX4 database at `path` and add it as a
+   *  connection. Refuses to overwrite an existing file. Same sealing semantics
+   *  as `addKeepassConnection` (`storeCredentials` seals the new database
+   *  password under the VMK). */
+  createKeepassConnection: (
+    path: string,
+    password: string,
+    keyfile: string | null,
+    storeCredentials: boolean,
+  ): Promise<void> =>
+    invoke('create_keepass_connection', { path, password, keyfile, storeCredentials }),
 
   /** Unlock one KeePass connection on demand (manual-unlock connections). The
    *  key file, when configured, is read from the connection record. */

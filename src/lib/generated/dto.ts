@@ -300,7 +300,16 @@ export type ItemInput = {
 /**
  * Present → edit; absent → create.
  */
-id: string | null; itemType: ItemType; name: string; folderId: string | null; organizationId: string | null; favorite: boolean; reprompt: boolean; notes: string | null; login: LoginInput | null; card: CardInput | null; identity: IdentityInput | null; sshKey: SshKeyInput | null; fields: FieldInput[] }
+id: string | null; itemType: ItemType; name: string; folderId: string | null; organizationId: string | null; 
+/**
+ * Bitwarden collections to create the item into (an org cipher belongs to one
+ * or more collections). Create-only: a non-empty list routes the create
+ * through `POST /ciphers/create` as an org cipher. Empty = a personal cipher.
+ * Ignored on edit (collection membership is changed in the main client) and by
+ * non-Bitwarden providers. Defaults to empty so older / personal payloads and
+ * the edit path round-trip without it.
+ */
+collectionIds?: string[]; favorite: boolean; reprompt: boolean; notes: string | null; login: LoginInput | null; card: CardInput | null; identity: IdentityInput | null; sshKey: SshKeyInput | null; fields: FieldInput[] }
 
 /**
  * Closed set of Bitwarden item types.

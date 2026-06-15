@@ -256,6 +256,48 @@ pub async fn unlock_keepass_connection(
     res
 }
 
+/// Native "save as" picker for the path of a NEW `.kdbx` database; `None` when
+/// cancelled. Defaults the file name to `vault.kdbx`. The picker blocks its own
+/// thread — keep it off the async runtime's workers.
+#[tauri::command]
+pub async fn pick_keepass_new_database(app: tauri::AppHandle) -> AgateResult<Option<String>> {
+    use tauri_plugin_dialog::DialogExt;
+    tokio::task::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .add_filter("KeePass database", &["kdbx"])
+            .set_file_name("vault.kdbx")
+            .blocking_save_file()
+            .and_then(|f| f.into_path().ok())
+            .map(|p| p.to_string_lossy().into_owned())
+    })
+    .await
+    .map_err(|_| crate::error::AgateError::internal("file picker was interrupted"))
+}
+
+#[tauri::command]
+pub async fn create_keepass_connection(
+    app: tauri::AppHandle,
+    state: State<'_>,
+    path: String,
+    password: String,
+    keyfile: Option<String>,
+    store_credentials: bool,
+) -> AgateResult<()> {
+    let res = connections::create_keepass_connection(
+        &state,
+        path,
+        Zeroizing::new(password),
+        keyfile,
+        store_credentials,
+    )
+    .await;
+    if res.is_ok() {
+        super::emit_session_changed(&app);
+    }
+    res
+}
+
 #[tauri::command]
 pub async fn send_email_code(
     state: State<'_>,

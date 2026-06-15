@@ -287,6 +287,69 @@ pub async fn add_keepass_connection(
     Ok(())
 }
 
+/// Create a brand-new, empty KeePass database file and add it as a connection.
+/// Creates (and verifies) the `.kdbx` on disk first — refusing to overwrite an
+/// existing file — then seals + records it exactly like `add_keepass_connection`
+/// (open vs create are the only difference). The path doubles as the connection
+/// id.
+pub async fn create_keepass_connection(
+    state: &AppState,
+    path: String,
+    password: Zeroizing<String>,
+    keyfile: Option<String>,
+    store_credentials: bool,
+) -> AgateResult<()> {
+    let vmk = appunlock::current_vmk(state)
+        .await
+        .map_err(|_| AgateError::bad_request("Set an app password before adding a connection."))?;
+
+    let conn = create_keepass(path.clone(), password.clone(), keyfile.clone()).await?;
+
+    if store_credentials {
+        let stored = StoredConnection {
+            kind: ConnectionKind::Keepass,
+            server: ServerConfig::default(),
+            email: path.clone(),
+            master_password: (*password).clone(),
+            path: Some(path.clone()),
+            keyfile: keyfile.clone(),
+        };
+        appunlock::seal_connection(&vmk, &stored)?;
+    } else {
+        // Manual-unlock connection: make sure no stale sealed password lingers.
+        secrets::delete_cred(&path)?;
+    }
+
+    if let Err(e) = state
+        .update_config(|cfg| {
+            cfg.upsert_account_with_keyfile(
+                ConnectionKind::Keepass,
+                ServerConfig::default(),
+                &path,
+                store_credentials,
+                keyfile.clone(),
+            );
+        })
+        .await
+    {
+        // Compensate: the config rolled back, so a just-sealed database
+        // password must not stay orphaned in the keychain. The new file itself
+        // is left on disk (it holds no data yet) for the user to retry/open.
+        if store_credentials {
+            let _ = secrets::delete_cred(&path); // ignore: best-effort compensation
+        }
+        return Err(e);
+    }
+    {
+        let mut session = state.session.lock().await;
+        session.connections.insert(path.clone(), crate::providers::LiveConnection::Keepass(conn));
+        if session.active_email.is_none() {
+            session.active_email = Some(path);
+        }
+    }
+    Ok(())
+}
+
 /// Unlock one KeePass connection on demand with its database password (manual
 /// connections, or retrying a failed one). The key file path comes from the
 /// connection record; the password is not persisted here.
@@ -330,6 +393,23 @@ async fn open_keepass(
     })
     .await
     .map_err(|_| AgateError::internal("database open was interrupted"))?
+}
+
+/// Create a new KeePass database off the async runtime (the KDF is CPU-bound).
+async fn create_keepass(
+    path: String,
+    password: Zeroizing<String>,
+    keyfile: Option<String>,
+) -> AgateResult<crate::providers::KeepassConnection> {
+    tokio::task::spawn_blocking(move || {
+        crate::providers::KeepassConnection::create(
+            std::path::Path::new(&path),
+            password.as_str(),
+            keyfile.as_deref().map(std::path::Path::new),
+        )
+    })
+    .await
+    .map_err(|_| AgateError::internal("database creation was interrupted"))?
 }
 
 /// Add a `pass` store (the standard unix password store) as a connection. The
