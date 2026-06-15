@@ -370,6 +370,11 @@ export type LoginUri = { uri: string | null; matchType: number | null }
  */
 export type PasskeyCredential = { 
 /**
+ * Credential id (base64url) — the public handle identifying this passkey,
+ * so the UI can target it for removal. Not secret (it's the WebAuthn id).
+ */
+credentialId: string; 
+/**
  * Relying-party (site) id, e.g. "github.com".
  */
 rpId: string; rpName: string | null; userName: string | null; userDisplayName: string | null; keyAlgorithm: string; 

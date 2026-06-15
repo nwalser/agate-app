@@ -14,7 +14,8 @@ mod writes;
 
 // Item writes, driven by the Tauri commands in `lib.rs`.
 pub use writes::{
-    associate_uri, clone_item, delete_items, move_items, restore_items, save_item, set_favorite,
+    associate_uri, clone_item, delete_items, move_items, remove_passkey, restore_items, save_item,
+    set_favorite,
 };
 
 // Folder writes, also driven from `lib.rs`.

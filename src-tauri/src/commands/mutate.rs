@@ -10,6 +10,18 @@ pub async fn save_item(state: State<'_>, account_email: String, input: ItemInput
     mutate::save_item(&state, &account_email, input).await
 }
 
+/// Remove a stored passkey from an item (by its base64url credential id). The
+/// frontend re-syncs after a successful write.
+#[tauri::command]
+pub async fn remove_passkey(
+    state: State<'_>,
+    account_email: String,
+    item_id: String,
+    credential_id: String,
+) -> AgateResult<()> {
+    mutate::remove_passkey(&state, &account_email, &item_id, &credential_id).await
+}
+
 #[tauri::command]
 pub async fn clone_item(state: State<'_>, account_email: String, id: String) -> AgateResult<()> {
     mutate::clone_item(&state, &account_email, &id).await

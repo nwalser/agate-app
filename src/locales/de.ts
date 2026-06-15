@@ -216,6 +216,7 @@ export const de: PartialMessages = {
     fingerprint: 'Fingerabdruck',
     privateKey: 'Privater Schlüssel',
     passkeys: 'Passkeys',
+    removePasskey: 'Passkey entfernen',
     updated: 'Aktualisiert {date}',
     copyField: '{label} kopieren',
     cardBrandFallback: 'Karte',

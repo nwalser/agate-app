@@ -25,6 +25,7 @@ import type {
   AutofillPending,
   Folder,
   ItemInput,
+  PasskeyCredential,
   SessionStatus,
   UnlockOutcome,
   VaultItem,
@@ -42,6 +43,8 @@ interface BackendState {
   items: VaultItem[];
   /** itemId → cleartext password returned by item_detail. */
   passwords: Record<string, string>;
+  /** itemId → stored passkeys returned by item_detail. */
+  passkeys: Record<string, PasskeyCredential[]>;
   /** Folders/groups the add-form picker offers (per the unified list_folders). */
   folders: Folder[];
   pending: AutofillPending | null;
@@ -79,6 +82,7 @@ function makeBackend(over: Partial<BackendState> = {}) {
     status: makeStatus(),
     items: [],
     passwords: {},
+    passkeys: {},
     folders: [],
     pending: null,
     clipboard: '',
@@ -108,7 +112,15 @@ function makeBackend(over: Partial<BackendState> = {}) {
             username: item.username,
             password: state.passwords[item.id] ?? null,
           }),
+          passkeys: state.passkeys[item.id] ?? [],
         });
+      }
+      case 'remove_passkey': {
+        const itemId = args.itemId as string;
+        state.passkeys[itemId] = (state.passkeys[itemId] ?? []).filter(
+          (p) => p.credentialId !== args.credentialId,
+        );
+        return null;
       }
       case 'item_totp':
         return { code: '123456', period: 30, remaining: 20 };
@@ -336,6 +348,41 @@ describe('TrayApp integration — list, search and copy', () => {
     await waitFor(() => expect(backend.state.clipboard).toBe('s3cret'));
     expect(backend.invoked('item_detail')).toHaveLength(1);
     expect(backend.invoked('item_detail')[0]?.args).toMatchObject({ accountEmail: 'tester@example.com', id: 'gh' });
+  });
+
+  it('removes a stored passkey from the detail view', async () => {
+    const backend = makeBackend({
+      items: [makeItem({ id: 'gh', name: 'GitHub', username: 'neo', hasPasskey: true })],
+      passkeys: {
+        gh: [
+          {
+            credentialId: 'cred-abc',
+            rpId: 'github.com',
+            rpName: 'GitHub',
+            userName: 'neo',
+            userDisplayName: null,
+            keyAlgorithm: 'ES256',
+            creationDate: '2026-01-01T00:00:00Z',
+          },
+        ],
+      },
+    });
+    renderTray(backend);
+    await screen.findByText('GitHub');
+
+    // Open the detail view (row click) → the passkey shows with a remove button.
+    fireEvent.click(screen.getByText('GitHub'));
+    const removeBtn = await screen.findByTitle('Remove passkey');
+    fireEvent.click(removeBtn);
+
+    await waitFor(() => expect(backend.invoked('remove_passkey')).toHaveLength(1));
+    expect(backend.invoked('remove_passkey')[0]?.args).toMatchObject({
+      accountEmail: 'tester@example.com',
+      itemId: 'gh',
+      credentialId: 'cred-abc',
+    });
+    // The passkey row disappears from the pane.
+    await waitFor(() => expect(screen.queryByTitle('Remove passkey')).toBeNull());
   });
 
   it('ArrowDown moves the selection; Shift+Enter copies that username with no detail fetch', async () => {

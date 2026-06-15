@@ -286,6 +286,10 @@ export const ipc = {
   saveItem: (accountEmail: string, input: ItemInput): Promise<void> =>
     invoke('save_item', { accountEmail, input }),
 
+  /** Remove a stored passkey from an item, by its base64url credential id. */
+  removePasskey: (accountEmail: string, itemId: string, credentialId: string): Promise<void> =>
+    invoke('remove_passkey', { accountEmail, itemId, credentialId }),
+
   cloneItem: (accountEmail: string, id: string): Promise<void> =>
     invoke('clone_item', { accountEmail, id }),
 

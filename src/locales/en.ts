@@ -226,6 +226,7 @@ export const en = {
     fingerprint: 'Fingerprint',
     privateKey: 'Private key',
     passkeys: 'Passkeys',
+    removePasskey: 'Remove passkey',
     updated: 'Updated {date}',
     copyField: 'Copy {label}',
     cardBrandFallback: 'Card',

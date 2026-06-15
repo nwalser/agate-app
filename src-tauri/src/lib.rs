@@ -123,6 +123,7 @@ pub fn run() {
             generate_passphrase,
             generate_username,
             save_item,
+            remove_passkey,
             clone_item,
             set_favorite,
             move_items,

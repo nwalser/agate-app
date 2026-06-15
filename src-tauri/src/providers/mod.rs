@@ -173,10 +173,10 @@ impl LiveConnection {
 //
 // The provider-agnostic boundary the passkey ceremony layer talks to. Reads
 // return whatever the provider can surface (empty for providers that don't store
-// passkeys yet); writes require a writable provider and otherwise return a typed
-// `BadRequest`, mirroring `mutate::route_for`. The only caller is the ceremony
-// adapter (next slice), so allow this surface to sit unused until then.
-#[allow(dead_code)]
+// passkeys yet); the create write requires a writable provider and otherwise
+// returns a typed `BadRequest`, mirroring `mutate::route_for`. Passkey *removal*
+// is routed in `mutate::remove_passkey` (it follows the same client-snapshot /
+// `keepass_write` patterns as the other writes).
 impl LiveConnection {
     /// Every stored passkey for a relying-party id — the candidate set for a
     /// get-assertion (sign-in) ceremony.
@@ -223,32 +223,4 @@ impl LiveConnection {
         }
     }
 
-    /// Persist a new signature counter after a successful assertion (a no-op for
-    /// providers that report counter `0`).
-    pub fn update_passkey_sign_count(
-        &mut self,
-        credential_id: &[u8],
-        sign_count: u32,
-    ) -> AgateResult<()> {
-        match self {
-            LiveConnection::Keepass(k) => k.update_passkey_sign_count(credential_id, sign_count),
-            LiveConnection::Bitwarden(_)
-            | LiveConnection::Pass(_)
-            | LiveConnection::Enpass(_)
-            | LiveConnection::Proton(_) => Ok(()),
-        }
-    }
-
-    /// Remove a stored passkey by credential id.
-    pub fn delete_passkey(&mut self, credential_id: &[u8]) -> AgateResult<()> {
-        match self {
-            LiveConnection::Keepass(k) => k.delete_passkey(credential_id),
-            LiveConnection::Bitwarden(_) => Err(AgateError::bad_request(
-                "Managing Bitwarden passkeys isn't supported yet.",
-            )),
-            LiveConnection::Pass(_) | LiveConnection::Enpass(_) | LiveConnection::Proton(_) => {
-                Err(AgateError::bad_request("This vault is read-only."))
-            }
-        }
-    }
 }

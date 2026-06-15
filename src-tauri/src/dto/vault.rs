@@ -162,6 +162,9 @@ pub struct TotpCode {
 #[cfg_attr(test, derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct PasskeyCredential {
+    /// Credential id (base64url) — the public handle identifying this passkey,
+    /// so the UI can target it for removal. Not secret (it's the WebAuthn id).
+    pub credential_id: String,
     /// Relying-party (site) id, e.g. "github.com".
     pub rp_id: String,
     pub rp_name: Option<String>,

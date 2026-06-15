@@ -128,6 +128,22 @@ export default function TrayDetail(props: {
     }
   }
 
+  /** Remove a stored passkey from this item (the item itself stays). */
+  async function removePasskey(credentialId: string) {
+    const d = detail();
+    if (!d || busy()) return;
+    setBusy(true);
+    try {
+      await ipc.removePasskey(d.accountEmail, d.id, credentialId);
+      setDetail({ ...d, passkeys: d.passkeys.filter((p) => p.credentialId !== credentialId) });
+      props.onChanged();
+    } catch (err) {
+      toastError(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div class="tray-detail">
       <div class="tray-detail-head">
@@ -354,7 +370,8 @@ export default function TrayDetail(props: {
 
               <Show when={d().notes}>{(notes) => <NotesView notes={notes()} />}</Show>
 
-              {/* Stored passkeys — read-only metadata (using them needs a browser). */}
+              {/* Stored passkeys — shown with the site/account; removable here.
+                  Signing in with one happens through the OS/browser. */}
               <Show when={d().passkeys.length > 0}>
                 <div class="tray-detail-field">
                   <label>{t('detail.passkeys')}</label>
@@ -374,6 +391,16 @@ export default function TrayDetail(props: {
                         >
                           {relativeFromNow(pk.creationDate)}
                         </span>
+                        <Show when={!props.item.deleted}>
+                          <button
+                            class="tray-detail-iconbtn tray-detail-del"
+                            title={t('detail.removePasskey')}
+                            disabled={busy()}
+                            onClick={() => void removePasskey(pk.credentialId)}
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </Show>
                       </div>
                     )}
                   </For>

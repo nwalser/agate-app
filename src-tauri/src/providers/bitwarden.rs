@@ -331,6 +331,7 @@ fn new_passkey_login_view(passkey: &StoredPasskey, folder_id: Option<&str>) -> A
 
 fn passkey_to_dto(c: Fido2CredentialView) -> PasskeyCredential {
     PasskeyCredential {
+        credential_id: c.credential_id,
         rp_id: c.rp_id,
         rp_name: c.rp_name,
         user_name: c.user_name,

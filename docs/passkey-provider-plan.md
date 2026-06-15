@@ -36,15 +36,26 @@ Built + tested:
   Compiles + the key conversion is unit-tested, but the server round-trip, the
   base64url variant, and cross-client credential-id interop need a **real
   Bitwarden account** to confirm.
-- **140 Rust tests pass, clippy `-D warnings` clean.**
+- **Manage passkeys in the popup** — `ItemDetail.passkeys` carries
+  `credentialId`; the detail pane lists each stored passkey (site / account /
+  date) with a **remove** button. `remove_passkey` (Tauri command → `mutate`)
+  strips the KPEX attributes on KeePass (non-destructive — the login survives)
+  and drops the FIDO2 credential from a Bitwarden cipher. i18n in en/de/es.
+- **Layer C IPC contract** — `passkey/ipc.rs` defines the shim↔tray messages
+  (the M1 model): destination + CBOR-carried CTAP request/response. Contract +
+  docs only; the native transport/shim isn't built (see below).
+- **140 Rust + 299 frontend tests pass, clippy `-D warnings` clean.** The KeePass
+  remove is covered by a Rust unit test *and* a tray integration test.
 
 Not built yet (clearly staged):
 - **Bitwarden assertion read** — `find_passkeys_for_rp` / `get_passkey` still
   return empty for Bitwarden, so Agate can store a Bitwarden passkey but can't yet
-  assert one from it (the create side is the user's ask; the read/sign side is the
-  follow-up).
-- **User-facing commands** (popup chooser: which vault / item / folder; list /
-  delete) — the backend capability exists; the popup wiring is the next piece.
+  assert one from it. (Blocked-ish: the SDK's `decrypt_fido2_credentials` yields a
+  `Fido2CredentialView` whose `key_value` stays an `EncString` — getting the
+  plaintext key for signing needs a `Fido2CredentialFullView` path to confirm.)
+- **The ceremony destination chooser UI** — the backend takes a `PasskeyTarget`;
+  the popup that lets the user pick vault/item/folder *during a registration*
+  only appears when the OS hands Agate a ceremony, i.e. with Layer C.
 - **OS integration (Layer C)** — §5; the `make_credential` / `get_assertion`
   entry points exist and are tested, but nothing calls them yet (the native shim
   isn't buildable/verifiable here), so they sit under documented

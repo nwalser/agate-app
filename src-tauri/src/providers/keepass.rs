@@ -462,10 +462,9 @@ impl KeepassConnection {
 // attributes (see the constants above) — so the same atomic-save guarantees as
 // any other write apply, and credentials interoperate with KeePassXC.
 //
-// These methods are driven by the passkey ceremony adapter (next slice); allow
-// them to sit unused until that caller lands. (Read-side display — `has_passkey`
-// and the detail metadata — is already live via `list_items` / `item_detail`.)
-#[allow(dead_code)]
+// `create_passkey` is driven by the ceremony adapter; `remove_passkey` by
+// `mutate::remove_passkey`. (Read-side display — `has_passkey` and the detail
+// metadata — is live via `list_items` / `item_detail`.)
 impl KeepassConnection {
     /// Every stored passkey whose relying party matches `rp_id` (deleted entries
     /// excluded). A malformed passkey entry is skipped with a warning, never
@@ -548,20 +547,10 @@ impl KeepassConnection {
         }
     }
 
-    /// Persist a new signature counter. KeePass passkeys report counter `0`
-    /// (not tracked) — matching KeePassXC and avoiding cross-client sync
-    /// conflicts — so there is nothing to write.
-    pub fn update_passkey_sign_count(
-        &mut self,
-        _credential_id: &[u8],
-        _sign_count: u32,
-    ) -> AgateResult<()> {
-        Ok(())
-    }
-
-    /// Soft-delete the entry holding a passkey (moves it to the recycle bin,
-    /// like any other delete — never destroys data outright).
-    pub fn delete_passkey(&mut self, credential_id: &[u8]) -> AgateResult<()> {
+    /// Remove a passkey from its entry: strips the `KPEX_PASSKEY_*` attributes
+    /// and the `Passkey` tag, leaving the entry (and any login it was attached
+    /// to) intact. Non-destructive — it never deletes the item itself.
+    pub fn remove_passkey(&mut self, credential_id: &[u8]) -> AgateResult<()> {
         let target = URL_SAFE_NO_PAD.encode(credential_id);
         let eid = self
             .db
@@ -572,8 +561,14 @@ impl KeepassConnection {
             return Err(AgateError::bad_request("No such passkey."));
         };
         self.mutate_and_save(move |db| {
-            let bin = ensure_recycle_bin(db);
-            move_entry(db, eid, bin)
+            let mut entry = db
+                .entry_mut(eid)
+                .ok_or_else(|| AgateError::bad_request("No such passkey."))?;
+            entry.edit_tracking(|tracked| {
+                strip_passkey_attrs(tracked);
+                tracked.times.last_modification = Some(Times::now());
+            });
+            Ok(())
         })
     }
 }
@@ -687,6 +682,7 @@ impl KeepassConnection {
         // leaves the backend, so it is not part of the DTO).
         let passkeys = match read_stored_passkey(&entry) {
             Some(pk) => vec![PasskeyCredential {
+                credential_id: URL_SAFE_NO_PAD.encode(&pk.credential_id),
                 rp_id: pk.rp_id,
                 rp_name: pk.rp_name,
                 user_name: pk.user_name,
@@ -1091,6 +1087,24 @@ fn set_passkey_attrs(entry: &mut Entry, passkey: &StoredPasskey) {
     if !entry.tags.iter().any(|t| t == PASSKEY_TAG) {
         entry.tags.push(PASSKEY_TAG.to_string());
     }
+}
+
+/// Strip every `KPEX_PASSKEY_*` attribute (+ the `Passkey` tag) from an entry,
+/// removing the passkey while leaving the rest of the entry untouched.
+fn strip_passkey_attrs(entry: &mut Entry) {
+    for field in [
+        PASSKEY_USERNAME,
+        PASSKEY_RELYING_PARTY,
+        PASSKEY_CREDENTIAL_ID,
+        PASSKEY_USER_HANDLE,
+        PASSKEY_PRIVATE_KEY_PEM,
+        PASSKEY_ALGORITHM,
+        PASSKEY_FLAG_BE,
+        PASSKEY_FLAG_BS,
+    ] {
+        entry.fields.remove(field);
+    }
+    entry.tags.retain(|t| t != PASSKEY_TAG);
 }
 
 /// Read a passkey off an entry, or `None` when the entry holds no passkey (or
@@ -2236,21 +2250,30 @@ mod tests {
     }
 
     #[test]
-    fn passkey_delete_removes_it_from_active_lookups() {
+    fn passkey_remove_strips_it_without_deleting_the_item() {
         let fx = fixture();
         let mut conn = open_conn(&fx.path);
-        conn.create_passkey(&sample_passkey("github.com"), &PasskeyTarget::default()).unwrap();
-        conn.delete_passkey(&[1, 2, 3, 4, 5, 6, 7, 8]).unwrap();
+        // attach a passkey to the GitHub login, then remove just the passkey
+        let target = PasskeyTarget { item_id: Some(fx.github_id.clone()), folder_id: None };
+        conn.create_passkey(&sample_passkey("github.com"), &target).unwrap();
+        conn.remove_passkey(&[1, 2, 3, 4, 5, 6, 7, 8]).unwrap();
 
-        // gone from the live connection and from a cold reopen
-        assert!(conn.get_passkey(&[1, 2, 3, 4, 5, 6, 7, 8]).unwrap().is_none());
         let conn2 = open_conn(&fx.path);
+        // the passkey is gone from lookups + a cold reopen...
         assert!(conn2.find_passkeys_for_rp("github.com").unwrap().is_empty());
         assert!(conn2.get_passkey(&[1, 2, 3, 4, 5, 6, 7, 8]).unwrap().is_none());
+        // ...but the GitHub login is INTACT (not deleted; its fields preserved)
+        let detail = conn2.item_detail("kp", "KeePass", &fx.github_id).unwrap();
+        assert!(detail.passkeys.is_empty(), "passkey metadata gone");
+        assert_eq!(detail.login.as_ref().unwrap().password.as_deref(), Some("hunter2"));
+        assert!(
+            conn2.list_items("kp", "KeePass").iter().any(|i| i.id == fx.github_id && !i.has_passkey),
+            "the login item still exists, without a passkey"
+        );
 
-        // deleting an unknown credential is a typed error, not a panic
+        // removing an unknown credential is a typed error, not a panic
         let mut conn3 = open_conn(&fx.path);
-        let err = conn3.delete_passkey(&[0, 0]).unwrap_err();
+        let err = conn3.remove_passkey(&[0, 0]).unwrap_err();
         assert!(matches!(err.kind, ErrorKind::BadRequest), "got: {err}");
     }
 
