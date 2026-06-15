@@ -22,6 +22,8 @@
 //! [`CoseAlgorithm`] set. The CredentialStore adapter is the one place that
 //! converts between [`StoredPasskey`] and the crate's `Passkey`.
 
+pub mod authenticator;
+pub mod codec;
 pub mod store;
 
 pub use store::{CoseAlgorithm, StoredPasskey};

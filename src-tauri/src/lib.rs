@@ -18,10 +18,13 @@ mod hello;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod hello_unix;
 mod mutate;
-// Provider-agnostic passkey (FIDO2/WebAuthn) storage types. The per-provider
-// persistence is dispatched off `providers::LiveConnection`; the OS-integration
-// shims (Layer C) and the CredentialStore ceremony adapter build on these.
-mod passkey;
+// Provider-agnostic passkey (FIDO2/WebAuthn) storage + ceremony adapter. The
+// per-provider persistence is dispatched off `providers::LiveConnection`; the
+// CredentialStore adapter bridges to the `passkey-authenticator` crate; the
+// OS-integration shims (Layer C) call the ceremony entry points. Public so the
+// ceremony entry points read as the crate's API surface (their real caller, the
+// native shim, isn't built yet).
+pub mod passkey;
 mod providers;
 mod proxy;
 mod secrets;

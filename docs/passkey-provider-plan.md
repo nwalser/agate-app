@@ -5,10 +5,10 @@ This doc is the design of record.
 
 ## Implementation status
 
-Built + tested (this slice):
-- `src-tauri/src/passkey/` — provider-agnostic shared types: `StoredPasskey`
-  (crate-free; PKCS#8-PEM key, base64url ids) and the closed `CoseAlgorithm`
-  (ES256 / EdDSA / RS256).
+Built + tested:
+- `src-tauri/src/passkey/store.rs` — provider-agnostic shared types:
+  `StoredPasskey` (crate-free; PKCS#8-PEM key, base64url ids) and the closed
+  `CoseAlgorithm` (ES256 / EdDSA / RS256).
 - `providers::LiveConnection` passkey dispatch — `find_passkeys_for_rp`,
   `get_passkey`, `create_passkey`, `update_passkey_sign_count`, `delete_passkey`
   (read-only providers return empty/`BadRequest`, mirroring `mutate::route_for`).
@@ -16,17 +16,26 @@ Built + tested (this slice):
   credential id / user handle base64url, private key PKCS#8 PEM **protected**,
   `Passkey` tag), via the existing atomic save. Read side wired: `has_passkey`
   flips and `item_detail.passkeys` carries metadata; the private key is excluded
-  from custom-field surfaces (security). 33 tests pass; clippy clean.
+  from custom-field surfaces (security).
+- `src-tauri/src/passkey/codec.rs` — the ES256 **CoseKey ↔ PKCS#8 PEM** bridge
+  (`passkey::Passkey` ↔ `StoredPasskey`), re-implementing the crate's private
+  helpers; round-trip is proven by a sign-then-verify test.
+- `src-tauri/src/passkey/authenticator.rs` — `ConnectionStore` implementing the
+  `passkey-authenticator` `CredentialStore` over `&mut LiveConnection`
+  (provider-blind), plus `make_credential` / `get_assertion` ceremony entry
+  points generic over `UserValidationMethod`. **137 Rust tests pass, clippy
+  clean**, incl. a full register→store-in-KeePass→sign-in integration test.
 
 Not built yet (clearly staged):
-- **CredentialStore adapter + ceremonies** (`passkey::authenticator`) — needs the
-  `passkey-authenticator` crate + the `StoredPasskey` ↔ `passkey::Passkey` key
-  conversion (PKCS#8 PEM ↔ COSE). Until it lands, the `LiveConnection` passkey
-  methods are reachable but unused (held under documented `#[allow(dead_code)]`).
-- **Bitwarden persistence** — gated `BadRequest` (SDK Fido2 write unconfirmed).
+- **Bitwarden persistence** — gated `BadRequest` (SDK Fido2 write unconfirmed at
+  the pinned rev).
 - **User-facing commands** (popup list/delete passkeys) — read metadata already
   flows via `item_detail`; a delete command is the small next piece.
-- **OS integration (Layer C)** — §5; none of it is buildable/verifiable here.
+- **OS integration (Layer C)** — §5; the `make_credential` / `get_assertion`
+  entry points exist and are tested, but nothing calls them yet (the native shim
+  isn't buildable/verifiable here), so they sit under documented
+  `#[allow(dead_code)]`. A real biometric `UserValidationMethod` (Windows Hello /
+  Touch ID, via `hello.rs`) is supplied by that shim.
 
 Interop caveats to verify live (not yet done): the exact base64 variant KeePassXC
 uses for ids (assumed URL-safe no-pad), and reading a *non-Agate* passkey whose

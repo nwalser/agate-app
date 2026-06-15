@@ -51,6 +51,20 @@ rand = "0.8"
 zeroize = { version = "1", features = ["derive"] }
 base64 = "0.22"
 
+# Passkey (FIDO2 / WebAuthn) authenticator core (1Password's passkey-rs, Apache-2.0):
+# provider-agnostic CTAP2 + WebAuthn ceremony, COSE/CBOR, and signing — all
+# pure-Rust RustCrypto (no C deps, builds like the rest of the tree). Agate
+# implements its `CredentialStore` over the provider layer (see src/passkey/), so
+# the crate owns the protocol/crypto and a new provider only adds persistence.
+passkey-authenticator = "0.4"
+passkey-types = "0.4"
+coset = "0.3"
+# ES256 (P-256) key bridge: the passkey crate stores keys as COSE; Agate persists
+# them as PKCS#8 PEM (KeePassXC-interoperable). Pure-Rust RustCrypto.
+p256 = { version = "0.13", features = ["pkcs8", "pem"] }
+# Needed to implement the passkey crate's #[async_trait] CredentialStore.
+async-trait = "0.1"
+
 # Bitwarden official SDK (sdk-internal). GPLv3. Pinned by rev because the
 # password-manager SDK is explicitly unstable ("changes without warning").
 # Bumping the rev is a deliberate, reviewed action — never float `main`.
