@@ -7,6 +7,7 @@
 mod appunlock;
 mod auth;
 mod autofill;
+mod badge;
 mod commands;
 mod connections;
 mod dto;

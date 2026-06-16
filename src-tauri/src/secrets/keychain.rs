@@ -68,7 +68,7 @@ fn backend_cell() -> &'static RwLock<Arc<dyn SecretBackend>> {
 }
 
 fn backend() -> Arc<dyn SecretBackend> {
-    backend_cell().read().unwrap_or_else(|e| e.into_inner()).clone()
+    backend_cell().read().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
 }
 
 fn store_string(key: &str, value: &str) -> AgateResult<()> {
@@ -192,15 +192,15 @@ pub mod testing {
         fn store(&self, key: &str, value: &str) -> AgateResult<()> {
             self.map
                 .lock()
-                .unwrap_or_else(|e| e.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .insert(key.to_string(), value.to_string());
             Ok(())
         }
         fn load(&self, key: &str) -> AgateResult<Option<String>> {
-            Ok(self.map.lock().unwrap_or_else(|e| e.into_inner()).get(key).cloned())
+            Ok(self.map.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(key).cloned())
         }
         fn delete(&self, key: &str) -> AgateResult<()> {
-            self.map.lock().unwrap_or_else(|e| e.into_inner()).remove(key);
+            self.map.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(key);
             Ok(())
         }
     }
@@ -213,8 +213,8 @@ pub mod testing {
 
     pub fn install_in_memory_keychain() -> KeychainTestGuard {
         static TEST_LOCK: Mutex<()> = Mutex::new(());
-        let guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        *backend_cell().write().unwrap_or_else(|e| e.into_inner()) =
+        let guard = TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        *backend_cell().write().unwrap_or_else(std::sync::PoisonError::into_inner) =
             Arc::new(InMemoryBackend::default());
         KeychainTestGuard(guard)
     }

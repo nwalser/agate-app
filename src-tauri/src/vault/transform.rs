@@ -61,7 +61,7 @@ pub(crate) fn view_to_list_item(
             login.username.clone(),
             login.totp.is_some(),
             login.uris.as_ref().and_then(|uris| uris.iter().find_map(|u| u.uri.clone())),
-            login.fido2_credentials.as_ref().map(|c| !c.is_empty()).unwrap_or(false),
+            login.fido2_credentials.as_ref().is_some_and(|c| !c.is_empty()),
         ),
         None => (None, false, None, false),
     };
@@ -98,7 +98,7 @@ pub fn view_to_detail(view: &CipherView, account_email: &str, account_label: &st
                     .collect()
             })
             .unwrap_or_default(),
-        has_totp: l.totp.as_ref().map(|t| !t.is_empty()).unwrap_or(false),
+        has_totp: l.totp.as_ref().is_some_and(|t| !t.is_empty()),
         password_revision_date: l.password_revision_date.map(|d| d.to_rfc3339()),
         autofill_on_page_load: l.autofill_on_page_load,
         // Password history lives on the cipher, not the login sub-view; surface it
@@ -156,7 +156,7 @@ pub fn view_to_detail(view: &CipherView, account_email: &str, account_label: &st
         organization_id: view.organization_id.map(|i| i.to_string()),
         revision_date: view.revision_date.to_rfc3339(),
         creation_date: view.creation_date.to_rfc3339(),
-        collection_ids: view.collection_ids.iter().map(|c| c.to_string()).collect(),
+        collection_ids: view.collection_ids.iter().map(std::string::ToString::to_string).collect(),
         // Passkeys are decrypted separately (needs a KeyStoreContext on the view);
         // `item_detail` fills this in. Defaults to none here.
         passkeys: Vec::new(),

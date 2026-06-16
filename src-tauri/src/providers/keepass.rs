@@ -348,8 +348,7 @@ impl KeepassConnection {
                     .entry(eid)
                     .ok_or_else(|| AgateError::bad_request("No such item."))?
                     .previous_parent()
-                    .map(|g| g.id())
-                    .unwrap_or(root);
+                    .map_or(root, |g| g.id());
                 move_entry(db, eid, target)?;
             }
             Ok(())
@@ -597,7 +596,7 @@ impl KeepassConnection {
             // Pull any Keepass2Android-style additional URLs (KP2A_URL*) too, so a
             // login with several sites — or a native-app `app://` association — is
             // matched on all of them, not just the primary URL field.
-            for (name, value) in e.fields.iter() {
+            for (name, value) in &e.fields {
                 if is_additional_url_field(name) {
                     if let Some(v) = non_empty(Some(value.get())) {
                         if !uris.contains(&v) {
@@ -1333,7 +1332,7 @@ fn add_additional_url(entry: &mut Entry, uri: &str) {
         return;
     }
     let mut used_keys: Vec<String> = Vec::new();
-    for (name, value) in entry.fields.iter() {
+    for (name, value) in &entry.fields {
         if is_additional_url_field(name) {
             if value.get() == uri {
                 return; // already associated

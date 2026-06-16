@@ -22,9 +22,7 @@ use super::writes::{op_err, parse_id};
 /// Server label for one connection (for stamping returned folders).
 async fn account_label(state: &AppState, email: &str) -> String {
     let cfg = state.config.lock().await;
-    cfg.server_for(email)
-        .map(|s| server::server_label(&s))
-        .unwrap_or_else(|| email.to_string())
+    cfg.server_for(email).map_or_else(|| email.to_string(), |s| server::server_label(&s))
 }
 
 /// Encrypt a folder name and create (no id) or rename (with id) it via the raw

@@ -33,7 +33,7 @@ fn sync_shape_cell() -> &'static Mutex<Option<String>> {
 
 /// The type-only skeleton of the most recent `/sync` response, if captured.
 pub fn last_sync_shape() -> Option<String> {
-    sync_shape_cell().lock().unwrap_or_else(|e| e.into_inner()).clone()
+    sync_shape_cell().lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
 }
 
 /// Ensure a loopback identity proxy is running for `upstream_identity_base`
@@ -43,7 +43,7 @@ pub fn ensure_proxy(upstream_identity_base: &str) -> std::io::Result<String> {
     let key = upstream_identity_base.trim_end_matches('/').to_string();
 
     {
-        let guard = registry().lock().unwrap_or_else(|e| e.into_inner());
+        let guard = registry().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(port) = guard.get(&key) {
             return Ok(format!("http://127.0.0.1:{port}"));
         }
@@ -60,6 +60,6 @@ pub fn ensure_proxy(upstream_identity_base: &str) -> std::io::Result<String> {
     let upstream = key.clone();
     std::thread::spawn(move || handler::run_proxy(server, upstream));
 
-    registry().lock().unwrap_or_else(|e| e.into_inner()).insert(key, port);
+    registry().lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(key, port);
     Ok(format!("http://127.0.0.1:{port}"))
 }

@@ -57,15 +57,11 @@ impl AccountRef {
             ConnectionKind::Proton => self.email.clone(),
             // KeePass is a `.kdbx` FILE — the stem drops the extension.
             ConnectionKind::Keepass => std::path::Path::new(&self.email)
-                .file_stem()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_else(|| self.email.clone()),
+                .file_stem().map_or_else(|| self.email.clone(), |s| s.to_string_lossy().into_owned()),
             // pass (store dir) and Enpass (vault folder) ids are directories —
             // the final path component is the human label.
             ConnectionKind::Pass | ConnectionKind::Enpass => std::path::Path::new(&self.email)
-                .file_name()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_else(|| self.email.clone()),
+                .file_name().map_or_else(|| self.email.clone(), |s| s.to_string_lossy().into_owned()),
         }
     }
 }

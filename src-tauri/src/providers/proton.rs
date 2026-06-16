@@ -555,8 +555,7 @@ impl ProtonContentKind {
 #[allow(dead_code)] // reached once the protobuf-parse step lands; exercised by tests
 pub fn classify_content(content_field_number: u32) -> ItemType {
     ProtonContentKind::from_proto_field(content_field_number)
-        .map(ProtonContentKind::to_item_type)
-        .unwrap_or(ItemType::Unknown)
+        .map_or(ItemType::Unknown, ProtonContentKind::to_item_type)
 }
 
 // ── auth / crypto / API pipeline — STUBS (each points at its upstream source) ──
@@ -671,7 +670,7 @@ mod tests {
             username: Some(username.to_string()),
             password: Some(password.to_string()),
             totp_uri: totp.map(str::to_string),
-            urls: urls.iter().map(|u| u.to_string()).collect(),
+            urls: urls.iter().map(std::string::ToString::to_string).collect(),
         }
     }
 

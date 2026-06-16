@@ -114,6 +114,12 @@ pub async fn set_mode(
         clear_pending(state);
     }
     apply_mode(app.clone(), mode);
+    // The match-count badge only lives in Watch mode (the only mode with a
+    // continuous foreground hook). Any other mode → drop a stale badge so the icon
+    // doesn't keep showing a count that will never update.
+    if mode != AutofillMode::Watch {
+        clear_badge(app);
+    }
     Ok(())
 }
 
@@ -163,7 +169,7 @@ pub fn push_denylist(denylist: Vec<String>) {
 /// search over the full vault.
 pub async fn pending(state: &AppState) -> AgateResult<Option<AutofillPending>> {
     let (token, context) = {
-        let shared = state.autofill.lock().unwrap_or_else(|e| e.into_inner());
+        let shared = state.autofill.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         match &shared.pending {
             Some(p) => (p.token.clone(), p.context.clone()),
             None => return Ok(None),
@@ -199,7 +205,7 @@ pub async fn fill(
     // live detection. The field kind decides what we type: a password box gets the
     // password, a username/email box gets the username. The context drives recency.
     let (hwnd, field, context) = {
-        let shared = state.autofill.lock().unwrap_or_else(|e| e.into_inner());
+        let shared = state.autofill.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         match &shared.pending {
             Some(p) if p.token == token => (p.hwnd, p.context.field, p.context.clone()),
             _ => {
@@ -226,7 +232,7 @@ pub async fn fill(
     // username and (tab →) the password, and the live focused control is re-checked
     // at inject time, so we pass all three regardless of `field` and let the
     // injector pick. Secrets stay in `Zeroizing`; the username isn't secret.
-    let has_totp = login.totp.as_deref().map(|t| !t.is_empty()).unwrap_or(false);
+    let has_totp = login.totp.as_deref().is_some_and(|t| !t.is_empty());
     let username = login.username;
     let password = login.password.map(Zeroizing::new);
 
@@ -305,7 +311,7 @@ pub fn clear_pending_for(app: &tauri::AppHandle) {
 pub(crate) fn dismiss_popup_if_pending(app: &tauri::AppHandle) {
     let had_pending = {
         let state = app.state::<AppState>();
-        let mut shared = state.autofill.lock().unwrap_or_else(|e| e.into_inner());
+        let mut shared = state.autofill.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let had = shared.pending.is_some();
         shared.pending = None;
         had
@@ -318,7 +324,35 @@ pub(crate) fn dismiss_popup_if_pending(app: &tauri::AppHandle) {
 }
 
 fn clear_pending(state: &AppState) {
-    state.autofill.lock().unwrap_or_else(|e| e.into_inner()).pending = None;
+    state.autofill.lock().unwrap_or_else(std::sync::PoisonError::into_inner).pending = None;
+}
+
+/// Recompute the tray match-count badge for a freshly detected foreground context
+/// and push it onto the icon. Best-effort: a locked vault or a read error yields a
+/// zero count (the plain icon), never an error. Runs on the async runtime — the
+/// watcher hands it the already-scraped, `Send` context, because the UIA scrape
+/// itself can't leave the watcher thread.
+#[cfg(windows)]
+pub async fn refresh_badge(app: &tauri::AppHandle, state: &AppState, context: &AutofillContext) {
+    let count = match vault::autofill_index(state).await {
+        Ok(items) => {
+            matching::count_matches(&items, &matching::FillContext::from_context(context))
+        }
+        Err(e) => {
+            log::warn!("autofill: match-count badge index failed: {}", e.message);
+            0
+        }
+    };
+    crate::tray::set_match_badge(app, count);
+}
+
+/// Clear the tray match-count badge (restore the plain icon) and reset the
+/// watcher's badge-dedup state so the next foreground event recomputes from
+/// scratch. Called when the vault locks / logs out and when Watch mode turns off.
+pub fn clear_badge(app: &tauri::AppHandle) {
+    crate::tray::set_match_badge(app, 0);
+    #[cfg(windows)]
+    watcher::reset_badge_state();
 }
 
 /// Inject the chosen login's value(s) into the target window on a blocking thread
@@ -375,7 +409,7 @@ pub(crate) fn record_detection(app: &tauri::AppHandle, context: AutofillContext,
     );
     {
         let state = app.state::<AppState>();
-        let mut shared = state.autofill.lock().unwrap_or_else(|e| e.into_inner());
+        let mut shared = state.autofill.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         shared.pending = Some(PendingTarget { token, context, hwnd });
     }
     crate::tray::show_popup_near_tray(app);

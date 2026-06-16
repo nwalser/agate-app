@@ -50,14 +50,14 @@ fn parse_opt_id<T: DeserializeOwned>(s: &Option<String>) -> AgateResult<Option<T
 
 // reprompt is stored on CipherView as a repr-enum integer (None=0, Password=1).
 fn reprompt_value(flag: bool) -> Value {
-    json!(if flag { 1 } else { 0 })
+    json!(i32::from(flag))
 }
 
 fn build_login(i: &LoginInput) -> AgateResult<Value> {
     let uris: Vec<Value> = i
         .uris
         .iter()
-        .filter(|u| u.uri.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false))
+        .filter(|u| u.uri.as_deref().is_some_and(|s| !s.trim().is_empty()))
         .map(|u| json!({ "uri": u.uri, "match": u.match_type, "uriChecksum": null }))
         .collect();
     Ok(json!({
@@ -342,7 +342,7 @@ pub async fn associate_uri(
         |client| async move {
             let existing = decrypt_one(state, account_email, item_id).await?;
             let mut v = serde_json::to_value(&existing).map_err(build_err)?;
-            if v.get("login").map(Value::is_null).unwrap_or(true) {
+            if v.get("login").is_none_or(Value::is_null) {
                 return Err(AgateError::bad_request("Only logins can be remembered for autofill."));
             }
             let mut uris = v["login"]["uris"].as_array().cloned().unwrap_or_default();

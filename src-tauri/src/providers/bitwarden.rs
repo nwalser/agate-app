@@ -216,7 +216,7 @@ impl BitwardenConnection {
                         organization_name,
                         account_email: id.to_string(),
                         account_label: label.to_string(),
-                    })
+                    });
                 }
                 Err(e) => log::warn!("skipping collection that failed to decrypt: {e}"),
             }
@@ -435,7 +435,7 @@ async fn init_org_crypto(
     client: &PasswordManagerClient,
     orgs: Option<&Vec<ProfileOrganizationResponseModel>>,
 ) {
-    let req = org_init_request(orgs.map(Vec::as_slice).unwrap_or(&[]));
+    let req = org_init_request(orgs.map_or(&[], Vec::as_slice));
     if req.organization_keys.is_empty() {
         return; // personal-only account (or none parseable) — nothing to load
     }

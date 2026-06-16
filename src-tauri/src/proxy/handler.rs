@@ -64,7 +64,7 @@ fn handle(client: &reqwest::blocking::Client, upstream: &str, mut request: tiny_
         let resp = rb.send()?;
         let status = resp.status().as_u16();
         let mut out_headers: Vec<(String, String)> = Vec::new();
-        for (k, v) in resp.headers().iter() {
+        for (k, v) in resp.headers() {
             let kl = k.as_str();
             // reqwest already decoded the body; drop framing/encoding headers.
             if kl.eq_ignore_ascii_case("content-length")
@@ -87,7 +87,7 @@ fn handle(client: &reqwest::blocking::Client, upstream: &str, mut request: tiny_
         // on a sync error, to diagnose any future mismatch.
         if path.contains("/sync") {
             if let Ok(mut v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
-                *sync_shape_cell().lock().unwrap_or_else(|e| e.into_inner()) = Some(skeleton(&v, 8));
+                *sync_shape_cell().lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(skeleton(&v, 8));
                 strip_legacy_cipher_data(&mut v);
                 if let Ok(reserialized) = serde_json::to_vec(&v) {
                     bytes = reserialized;

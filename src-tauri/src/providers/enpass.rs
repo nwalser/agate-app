@@ -255,7 +255,7 @@ impl EnpassConnection {
             None => None,
         };
         let raw_key =
-            derive_key(&db_path, password, keyfile_bytes.as_deref().map(|v| v.as_slice()), info.kdf_iter)?;
+            derive_key(&db_path, password, keyfile_bytes.as_deref().map(std::vec::Vec::as_slice), info.kdf_iter)?;
 
         // Read the whole encrypted file (zeroized) and decode it to a plaintext
         // SQLite database in pure Rust — no SQLCipher/OpenSSL linkage.
@@ -563,7 +563,7 @@ impl VaultInfo {
 fn parse_kdf_iter(bytes: &[u8]) -> Option<u32> {
     let value: serde_json::Value = serde_json::from_slice(bytes).ok()?;
     let n = value.get("kdf_iter")?.as_u64()?;
-    if n == 0 || n > u32::MAX as u64 {
+    if n == 0 || n > u64::from(u32::MAX) {
         return None;
     }
     Some(n as u32)
@@ -1174,7 +1174,7 @@ fn read_folders(conn: &Connection) -> Vec<EnpassFolder> {
 /// `vault.enpassdb` file (or any file), use its parent directory.
 fn vault_folder(path: &Path) -> PathBuf {
     if path.is_file() || path.file_name().is_some_and(|n| n == VAULT_DB_FILE) {
-        path.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."))
+        path.parent().map_or_else(|| PathBuf::from("."), Path::to_path_buf)
     } else {
         path.to_path_buf()
     }

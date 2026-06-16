@@ -151,7 +151,7 @@ pub fn fill(hwnd: isize, detected: AutofillField, values: &FillValues) -> AgateR
                 match unsafe { focused_element() } {
                     Some(el) => {
                         let is_pw =
-                            unsafe { el.CurrentIsPassword() }.map(|b| b.as_bool()).unwrap_or(false);
+                            unsafe { el.CurrentIsPassword() }.map(windows::Win32::Foundation::BOOL::as_bool).unwrap_or(false);
                         if is_pw {
                             type_replacing(pw)?;
                         }
@@ -227,7 +227,7 @@ unsafe fn effective_field(
     let Some(el) = focused else {
         return detected;
     };
-    if el.CurrentIsPassword().map(|b| b.as_bool()).unwrap_or(false) {
+    if el.CurrentIsPassword().map(windows::Win32::Foundation::BOOL::as_bool).unwrap_or(false) {
         return AutofillField::Password;
     }
     let is_edit = el.CurrentControlType().map(|t| t == UIA_EditControlTypeId).unwrap_or(false);

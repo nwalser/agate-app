@@ -101,7 +101,7 @@ pub fn detect_focused(own_pid: u32, denylist: &[String]) -> Option<Detected> {
         // user/email/login. The classification rule is the testable
         // `matching::classify_field`; here we just feed it UIA signals. Metadata is
         // read only for non-password fields (never off a secret control).
-        let is_password = element.CurrentIsPassword().map(|b| b.as_bool()).unwrap_or(false);
+        let is_password = element.CurrentIsPassword().map(windows::Win32::Foundation::BOOL::as_bool).unwrap_or(false);
         let field = if is_password {
             AutofillField::Password
         } else {
@@ -159,11 +159,73 @@ pub fn detect_focused(own_pid: u32, denylist: &[String]) -> Option<Detected> {
     }
 }
 
+/// Identify the foreground app / website for the tray match-count badge — WITHOUT
+/// requiring a login field. Returns the same matchable context [`detect_focused`]
+/// builds (process name for a native app, OR the scraped page URL for a browser,
+/// plus the window title), so the badge ranks against the vault exactly as a real
+/// detection would. `None` for our own windows, a denied app, no foreground window,
+/// or when nothing matchable (no process and no URL) could be read.
+///
+/// Unlike [`detect_focused`] this reads no field contents — no `IsPassword`
+/// inspection, no typed username — only the foreground window's process / title
+/// and, for a browser, the focused document's URL. The `field` is irrelevant to
+/// the match count (it uses url / process / title only) and stays at its default.
+pub fn foreground_context(own_pid: u32, denylist: &[String]) -> Option<AutofillContext> {
+    unsafe {
+        let foreground = GetForegroundWindow();
+        if foreground.0.is_null() {
+            return None;
+        }
+        // Skip our own windows (the popup) so opening it doesn't read as "an app".
+        let mut fg_pid = 0u32;
+        GetWindowThreadProcessId(foreground, Some(&mut fg_pid as *mut u32));
+        if fg_pid == own_pid {
+            return None;
+        }
+
+        // The user's "never offer here" list, checked against the REAL process.
+        let raw_process = process_name(foreground);
+        if let Some(p) = raw_process.as_deref() {
+            if super::matching::is_denied(p, denylist) {
+                return None;
+            }
+        }
+
+        // A browser (or the shared WebView2 runtime) hosts many sites under one
+        // process, so the page URL is the real identity — scrape it from the focused
+        // document and suppress the process name. Native apps keep their process.
+        let (process_for_match, url) =
+            if raw_process.as_deref().is_some_and(super::matching::is_shared_host_process) {
+                let url = automation().and_then(|a| {
+                    let element = a.GetFocusedElement().ok()?;
+                    document_url(&a, &element)
+                });
+                (None, url)
+            } else {
+                (raw_process, None)
+            };
+
+        // Nothing to rank against (no process, no URL) → no badge.
+        if process_for_match.is_none() && url.is_none() {
+            return None;
+        }
+
+        Some(AutofillContext {
+            field: AutofillField::default(),
+            process_name: process_for_match,
+            window_title: window_title(foreground),
+            url,
+            associate_uri: None,
+            typed_username: None,
+        })
+    }
+}
+
 /// Read a non-secret edit control's current text via its Value pattern (trimmed,
 /// None when empty / unavailable). Guards `IsPassword` so a secret value is never
 /// read — defence in depth, since callers only pass non-password fields.
 unsafe fn element_value(element: &IUIAutomationElement) -> Option<String> {
-    if element.CurrentIsPassword().map(|b| b.as_bool()).unwrap_or(false) {
+    if element.CurrentIsPassword().map(windows::Win32::Foundation::BOOL::as_bool).unwrap_or(false) {
         return None;
     }
     let pattern = element.GetCurrentPattern(UIA_ValuePatternId).ok()?;
@@ -205,7 +267,7 @@ unsafe fn nearby_username_value(
             break;
         }
         budget -= 1;
-        let is_password = node.CurrentIsPassword().map(|b| b.as_bool()).unwrap_or(false);
+        let is_password = node.CurrentIsPassword().map(windows::Win32::Foundation::BOOL::as_bool).unwrap_or(false);
         if !is_password {
             let is_edit =
                 node.CurrentControlType().map(|t| t == UIA_EditControlTypeId).unwrap_or(false);
@@ -303,5 +365,5 @@ unsafe fn process_name(hwnd: HWND) -> Option<String> {
     std::path::Path::new(&full)
         .file_stem()
         .and_then(|s| s.to_str())
-        .map(|s| s.to_ascii_lowercase())
+        .map(str::to_ascii_lowercase)
 }

@@ -224,14 +224,7 @@ pub fn rank(
     ctx: &FillContext,
     preferred: Option<(&str, &str)>,
 ) -> Vec<AutofillCandidate> {
-    let url_host = ctx.url.as_deref().and_then(host_of);
-    let process = ctx.process_name.as_deref().map(normalize);
-    // A real URL is authoritative. In a browser/webview the window title is arbitrary
-    // PAGE text (an article that merely mentions a brand), so when a URL is present we
-    // match on it ALONE and never let the title surface a login by name. The title is
-    // a signal only when no URL is available — a native app, where it is app chrome.
-    let title =
-        if ctx.url.is_some() { None } else { ctx.window_title.as_deref().map(normalize) };
+    let (url_host, process, title) = prepared_signals(ctx);
 
     let mut scored: Vec<(u32, &MatchItem)> = items
         .iter()
@@ -262,6 +255,32 @@ pub fn rank(
             score,
         })
         .collect()
+}
+
+/// Count how many of `items` match `ctx` at all (positive score). Unlike [`rank`]
+/// this is uncapped and allocates nothing — it feeds the tray match-count badge,
+/// which wants the true total (incl. past [`MAX_CANDIDATES`]), not a ranked list.
+// The only non-test caller (`autofill::refresh_badge`) is Windows-only; keep the
+// pure fn compiled + tested everywhere, just don't warn where nothing calls it.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn count_matches(items: &[MatchItem], ctx: &FillContext) -> usize {
+    let (url_host, process, title) = prepared_signals(ctx);
+    items
+        .iter()
+        .filter(|it| score_item(it, url_host.as_deref(), process.as_deref(), title.as_deref()) > 0)
+        .count()
+}
+
+/// Prepare the normalized matching signals shared by [`rank`] and [`count_matches`].
+/// A real URL is authoritative: in a browser/webview the window title is arbitrary
+/// PAGE text (an article that merely mentions a brand), so when a URL is present we
+/// match on it ALONE and never let the title surface a login by name. The title is a
+/// signal only when no URL is available — a native app, where it is app chrome.
+fn prepared_signals(ctx: &FillContext) -> (Option<String>, Option<String>, Option<String>) {
+    let url_host = ctx.url.as_deref().and_then(host_of);
+    let process = ctx.process_name.as_deref().map(normalize);
+    let title = if ctx.url.is_some() { None } else { ctx.window_title.as_deref().map(normalize) };
+    (url_host, process, title)
 }
 
 /// The URI to show for a candidate: the first real (non-synthetic) URI, else the
@@ -324,7 +343,7 @@ fn score_item(
         if !t.is_empty() {
             let host_in_title = item.uris.iter().any(|u| {
                 host_of(u)
-                    .and_then(|h| h.split('.').next().map(|l| l.to_string()))
+                    .and_then(|h| h.split('.').next().map(std::string::ToString::to_string))
                     .is_some_and(|label| label.len() >= 3 && t.contains(&label))
             });
             if host_in_title {
@@ -423,7 +442,7 @@ fn host_of(raw: &str) -> Option<String> {
 /// TLD), so an exotic host still compares sanely. Used only for ranking — never to
 /// grant access.
 fn registrable_domain(host: &str) -> String {
-    psl::domain_str(host).map(str::to_string).unwrap_or_else(|| naive_base_domain(host))
+    psl::domain_str(host).map_or_else(|| naive_base_domain(host), str::to_string)
 }
 
 /// Last-two-labels fallback for hosts the PSL doesn't recognize.
@@ -452,7 +471,7 @@ mod tests {
             account_label: "Bitwarden".to_string(),
             name: name.to_string(),
             username: username.map(str::to_string),
-            uris: uris.iter().map(|u| u.to_string()).collect(),
+            uris: uris.iter().map(std::string::ToString::to_string).collect(),
             reprompt: false,
         }
     }
@@ -660,6 +679,37 @@ mod tests {
             (0..50).map(|i| mi(&format!("i{i}"), "GitHub", Some("u"), &["https://github.com"])).collect();
         let ctx = FillContext { url: Some("https://github.com".into()), ..Default::default() };
         assert_eq!(rank(&items, &ctx, None).len(), MAX_CANDIDATES);
+    }
+
+    // ── count_matches (tray badge) ───────────────────────────────────────────
+
+    #[test]
+    fn count_matches_counts_all_positive_scores_uncapped() {
+        // rank() caps at MAX_CANDIDATES; the badge count must be the true total.
+        let items: Vec<MatchItem> = (0..50)
+            .map(|i| mi(&format!("i{i}"), "GitHub", Some("u"), &["https://github.com"]))
+            .collect();
+        let ctx = FillContext { url: Some("https://github.com".into()), ..Default::default() };
+        assert_eq!(rank(&items, &ctx, None).len(), MAX_CANDIDATES);
+        assert_eq!(count_matches(&items, &ctx), 50, "count is uncapped");
+    }
+
+    #[test]
+    fn count_matches_is_zero_without_a_signal() {
+        let items = vec![mi("a", "GitHub", Some("u"), &["https://github.com"])];
+        let ctx = FillContext { window_title: Some("Untitled - Notepad".into()), ..Default::default() };
+        assert_eq!(count_matches(&items, &ctx), 0);
+    }
+
+    #[test]
+    fn count_matches_counts_only_matching_logins() {
+        let items = vec![
+            mi("a", "GitHub Personal", Some("me"), &["https://github.com"]),
+            mi("b", "GitHub Work", Some("work"), &["https://github.com"]),
+            mi("c", "Bank", Some("u"), &["https://bank.example"]),
+        ];
+        let ctx = FillContext { url: Some("https://github.com/login".into()), ..Default::default() };
+        assert_eq!(count_matches(&items, &ctx), 2, "two github logins, the bank excluded");
     }
 
     // ── i18n field hints (de / es) ───────────────────────────────────────────

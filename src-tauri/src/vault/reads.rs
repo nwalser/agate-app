@@ -35,9 +35,7 @@ pub(super) async fn any_or_throwaway(state: &AppState) -> PasswordManagerClient 
     session
         .connections
         .values()
-        .find_map(LiveConnection::bitwarden)
-        .map(|b| b.client_handle())
-        .unwrap_or_else(|| PasswordManagerClient::new(None))
+        .find_map(LiveConnection::bitwarden).map_or_else(|| PasswordManagerClient::new(None), super::super::providers::bitwarden::BitwardenConnection::client_handle)
 }
 
 /// Snapshot of connection id → display label for the configured connections.
@@ -105,7 +103,7 @@ pub async fn sync(state: &AppState, force: bool) -> AgateResult<()> {
         // KeePass "sync" = re-read the database from disk (file I/O + KDF,
         // blocking — block_in_place keeps the runtime healthy; the session
         // lock is held, which is fine for a local file read).
-        for (id, conn) in session.connections.iter_mut() {
+        for (id, conn) in &mut session.connections {
             if let Some(k) = conn.keepass_mut() {
                 match tokio::task::block_in_place(|| k.reload()) {
                     Ok(()) => any_ok = true,
@@ -134,7 +132,7 @@ pub async fn list_items(state: &AppState) -> AgateResult<Vec<VaultItem>> {
     let labels = label_map(state).await;
     let session = state.session.lock().await;
     let mut items = Vec::new();
-    for (id, conn) in session.connections.iter() {
+    for (id, conn) in &session.connections {
         items.extend(conn.list_items(id, &label_for(&labels, id)));
     }
     Ok(items)
@@ -148,7 +146,7 @@ pub async fn autofill_index(state: &AppState) -> AgateResult<Vec<crate::autofill
     let labels = label_map(state).await;
     let session = state.session.lock().await;
     let mut out = Vec::new();
-    for (id, conn) in session.connections.iter() {
+    for (id, conn) in &session.connections {
         out.extend(conn.autofill_entries(id, &label_for(&labels, id)));
     }
     Ok(out)
@@ -229,7 +227,7 @@ pub async fn list_folders(state: &AppState) -> AgateResult<Vec<Folder>> {
     let labels = label_map(state).await;
     let session = state.session.lock().await;
     let mut out = Vec::new();
-    for (id, conn) in session.connections.iter() {
+    for (id, conn) in &session.connections {
         out.extend(conn.list_folders(id, &label_for(&labels, id)));
     }
     Ok(out)
@@ -241,7 +239,7 @@ pub async fn list_collections(state: &AppState) -> AgateResult<Vec<Collection>> 
     let labels = label_map(state).await;
     let session = state.session.lock().await;
     let mut out = Vec::new();
-    for (id, conn) in session.connections.iter() {
+    for (id, conn) in &session.connections {
         out.extend(conn.list_collections(id, &label_for(&labels, id)));
     }
     Ok(out)

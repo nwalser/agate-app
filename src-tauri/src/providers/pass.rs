@@ -513,8 +513,7 @@ impl DecryptionHelper for DecryptHelper<'_> {
             for pkesk in pkesks {
                 let decrypted = pkesk
                     .decrypt(&mut keypair, sym_algo)
-                    .map(|(algo, session_key)| decrypt(algo, &session_key))
-                    .unwrap_or(false);
+                    .is_some_and(|(algo, session_key)| decrypt(algo, &session_key));
                 if decrypted {
                     // sequoia 2.x's DecryptionHelper returns the Cert that
                     // decrypted (was a Fingerprint in 1.x). It is used only to
@@ -634,10 +633,10 @@ impl ParsedEntry {
         }
 
         // Trim leading/trailing blank note lines, keep interior structure.
-        while note_lines.first().map(|l| l.trim().is_empty()).unwrap_or(false) {
+        while note_lines.first().is_some_and(|l| l.trim().is_empty()) {
             note_lines.remove(0);
         }
-        while note_lines.last().map(|l| l.trim().is_empty()).unwrap_or(false) {
+        while note_lines.last().is_some_and(|l| l.trim().is_empty()) {
             note_lines.pop();
         }
         let notes = (!note_lines.is_empty()).then(|| note_lines.join("\n"));
@@ -727,9 +726,7 @@ fn file_times(path: &Path) -> (String, String) {
         Err(_) => return (epoch.clone(), epoch),
     };
     let to_rfc = |t: std::io::Result<std::time::SystemTime>| {
-        t.ok()
-            .map(|st| chrono::DateTime::<Utc>::from(st).to_rfc3339())
-            .unwrap_or_else(|| chrono::DateTime::<Utc>::from(std::time::UNIX_EPOCH).to_rfc3339())
+        t.ok().map_or_else(|| chrono::DateTime::<Utc>::from(std::time::UNIX_EPOCH).to_rfc3339(), |st| chrono::DateTime::<Utc>::from(st).to_rfc3339())
     };
     let creation = to_rfc(meta.created());
     let revision = to_rfc(meta.modified());
