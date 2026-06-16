@@ -6,6 +6,7 @@
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 import globals from 'globals';
+import solid from 'eslint-plugin-solid/configs/typescript';
 
 export default tseslint.config(
   {
@@ -61,4 +62,8 @@ export default tseslint.config(
       ],
     },
   },
+  // SolidJS reactivity/JSX correctness (e.g. losing reactivity by destructuring
+  // props, innerHTML, returning multiple times from a component). Scoped to src so
+  // it reuses the type-aware parser configured above.
+  { files: ['src/**/*.{ts,tsx}'], ...solid },
 );
