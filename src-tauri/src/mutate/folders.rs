@@ -63,25 +63,30 @@ pub async fn create_folder(state: &AppState, account_email: &str, name: String) 
     if name.trim().is_empty() {
         return Err(AgateError::bad_request("Folder name is required."));
     }
-    if let super::WriteRoute::Keepass = super::route_for(state, account_email).await? {
-        // The provider returns the new group's id; stamp the connection here
-        // (it doesn't know its own id/label, same as the Bitwarden path).
-        let folder = super::keepass_write(state, account_email, |k| k.create_folder(&name)).await?;
-        return Ok(Folder {
-            id: folder.id,
-            name: folder.name,
-            account_email: account_email.to_string(),
-            account_label: account_label(state, account_email).await,
-        });
+    match super::route_for(state, account_email).await? {
+        super::WriteRoute::Keepass => {
+            // The provider returns the new group's id; stamp the connection here
+            // (it doesn't know its own id/label, same as the Bitwarden path).
+            let folder =
+                super::keepass_write(state, account_email, |k| k.create_folder(&name)).await?;
+            Ok(Folder {
+                id: folder.id,
+                name: folder.name,
+                account_email: account_email.to_string(),
+                account_label: account_label(state, account_email).await,
+            })
+        }
+        super::WriteRoute::Bitwarden => {
+            let client = client_for(state, account_email).await?;
+            let id = push_folder(&client, None, &name).await?;
+            Ok(Folder {
+                id,
+                name,
+                account_email: account_email.to_string(),
+                account_label: account_label(state, account_email).await,
+            })
+        }
     }
-    let client = client_for(state, account_email).await?;
-    let id = push_folder(&client, None, &name).await?;
-    Ok(Folder {
-        id,
-        name,
-        account_email: account_email.to_string(),
-        account_label: account_label(state, account_email).await,
-    })
 }
 
 /// Delete a single folder entity in one account. The server clears the folder
@@ -94,19 +99,23 @@ pub async fn create_folder(state: &AppState, account_email: &str, name: String) 
 /// way `encrypt_and_push` reaches `ciphers_api()`. The SDK's local folder repo
 /// goes stale after this raw delete; the post-mutation re-sync refreshes it.
 pub async fn delete_folder(state: &AppState, account_email: &str, id: &str) -> AgateResult<()> {
-    if let super::WriteRoute::Keepass = super::route_for(state, account_email).await? {
-        return super::keepass_write(state, account_email, |k| k.delete_folder(id)).await;
+    match super::route_for(state, account_email).await? {
+        super::WriteRoute::Keepass => {
+            super::keepass_write(state, account_email, |k| k.delete_folder(id)).await
+        }
+        super::WriteRoute::Bitwarden => {
+            // Validate the id shape before touching the network.
+            let _: FolderId = parse_id(id)?;
+            let client = client_for(state, account_email).await?;
+            let api = client.0.internal.get_api_configurations();
+            api.api_client
+                .folders_api()
+                .delete(id)
+                .await
+                .map_err(|e| op_err(ErrorKind::Network, "Delete folder failed", e))?;
+            Ok(())
+        }
     }
-    // Validate the id shape before touching the network.
-    let _: FolderId = parse_id(id)?;
-    let client = client_for(state, account_email).await?;
-    let api = client.0.internal.get_api_configurations();
-    api.api_client
-        .folders_api()
-        .delete(id)
-        .await
-        .map_err(|e| op_err(ErrorKind::Network, "Delete folder failed", e))?;
-    Ok(())
 }
 
 /// Rename an existing folder in one account.
@@ -114,24 +123,28 @@ pub async fn rename_folder(state: &AppState, account_email: &str, id: &str, name
     if name.trim().is_empty() {
         return Err(AgateError::bad_request("Folder name is required."));
     }
-    if let super::WriteRoute::Keepass = super::route_for(state, account_email).await? {
-        super::keepass_write(state, account_email, |k| k.rename_folder(id, &name)).await?;
-        return Ok(Folder {
-            id: Some(id.to_string()),
-            name,
-            account_email: account_email.to_string(),
-            account_label: account_label(state, account_email).await,
-        });
+    match super::route_for(state, account_email).await? {
+        super::WriteRoute::Keepass => {
+            super::keepass_write(state, account_email, |k| k.rename_folder(id, &name)).await?;
+            Ok(Folder {
+                id: Some(id.to_string()),
+                name,
+                account_email: account_email.to_string(),
+                account_label: account_label(state, account_email).await,
+            })
+        }
+        super::WriteRoute::Bitwarden => {
+            // Validate the id shape before touching the network.
+            let _: FolderId = parse_id(id)?;
+            let client = client_for(state, account_email).await?;
+            push_folder(&client, Some(id), &name).await?;
+            Ok(Folder {
+                // A rename keeps the same id; echo the caller's (the response repeats it).
+                id: Some(id.to_string()),
+                name,
+                account_email: account_email.to_string(),
+                account_label: account_label(state, account_email).await,
+            })
+        }
     }
-    // Validate the id shape before touching the network.
-    let _: FolderId = parse_id(id)?;
-    let client = client_for(state, account_email).await?;
-    push_folder(&client, Some(id), &name).await?;
-    Ok(Folder {
-        // A rename keeps the same id; echo the caller's (the response repeats it).
-        id: Some(id.to_string()),
-        name,
-        account_email: account_email.to_string(),
-        account_label: account_label(state, account_email).await,
-    })
 }

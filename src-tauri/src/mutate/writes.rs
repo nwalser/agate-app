@@ -25,7 +25,7 @@ use serde_json::{json, Value};
 use crate::dto::{CardInput, IdentityInput, ItemInput, ItemType, LoginInput, SshKeyInput};
 use crate::error::{AgateError, AgateResult, ErrorKind};
 use crate::state::AppState;
-use crate::vault::{client_for, decrypt_one};
+use crate::vault::decrypt_one;
 
 pub(super) fn op_err(kind: ErrorKind, what: &str, e: impl std::fmt::Display) -> AgateError {
     AgateError::new(kind, format!("{what}: {e}"))
@@ -276,44 +276,51 @@ pub async fn save_item(state: &AppState, account_email: &str, input: ItemInput) 
     if input.name.trim().is_empty() {
         return Err(AgateError::bad_request("Name is required."));
     }
-    if let super::WriteRoute::Keepass = super::route_for(state, account_email).await? {
-        return super::keepass_write(state, account_email, |k| k.save_item(&input)).await;
-    }
-    let client = client_for(state, account_email).await?;
+    let input = &input;
+    super::dispatch_write(
+        state,
+        account_email,
+        |client| async move {
+            match &input.id {
+                None => {
+                    let push = create_push(input)?;
+                    let view: CipherView =
+                        serde_json::from_value(create_view_json(input)?).map_err(build_err)?;
+                    encrypt_and_push(&client, view, push).await
+                }
+                Some(id) => {
+                    let existing = decrypt_one(state, account_email, id).await?;
+                    let mut v = serde_json::to_value(&existing).map_err(build_err)?;
+                    let prev_login = v.get("login").cloned();
+                    v["name"] = json!(input.name);
+                    v["notes"] = json!(input.notes);
+                    v["favorite"] = json!(input.favorite);
+                    v["folderId"] = json!(input.folder_id);
+                    v["reprompt"] = reprompt_value(input.reprompt);
+                    v["fields"] = json!(build_fields(input));
+                    set_type_payload(&mut v, input)?;
 
-    match &input.id {
-        None => {
-            let push = create_push(&input)?;
-            let view: CipherView = serde_json::from_value(create_view_json(&input)?).map_err(build_err)?;
-            encrypt_and_push(&client, view, push).await
-        }
-        Some(id) => {
-            let existing = decrypt_one(state, account_email, id).await?;
-            let mut v = serde_json::to_value(&existing).map_err(build_err)?;
-            let prev_login = v.get("login").cloned();
-            v["name"] = json!(input.name);
-            v["notes"] = json!(input.notes);
-            v["favorite"] = json!(input.favorite);
-            v["folderId"] = json!(input.folder_id);
-            v["reprompt"] = reprompt_value(input.reprompt);
-            v["fields"] = json!(build_fields(&input));
-            set_type_payload(&mut v, &input)?;
+                    // Restore login fields the editor form can't model (stored passkeys,
+                    // the password-revision date). NOT autofillOnPageLoad and NOT TOTP —
+                    // the editor now owns both, so `build_login` already wrote the user's
+                    // value (a cleared TOTP must stay cleared) and we must not clobber it.
+                    if matches!(input.item_type, ItemType::Login) {
+                        if let (Some(prev), Some(new_login)) =
+                            (prev_login.as_ref(), v.get_mut("login"))
+                        {
+                            restore_uneditable_login_fields(prev, new_login);
+                        }
+                    }
 
-            // Restore login fields the editor form can't model (stored passkeys,
-            // the password-revision date). NOT autofillOnPageLoad and NOT TOTP —
-            // the editor now owns both, so `build_login` already wrote the user's
-            // value (a cleared TOTP must stay cleared) and we must not clobber it.
-            if matches!(input.item_type, ItemType::Login) {
-                if let (Some(prev), Some(new_login)) = (prev_login.as_ref(), v.get_mut("login")) {
-                    restore_uneditable_login_fields(prev, new_login);
+                    let edited: CipherView = serde_json::from_value(v).map_err(build_err)?;
+                    let cipher_id = parse_id::<CipherId>(id)?;
+                    encrypt_and_push(&client, edited, Push::Edit(cipher_id)).await
                 }
             }
-
-            let edited: CipherView = serde_json::from_value(v).map_err(build_err)?;
-            let cipher_id = parse_id::<CipherId>(id)?;
-            encrypt_and_push(&client, edited, Push::Edit(cipher_id)).await
-        }
-    }
+        },
+        |k| k.save_item(input),
+    )
+    .await
 }
 
 /// Remember a login for an autofill target: append `uri` (a real site URL or a
@@ -329,29 +336,28 @@ pub async fn associate_uri(
     if uri.is_empty() {
         return Err(AgateError::bad_request("There's nothing to remember for this app."));
     }
-    if let super::WriteRoute::Keepass = super::route_for(state, account_email).await? {
-        let uri = uri.to_string();
-        return super::keepass_write(state, account_email, move |k| {
-            k.add_autofill_uri(item_id, &uri)
-        })
-        .await;
-    }
-
-    let client = client_for(state, account_email).await?;
-    let existing = decrypt_one(state, account_email, item_id).await?;
-    let mut v = serde_json::to_value(&existing).map_err(build_err)?;
-    if v.get("login").map(Value::is_null).unwrap_or(true) {
-        return Err(AgateError::bad_request("Only logins can be remembered for autofill."));
-    }
-    let mut uris = v["login"]["uris"].as_array().cloned().unwrap_or_default();
-    // Already associated → nothing to do (don't churn the cipher / revision date).
-    if uris.iter().any(|u| u.get("uri").and_then(Value::as_str) == Some(uri)) {
-        return Ok(());
-    }
-    uris.push(json!({ "uri": uri, "match": null }));
-    v["login"]["uris"] = json!(uris);
-    let view: CipherView = serde_json::from_value(v).map_err(build_err)?;
-    encrypt_and_push(&client, view, Push::Edit(parse_id::<CipherId>(item_id)?)).await
+    super::dispatch_write(
+        state,
+        account_email,
+        |client| async move {
+            let existing = decrypt_one(state, account_email, item_id).await?;
+            let mut v = serde_json::to_value(&existing).map_err(build_err)?;
+            if v.get("login").map(Value::is_null).unwrap_or(true) {
+                return Err(AgateError::bad_request("Only logins can be remembered for autofill."));
+            }
+            let mut uris = v["login"]["uris"].as_array().cloned().unwrap_or_default();
+            // Already associated → nothing to do (don't churn the cipher / revision date).
+            if uris.iter().any(|u| u.get("uri").and_then(Value::as_str) == Some(uri)) {
+                return Ok(());
+            }
+            uris.push(json!({ "uri": uri, "match": null }));
+            v["login"]["uris"] = json!(uris);
+            let view: CipherView = serde_json::from_value(v).map_err(build_err)?;
+            encrypt_and_push(&client, view, Push::Edit(parse_id::<CipherId>(item_id)?)).await
+        },
+        |k| k.add_autofill_uri(item_id, uri),
+    )
+    .await
 }
 
 /// Remove a stored passkey from an item, identified by its base64url credential
@@ -367,78 +373,91 @@ pub async fn remove_passkey(
     item_id: &str,
     credential_id: &str,
 ) -> AgateResult<()> {
-    if let super::WriteRoute::Keepass = super::route_for(state, account_email).await? {
-        let bytes = URL_SAFE_NO_PAD
-            .decode(credential_id)
-            .map_err(|_| AgateError::bad_request("invalid credential id"))?;
-        return super::keepass_write(state, account_email, move |k| k.remove_passkey(&bytes)).await;
-    }
+    super::dispatch_write(
+        state,
+        account_email,
+        |client| async move {
+            let mut view = decrypt_one(state, account_email, item_id).await?;
 
-    let client = client_for(state, account_email).await?;
-    let mut view = decrypt_one(state, account_email, item_id).await?;
+            // Find which FIDO2 credential matches, by its (plaintext) credential id.
+            let idx = {
+                let key_store = client.0.internal.get_key_store();
+                let mut ctx = key_store.context();
+                let creds = view
+                    .decrypt_fido2_credentials(&mut ctx)
+                    .map_err(|e| op_err(ErrorKind::Crypto, "read passkeys", e))?;
+                creds
+                    .iter()
+                    .position(|c| c.credential_id == credential_id)
+                    .ok_or_else(|| AgateError::bad_request("No such passkey."))?
+            };
 
-    // Find which FIDO2 credential matches, by its (plaintext) credential id.
-    let idx = {
-        let key_store = client.0.internal.get_key_store();
-        let mut ctx = key_store.context();
-        let creds = view
-            .decrypt_fido2_credentials(&mut ctx)
-            .map_err(|e| op_err(ErrorKind::Crypto, "read passkeys", e))?;
-        creds
-            .iter()
-            .position(|c| c.credential_id == credential_id)
-            .ok_or_else(|| AgateError::bad_request("No such passkey."))?
-    };
+            // Drop the encrypted credential at that index (order matches the views),
+            // then re-encrypt + save the cipher. Remaining credentials pass through.
+            let removed = view
+                .login
+                .as_mut()
+                .and_then(|l| l.fido2_credentials.as_mut())
+                .filter(|creds| idx < creds.len())
+                .map(|creds| {
+                    creds.remove(idx);
+                })
+                .is_some();
+            if !removed {
+                return Err(AgateError::bad_request("No such passkey."));
+            }
 
-    // Drop the encrypted credential at that index (order matches the views), then
-    // re-encrypt + save the cipher. The remaining credentials pass through as-is.
-    let removed = view
-        .login
-        .as_mut()
-        .and_then(|l| l.fido2_credentials.as_mut())
-        .filter(|creds| idx < creds.len())
-        .map(|creds| {
-            creds.remove(idx);
-        })
-        .is_some();
-    if !removed {
-        return Err(AgateError::bad_request("No such passkey."));
-    }
-
-    encrypt_and_push(&client, view, Push::Edit(parse_id::<CipherId>(item_id)?)).await
+            encrypt_and_push(&client, view, Push::Edit(parse_id::<CipherId>(item_id)?)).await
+        },
+        |k| {
+            let bytes = URL_SAFE_NO_PAD
+                .decode(credential_id)
+                .map_err(|_| AgateError::bad_request("invalid credential id"))?;
+            k.remove_passkey(&bytes)
+        },
+    )
+    .await
 }
 
 /// Duplicate an item into a new personal cipher named "… - Clone".
 pub async fn clone_item(state: &AppState, account_email: &str, id: &str) -> AgateResult<()> {
-    if let super::WriteRoute::Keepass = super::route_for(state, account_email).await? {
-        // The KeePass provider has no clone primitive; niche enough to defer.
-        return Err(AgateError::bad_request("Cloning is not supported for KeePass vaults yet."));
-    }
-    let client = client_for(state, account_email).await?;
-    let existing = decrypt_one(state, account_email, id).await?;
+    super::dispatch_write(
+        state,
+        account_email,
+        |client| async move {
+            let existing = decrypt_one(state, account_email, id).await?;
 
-    let mut v = serde_json::to_value(&existing).map_err(build_err)?;
-    v["id"] = Value::Null;
-    v["name"] = json!(format!("{} - Clone", existing.name));
-    v["organizationId"] = Value::Null;
-    v["collectionIds"] = json!([]);
-    v["key"] = Value::Null;
-    v["passwordHistory"] = Value::Null;
-    let view: CipherView = serde_json::from_value(v).map_err(build_err)?;
-    encrypt_and_push(&client, view, Push::Create).await
+            let mut v = serde_json::to_value(&existing).map_err(build_err)?;
+            v["id"] = Value::Null;
+            v["name"] = json!(format!("{} - Clone", existing.name));
+            v["organizationId"] = Value::Null;
+            v["collectionIds"] = json!([]);
+            v["key"] = Value::Null;
+            v["passwordHistory"] = Value::Null;
+            let view: CipherView = serde_json::from_value(v).map_err(build_err)?;
+            encrypt_and_push(&client, view, Push::Create).await
+        },
+        // The KeePass provider has no clone primitive; niche enough to defer.
+        |_k| Err(AgateError::bad_request("Cloning is not supported for KeePass vaults yet.")),
+    )
+    .await
 }
 
 /// Toggle favorite on one item (full edit so it works without edit-permission tricks).
 pub async fn set_favorite(state: &AppState, account_email: &str, id: &str, favorite: bool) -> AgateResult<()> {
-    if let super::WriteRoute::Keepass = super::route_for(state, account_email).await? {
-        return super::keepass_write(state, account_email, |k| k.set_favorite(id, favorite)).await;
-    }
-    let client = client_for(state, account_email).await?;
-    let existing = decrypt_one(state, account_email, id).await?;
-    let mut v = serde_json::to_value(&existing).map_err(build_err)?;
-    v["favorite"] = json!(favorite);
-    let view: CipherView = serde_json::from_value(v).map_err(build_err)?;
-    encrypt_and_push(&client, view, Push::Edit(parse_id::<CipherId>(id)?)).await
+    super::dispatch_write(
+        state,
+        account_email,
+        |client| async move {
+            let existing = decrypt_one(state, account_email, id).await?;
+            let mut v = serde_json::to_value(&existing).map_err(build_err)?;
+            v["favorite"] = json!(favorite);
+            let view: CipherView = serde_json::from_value(v).map_err(build_err)?;
+            encrypt_and_push(&client, view, Push::Edit(parse_id::<CipherId>(id)?)).await
+        },
+        |k| k.set_favorite(id, favorite),
+    )
+    .await
 }
 
 /// Move items to a folder within one account (None clears the folder).
@@ -448,22 +467,26 @@ pub async fn move_items(
     ids: Vec<String>,
     folder_id: Option<String>,
 ) -> AgateResult<()> {
-    if let super::WriteRoute::Keepass = super::route_for(state, account_email).await? {
-        return super::keepass_write(state, account_email, |k| {
-            k.move_items(&ids, folder_id.as_deref())
-        })
-        .await;
-    }
-    let client = client_for(state, account_email).await?;
-    let cipher_ids: Vec<CipherId> = ids.iter().map(|s| parse_id(s)).collect::<AgateResult<_>>()?;
-    let folder = parse_opt_id::<bitwarden_vault::FolderId>(&folder_id)?;
-    client
-        .vault()
-        .ciphers()
-        .move_many(cipher_ids, folder)
-        .await
-        .map_err(|e| op_err(ErrorKind::Network, "Move failed", e))?;
-    Ok(())
+    let ids = &ids;
+    let folder_id = &folder_id;
+    super::dispatch_write(
+        state,
+        account_email,
+        |client| async move {
+            let cipher_ids: Vec<CipherId> =
+                ids.iter().map(|s| parse_id(s)).collect::<AgateResult<_>>()?;
+            let folder = parse_opt_id::<bitwarden_vault::FolderId>(folder_id)?;
+            client
+                .vault()
+                .ciphers()
+                .move_many(cipher_ids, folder)
+                .await
+                .map_err(|e| op_err(ErrorKind::Network, "Move failed", e))?;
+            Ok(())
+        },
+        |k| k.move_items(ids, folder_id.as_deref()),
+    )
+    .await
 }
 
 /// Delete items in one account. `permanent` skips trash (hard delete).
@@ -473,35 +496,46 @@ pub async fn delete_items(
     ids: Vec<String>,
     permanent: bool,
 ) -> AgateResult<()> {
-    if let super::WriteRoute::Keepass = super::route_for(state, account_email).await? {
-        return super::keepass_write(state, account_email, |k| k.delete_items(&ids, permanent))
-            .await;
-    }
-    let client = client_for(state, account_email).await?;
-    let cipher_ids: Vec<CipherId> = ids.iter().map(|s| parse_id(s)).collect::<AgateResult<_>>()?;
-    let ciphers = client.vault().ciphers();
-    if permanent {
-        ciphers.delete_many(cipher_ids, None).await.map_err(|e| op_err(ErrorKind::Network, "Delete failed", e))?;
-    } else {
-        ciphers.soft_delete_many(cipher_ids, None).await.map_err(|e| op_err(ErrorKind::Network, "Delete failed", e))?;
-    }
-    Ok(())
+    let ids = &ids;
+    super::dispatch_write(
+        state,
+        account_email,
+        |client| async move {
+            let cipher_ids: Vec<CipherId> =
+                ids.iter().map(|s| parse_id(s)).collect::<AgateResult<_>>()?;
+            let ciphers = client.vault().ciphers();
+            if permanent {
+                ciphers.delete_many(cipher_ids, None).await.map_err(|e| op_err(ErrorKind::Network, "Delete failed", e))?;
+            } else {
+                ciphers.soft_delete_many(cipher_ids, None).await.map_err(|e| op_err(ErrorKind::Network, "Delete failed", e))?;
+            }
+            Ok(())
+        },
+        |k| k.delete_items(ids, permanent),
+    )
+    .await
 }
 
 /// Restore soft-deleted items from trash in one account.
 pub async fn restore_items(state: &AppState, account_email: &str, ids: Vec<String>) -> AgateResult<()> {
-    if let super::WriteRoute::Keepass = super::route_for(state, account_email).await? {
-        return super::keepass_write(state, account_email, |k| k.restore_items(&ids)).await;
-    }
-    let client = client_for(state, account_email).await?;
-    let cipher_ids: Vec<CipherId> = ids.iter().map(|s| parse_id(s)).collect::<AgateResult<_>>()?;
-    client
-        .vault()
-        .ciphers()
-        .restore_many(cipher_ids)
-        .await
-        .map_err(|e| op_err(ErrorKind::Network, "Restore failed", e))?;
-    Ok(())
+    let ids = &ids;
+    super::dispatch_write(
+        state,
+        account_email,
+        |client| async move {
+            let cipher_ids: Vec<CipherId> =
+                ids.iter().map(|s| parse_id(s)).collect::<AgateResult<_>>()?;
+            client
+                .vault()
+                .ciphers()
+                .restore_many(cipher_ids)
+                .await
+                .map_err(|e| op_err(ErrorKind::Network, "Restore failed", e))?;
+            Ok(())
+        },
+        |k| k.restore_items(ids),
+    )
+    .await
 }
 
 #[cfg(test)]

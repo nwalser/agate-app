@@ -21,6 +21,8 @@ pub use writes::{
 // Folder writes, also driven from `lib.rs`.
 pub use folders::{create_folder, delete_folder, rename_folder};
 
+use bitwarden_pm::PasswordManagerClient;
+
 use crate::dto::ConnectionKind;
 use crate::error::{AgateError, AgateResult};
 use crate::providers::KeepassConnection;
@@ -30,6 +32,31 @@ use crate::state::AppState;
 pub(crate) enum WriteRoute {
     Bitwarden,
     Keepass,
+}
+
+/// Route a write to its provider. BOTH provider bodies are REQUIRED, so unlike the
+/// old `if let WriteRoute::Keepass = .. { keepass } /* else fall through */` shape,
+/// a write can no longer silently run the Bitwarden path against a KeePass
+/// connection, and adding a writable provider is a compile error at every call
+/// site until its arm is added. Read-only providers are rejected once, in
+/// [`route_for`]. The Bitwarden closure is handed a fresh SDK client so the body
+/// keeps only its encode-and-push internals.
+pub(crate) async fn dispatch_write<R, Fut>(
+    state: &AppState,
+    account_email: &str,
+    bitwarden: impl FnOnce(PasswordManagerClient) -> Fut,
+    keepass: impl FnOnce(&mut KeepassConnection) -> AgateResult<R>,
+) -> AgateResult<R>
+where
+    Fut: std::future::Future<Output = AgateResult<R>>,
+{
+    match route_for(state, account_email).await? {
+        WriteRoute::Bitwarden => {
+            let client = crate::vault::client_for(state, account_email).await?;
+            bitwarden(client).await
+        }
+        WriteRoute::Keepass => keepass_write(state, account_email, keepass).await,
+    }
 }
 
 /// Resolve the write route for a connection (typed error when it isn't live).
