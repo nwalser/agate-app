@@ -37,6 +37,10 @@ jobs:
       - name: JS gate (typecheck + eslint + vitest)
         run: npm run check
 
+      # Coverage thresholds (see vitest.config.ts) — fails on a real regression.
+      - name: Coverage
+        run: npm run test:coverage
+
   # Rust gate — clippy + cargo test on every target OS so a #[cfg(windows)] /
   # #[cfg(target_os = "macos")] break fails the PR, not the release.
   rust:

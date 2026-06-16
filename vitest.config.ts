@@ -15,6 +15,29 @@ export default defineConfig({
     globals: true,
     setupFiles: ['./vitest.setup.ts'],
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text-summary', 'html', 'lcov'],
+      include: ['src/**/*.{ts,tsx}'],
+      // Exclude non-product code: tests + factories, generated IPC types, the
+      // type-only env shim, and the entry point (mostly wiring, not unit-tested).
+      exclude: [
+        'src/**/*.{test,spec}.{ts,tsx}',
+        'src/testing/**',
+        'src/lib/generated/**',
+        'src/vite-env.d.ts',
+        'src/main.tsx',
+      ],
+      // Seeded a few points below the current baseline (86% lines / 88% branches
+      // / 75% functions) so a real coverage regression fails CI without flaking on
+      // ordinary churn. Ratchet upward over time.
+      thresholds: {
+        lines: 80,
+        statements: 80,
+        branches: 80,
+        functions: 70,
+      },
+    },
   },
   resolve: {
     conditions: ['development', 'browser'],

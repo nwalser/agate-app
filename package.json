@@ -17,6 +17,7 @@
     "lint:rust": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
     "test:unit": "vitest run",
     "test:tray": "vitest run src/tray/TrayApp.integration.test.tsx",
+    "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "check": "npm run typecheck && npm run lint && npm run test:unit",
     "release": "node scripts/release.mjs"
@@ -27,6 +28,7 @@
     "@tauri-apps/cli": "^2",
     "@testing-library/jest-dom": "^6.6.3",
     "@types/node": "^22.10.2",
+    "@vitest/coverage-v8": "^2.1.9",
     "eslint": "^9.17.0",
     "globals": "^15.14.0",
     "jsdom": "^25.0.1",
