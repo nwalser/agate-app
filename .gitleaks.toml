@@ -1,0 +1,36 @@
+# gitleaks configuration for Agate.
+#
+# Agate is a password manager and its release pipeline juggles signing material
+# (TAURI_SIGNING_PRIVATE_KEY, the APPLE_* secrets, a base64 Windows PFX), so an
+# accidentally committed key or real credential must be caught at the PR
+# boundary, not discovered in history later. CI runs gitleaks on every PR.
+
+title = "Agate gitleaks config"
+
+[extend]
+# Start from gitleaks' built-in rule set (AWS keys, private keys, generic
+# high-entropy tokens, etc.) and only carve out known-safe paths below.
+useDefault = true
+
+[allowlist]
+description = "Build output, generated code, and test/example fixtures hold no real secrets."
+regexes = [
+  # Canonical RFC base32 example TOTP secrets used in otpauth:// test fixtures
+  # (providers/pass.rs and the former qrscan.rs). Public test vectors, not real
+  # credentials — gitleaks' generic-api-key heuristic trips on `secret=`.
+  '''JBSWY3DPEHPK3PXP''',
+  '''KRSXG5CTMVRXEZLU''',
+]
+paths = [
+  '''(^|/)node_modules/''',
+  '''(^|/)target/''',
+  '''(^|/)dist/''',
+  # Generated IPC types — derived from Rust, never hand-written secrets.
+  '''src/lib/generated/''',
+  # Shared test-data factories + every test file: example passwords/keys only.
+  '''src/testing/''',
+  '''.*\.test\.(ts|tsx)$''',
+  '''.*\.integration\.test\.(ts|tsx)$''',
+  # Locale strings.
+  '''src/locales/''',
+]

@@ -66,3 +66,17 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           manifest-path: ./src-tauri/Cargo.toml
+
+  # Secret scanning — a password manager must never ship a committed signing key
+  # or real credential. Scans the full git history on PRs (see .gitleaks.toml,
+  # which allowlists build output, generated code, and example test vectors).
+  secrets:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITLEAKS_CONFIG: .gitleaks.toml
