@@ -1,0 +1,251 @@
+# cargo-deny — supply-chain gate for the Rust dependency tree.
+#   cargo deny --manifest-path src-tauri/Cargo.toml check
+#
+# Why this matters here: the dependency tree IS part of the attack/compliance
+# surface. Agate pins an upstream-UNSTABLE git dependency on
+# bitwarden/sdk-internal (which dependabot.yml deliberately ignores, so the dep
+# most likely to ship a security fix is the one Dependabot never flags), pulls
+# in heavy crypto crates, and ships under a GPL-3.0-or-later obligation that
+# constrains what licenses its dependencies may carry.
+
+[graph]
+# Check the platforms Agate actually ships on (keeps Windows-only / Unix-only
+# trees in scope on every host that runs the gate).
+targets = [
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+]
+all-features = true
+
+[advisories]
+# RUSTSEC advisory database. In modern cargo-deny, vulnerabilities and
+# unmaintained crates are errors by default; yanked crates are escalated here.
+# Add a RUSTSEC id (with a justification) to `ignore` only after review.
+yanked = "deny"
+# Vulnerabilities stay hard-deny (the default). "unmaintained" is scoped to
+# workspace+direct deps only: the unmaintained advisories in this tree
+# (gtk-rs GTK3 bindings RUSTSEC-2024-041x, unic-ucd) are all TRANSITIVE through
+# Tauri's Linux webview stack — there is no upgrade and we cannot fix them, so
+# gating on them would just wedge CI. A directly-added unmaintained crate is
+# still caught.
+unmaintained = "workspace"
+ignore = [
+    # rsa: "Marvin Attack" RSA timing sidechannel. There is NO patched release of
+    # the `rsa` crate; it is pulled transitively by bitwarden-crypto and
+    # sequoia-openpgp, so it cannot be removed without dropping those. Exposure
+    # here is local decryption of the user's own data (no remote/network timing
+    # oracle), and upstream Bitwarden ships with the same unfixable advisory.
+    # Revisit when the `rsa` crate cuts a fixed release.
+    "RUSTSEC-2023-0071",
+]
+
+[licenses]
+# Allow only licenses compatible with redistributing a GPL-3.0-or-later app.
+# A crate whose license is missing here fails the gate — add it (with a glance
+# at compatibility) or pin a per-crate exception below.
+allow = [
+    "GPL-3.0-or-later",
+    "GPL-3.0-only",
+    "LGPL-3.0-or-later",
+    "LGPL-2.0-or-later",      # buffered-reader (sequoia) — GPL-compatible
+    "BSL-1.0",                # clipboard-win, error-code — Boost SL, permissive
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "MIT-0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "0BSD",                   # polkit-sys (Linux biometric) — BSD Zero Clause
+    "Unlicense",              # polkit, polkit-sys — public-domain dedication
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.8
+# Per-crate license exceptions (crates whose license is acceptable here but that
+# we do not want to allow tree-wide). Populated after the first `check` run.
+exceptions = []
+
+# Bitwarden SDK license clarifications are appended at the end of this file.
+
+[bans]
+# Duplicate versions bloat the tree and the audit surface. Warn (not deny) to
+# start — transitive duplicates are common and not all are individually fixable.
+multiple-versions = "warn"
+wildcards = "warn"
+allow = []
+deny = []
+
+[sources]
+# Crates must originate from crates.io or an explicitly allowed git source.
+# Pinning the Bitwarden SDK origin means a swapped-in fork fails the gate.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-git = [
+    "https://github.com/bitwarden/sdk-internal",
+    # Bitwarden's fork of the passkey-rs stack (FIDO2/WebAuthn authenticator core).
+    "https://github.com/bitwarden/passkey-rs",
+]
+
+# ── Bitwarden SDK license clarifications ─────────────────────────────────────
+# The SDK crates (git dep, all v3.0.0) ship no `license` field; cargo-deny finds
+# the workspace LICENSE at low confidence and reports them "unlicensed". The whole
+# bitwarden/sdk-internal repo IS GPL-3.0-only (compatible with our GPL-3.0-or-later).
+# Each is anchored to the shared LICENSE hash, so an SDK rev-bump that changes the
+# license re-trips the gate (forcing re-review).
+[[licenses.clarify]]
+crate = "bitwarden-api-api"
+expression = "GPL-3.0-only"
+license-files = [{ path = "../../LICENSE", hash = 0xa11c5ebb }]
+
+[[licenses.clarify]]
+crate = "bitwarden-api-base"
+expression = "GPL-3.0-only"
+license-files = [{ path = "../../LICENSE", hash = 0xa11c5ebb }]
+
+[[licenses.clarify]]
+crate = "bitwarden-api-identity"
+expression = "GPL-3.0-only"
+license-files = [{ path = "../../LICENSE", hash = 0xa11c5ebb }]
+
+[[licenses.clarify]]
+crate = "bitwarden-api-key-connector"
+expression = "GPL-3.0-only"
+license-files = [{ path = "../../LICENSE", hash = 0xa11c5ebb }]
+
+[[licenses.clarify]]
+crate = "bitwarden-auth"
+expression = "GPL-3.0-only"
+license-files = [{ path = "../../LICENSE", hash = 0xa11c5ebb }]
+
+[[licenses.clarify]]
+crate = "bitwarden-collections"
+expression = "GPL-3.0-only"
+license-files = [{ path = "../../LICENSE", hash = 0xa11c5ebb }]
+
+[[licenses.clarify]]
+crate = "bitwarden-core"
+expression = "GPL-3.0-only"
+license-files = [{ path = "../../LICENSE", hash = 0xa11c5ebb }]
+
+[[licenses.clarify]]
+crate = "bitwarden-core-macro"
+expression = "GPL-3.0-only"
+license-files = [{ path = "../../LICENSE", hash = 0xa11c5ebb }]
+
+[[licenses.clarify]]
+crate = "bitwarden-crypto"
+expression = "GPL-3.0-only"
+license-files = [{ path = "../../LICENSE", hash = 0xa11c5ebb }]
+
+[[licenses.clarify]]
+crate = "bitwarden-encoding"
+expression = "GPL-3.0-only"
+license-files = [{ path = "../../LICENSE", hash = 0xa11c5ebb }]
+
+[[licenses.clarify]]
+crate = "bitwarden-error"
+expression = "GPL-3.0-only"
+license-files = [{ path = "../../LICENSE", hash = 0xa11c5ebb }]
+
+[[licenses.clarify]]
+crate = "bitwarden-error-macro"
+expression = "GPL-3.0-only"
+license-files = [{ path = "../../LICENSE", hash = 0xa11c5ebb }]
+
+[[licenses.clarify]]
+crate = "bitwarden-exporters"
+expression = "GPL-3.0-only"
+license-files = [{ path = "../../LICENSE", hash = 0xa11c5ebb }]
+
+[[licenses.clarify]]
+crate = "bitwarden-fido"
+expression = "GPL-3.0-only"
+license-files = [{ path = "../../LICENSE", hash = 0xa11c5ebb }]
+
+[[licenses.clarify]]
+crate = "bitwarden-generators"
+expression = "GPL-3.0-only"
+license-files = [{ path = "../../LICENSE", hash = 0xa11c5ebb }]
+
+[[licenses.clarify]]
+crate = "bitwarden-organizations"
+expression = "GPL-3.0-only"
+license-files = [{ path = "../../LICENSE", hash = 0xa11c5ebb }]
+
+[[licenses.clarify]]
+crate = "bitwarden-pm"
+expression = "GPL-3.0-only"
+license-files = [{ path = "../../LICENSE", hash = 0xa11c5ebb }]
+
+[[licenses.clarify]]
+crate = "bitwarden-policies"
+expression = "GPL-3.0-only"
+license-files = [{ path = "../../LICENSE", hash = 0xa11c5ebb }]
+
+[[licenses.clarify]]
+crate = "bitwarden-send"
+expression = "GPL-3.0-only"
+license-files = [{ path = "../../LICENSE", hash = 0xa11c5ebb }]
+
+[[licenses.clarify]]
+crate = "bitwarden-server-communication-config"
+expression = "GPL-3.0-only"
+license-files = [{ path = "../../LICENSE", hash = 0xa11c5ebb }]
+
+[[licenses.clarify]]
+crate = "bitwarden-ssh"
+expression = "GPL-3.0-only"
+license-files = [{ path = "../../LICENSE", hash = 0xa11c5ebb }]
+
+[[licenses.clarify]]
+crate = "bitwarden-state"
+expression = "GPL-3.0-only"
+license-files = [{ path = "../../LICENSE", hash = 0xa11c5ebb }]
+
+[[licenses.clarify]]
+crate = "bitwarden-state-bridge-macro"
+expression = "GPL-3.0-only"
+license-files = [{ path = "../../LICENSE", hash = 0xa11c5ebb }]
+
+[[licenses.clarify]]
+crate = "bitwarden-sync"
+expression = "GPL-3.0-only"
+license-files = [{ path = "../../LICENSE", hash = 0xa11c5ebb }]
+
+[[licenses.clarify]]
+crate = "bitwarden-threading"
+expression = "GPL-3.0-only"
+license-files = [{ path = "../../LICENSE", hash = 0xa11c5ebb }]
+
+[[licenses.clarify]]
+crate = "bitwarden-unlock"
+expression = "GPL-3.0-only"
+license-files = [{ path = "../../LICENSE", hash = 0xa11c5ebb }]
+
+[[licenses.clarify]]
+crate = "bitwarden-user-crypto-management"
+expression = "GPL-3.0-only"
+license-files = [{ path = "../../LICENSE", hash = 0xa11c5ebb }]
+
+[[licenses.clarify]]
+crate = "bitwarden-uuid"
+expression = "GPL-3.0-only"
+license-files = [{ path = "../../LICENSE", hash = 0xa11c5ebb }]
+
+[[licenses.clarify]]
+crate = "bitwarden-uuid-macro"
+expression = "GPL-3.0-only"
+license-files = [{ path = "../../LICENSE", hash = 0xa11c5ebb }]
+
+[[licenses.clarify]]
+crate = "bitwarden-vault"
+expression = "GPL-3.0-only"
+license-files = [{ path = "../../LICENSE", hash = 0xa11c5ebb }]
+

@@ -54,3 +54,15 @@ jobs:
       # FAILS when the committed file is stale — the typegen drift gate.
       - name: Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
+
+  # Supply-chain gate: RUSTSEC advisories, license policy, banned/duplicate
+  # crates, and crate-source pinning (see src-tauri/deny.toml). Independent of
+  # the build — its own fast job, no webkit/node toolchain needed.
+  deny:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: ./src-tauri/Cargo.toml

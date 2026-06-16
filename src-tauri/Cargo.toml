@@ -115,7 +115,7 @@ tiny_http = "0.12"
 # RustCrypto backend (sequoia gates non-constant-time RustCrypto ops behind an
 # explicit opt-in); acceptable here (local decrypt of the user's own files, no
 # network-facing timing oracle). compression-deflate inflates real GPG output.
-sequoia-openpgp = { version = "1.22", default-features = false, features = [
+sequoia-openpgp = { version = "2", default-features = false, features = [
     "crypto-rust",
     "allow-experimental-crypto",
     "allow-variable-time-crypto",

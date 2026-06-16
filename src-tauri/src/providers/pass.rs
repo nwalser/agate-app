@@ -72,7 +72,7 @@ use sequoia_openpgp::parse::stream::{
 use sequoia_openpgp::parse::Parse;
 use sequoia_openpgp::policy::StandardPolicy;
 use sequoia_openpgp::types::SymmetricAlgorithm;
-use sequoia_openpgp::{Fingerprint, KeyHandle};
+use sequoia_openpgp::KeyHandle;
 use zeroize::Zeroizing;
 
 use crate::dto::{
@@ -494,16 +494,13 @@ impl VerificationHelper for DecryptHelper<'_> {
 }
 
 impl DecryptionHelper for DecryptHelper<'_> {
-    fn decrypt<D>(
+    fn decrypt(
         &mut self,
         pkesks: &[PKESK],
         _skesks: &[SKESK],
         sym_algo: Option<SymmetricAlgorithm>,
-        mut decrypt: D,
-    ) -> sequoia_openpgp::Result<Option<Fingerprint>>
-    where
-        D: FnMut(SymmetricAlgorithm, &SessionKey) -> bool,
-    {
+        decrypt: &mut dyn FnMut(Option<SymmetricAlgorithm>, &SessionKey) -> bool,
+    ) -> sequoia_openpgp::Result<Option<Cert>> {
         let policy = StandardPolicy::new();
         // Try every encryption-capable secret key on the cert against every
         // PKESK packet until one yields a session key the closure accepts.
@@ -525,7 +522,10 @@ impl DecryptionHelper for DecryptHelper<'_> {
                     .map(|(algo, session_key)| decrypt(algo, &session_key))
                     .unwrap_or(false);
                 if decrypted {
-                    return Ok(Some(self.cert.fingerprint()));
+                    // sequoia 2.x's DecryptionHelper returns the Cert that
+                    // decrypted (was a Fingerprint in 1.x). It is used only to
+                    // identify the recipient; we hold exactly one cert.
+                    return Ok(Some(self.cert.clone()));
                 }
             }
         }
@@ -748,7 +748,7 @@ mod tests {
     use std::io::Write;
 
     use sequoia_openpgp::cert::CertBuilder;
-    use sequoia_openpgp::serialize::stream::{Encryptor2, LiteralWriter, Message};
+    use sequoia_openpgp::serialize::stream::{Encryptor, LiteralWriter, Message};
     use sequoia_openpgp::serialize::MarshalInto;
 
     /// Build a test certificate (with secret key) usable for both encryption and
@@ -780,18 +780,19 @@ mod tests {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
 
         let policy = StandardPolicy::new();
+        // sequoia 2.x: Encryptor::for_recipients takes items that are
+        // Into<Recipient> — the ValidKeyAmalgamation itself, not ka.key().
         let recipients: Vec<_> = cert
             .keys()
             .with_policy(&policy, None)
             .supported()
             .for_transport_encryption()
             .for_storage_encryption()
-            .map(|ka| ka.key())
             .collect();
 
         let mut sink = Vec::new();
         let message = Message::new(&mut sink);
-        let message = Encryptor2::for_recipients(message, recipients)
+        let message = Encryptor::for_recipients(message, recipients)
             .build()
             .expect("encryptor");
         let mut writer = LiteralWriter::new(message).build().expect("literal writer");
