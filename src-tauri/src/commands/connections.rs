@@ -37,11 +37,15 @@ pub async fn add_connection(
     res
 }
 
+// A Tauri IPC command: each field is a separate invoke arg, so the count is
+// inherent to the command's payload rather than a refactor smell.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn update_connection(
     app: tauri::AppHandle,
     state: State<'_>,
     email: String,
+    name: Option<String>,
     server: ServerConfig,
     store_credentials: bool,
     password: Option<String>,
@@ -50,6 +54,7 @@ pub async fn update_connection(
     let res = connections::update_connection(
         &state,
         email,
+        normalize_name(name),
         server,
         store_credentials,
         password.map(Zeroizing::new),
@@ -60,6 +65,12 @@ pub async fn update_connection(
         super::emit_session_changed(&app);
     }
     res
+}
+
+/// A blank / whitespace-only display name from the form means "no custom name"
+/// (`None`), not an empty string — so the UI falls back to the derived label.
+fn normalize_name(name: Option<String>) -> Option<String> {
+    name.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
 }
 
 #[tauri::command]
@@ -233,6 +244,29 @@ pub async fn add_keepass_connection(
         Zeroizing::new(password),
         keyfile,
         store_credentials,
+    )
+    .await;
+    if res.is_ok() {
+        super::emit_session_changed(&app);
+    }
+    res
+}
+
+#[tauri::command]
+pub async fn update_keepass_connection(
+    app: tauri::AppHandle,
+    state: State<'_>,
+    path: String,
+    name: Option<String>,
+    store_credentials: bool,
+    password: Option<String>,
+) -> AgateResult<()> {
+    let res = connections::update_keepass_connection(
+        &state,
+        path,
+        normalize_name(name),
+        store_credentials,
+        password.map(Zeroizing::new),
     )
     .await;
     if res.is_ok() {

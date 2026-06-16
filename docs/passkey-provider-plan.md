@@ -51,17 +51,26 @@ Built + tested:
   behind `--features win-plugin-authenticator`, off by default) — `IPluginAuthenticator`
   (IID + methods + the `WEBAUTHN_PLUGIN_*` structs transcribed from Microsoft's
   public `microsoft/webauthn` headers) implemented via windows-rs `#[implement]`,
-  an `IClassFactory`, `CoRegisterClassObject`, and the `WebAuthNPlugin*` externs.
-  `MakeCredential`/`GetAssertion` bridge to `passkey::host` through a
-  `PluginCeremonyHost` seam the tray implements. **Type-checks (`cargo check
-  --features …`); NOT runtime-verified** (see below).
+  an `IClassFactory`, `CoRegisterClassObject`. The `WebAuthNPlugin*` exports are
+  resolved at **runtime** (`LoadLibrary`/`GetProcAddress`) — they're still
+  `EXPERIMENTAL_*`, so a static import wouldn't link and would make the app fail
+  to load on machines without them; `register()` returns a clear error when
+  absent. `MakeCredential`/`GetAssertion` bridge to `passkey::host` through a
+  `PluginCeremonyHost` seam the tray implements. **It builds into a real DLL
+  (`cargo build --features …`), and its COM glue is unit-tested in-process** (4
+  tests: vtable→impl→host→`CoTaskMemAlloc` response, bad request-type, null ptr,
+  lock status). What's NOT verified is the live OS flow (see below).
 - **145 Rust + 299 frontend tests pass, clippy `-D warnings` clean** (default and
   with the feature). KeePass remove is covered by a Rust unit *and* tray
   integration test; the CBOR host by a round-trip test.
 
 Not built yet / needs a real machine (clearly staged):
-- **Windows COM server: the un-verifiable last mile.** The Rust binding compiles,
-  but to actually function it needs, on a Win11 24H2+ box: (a) **MSIX packaging**
+- **Windows COM server: the un-verifiable last mile.** The Rust binding builds
+  into a DLL and its COM logic is unit-tested, but the live OS flow can't be
+  exercised by a headless agent — and on *this* box `WebAuthNPluginAddAuthenticator`
+  is absent (the SDK/OS ship only the `EXPERIMENTAL_*` form), so `register()`
+  returns `E_NOTIMPL` here. To actually function it needs, on a Win11 24H2+ box
+  with the (currently Insider) plugin API: (a) **MSIX packaging**
   that registers `AGATE_PLUGIN_CLSID` as a passkey provider; (b) the
   `PluginCeremonyHost` **tray implementation** (resolve the unlocked connection +
   show the destination chooser + supply the Hello UV + run `passkey::host` via

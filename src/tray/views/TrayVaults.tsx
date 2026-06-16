@@ -25,13 +25,20 @@ import {
   KeyRound,
   Pencil,
   Plus,
-  ShieldCheck,
+  Star,
   Terminal,
   Trash2,
   X,
 } from 'lucide-solid';
+import { Dropdown } from '../../components/Dropdown.tsx';
 import { ipc } from '../../lib/ipc.ts';
 import { t } from '../../lib/i18n.ts';
+import { connectionIdentity, connectionLabel, isWritableKind } from '../trayStore.ts';
+import {
+  clearDefaultAccount,
+  defaultAccount,
+  setDefaultAccount,
+} from '../../state/defaultAccount.ts';
 import type {
   ConnectionKind,
   ConnectionSummary,
@@ -73,10 +80,17 @@ function isLocalKind(kind: ConnectionKind): boolean {
   return kind === 'keepass' || kind === 'pass' || kind === 'enpass';
 }
 
-/** Row label: a path's final segment for file-based providers, else the id
- *  (account email for Bitwarden / Proton). */
-function connLabel(c: ConnectionSummary): string {
-  return isLocalKind(c.kind) ? fileNameOf(c.email) : c.email;
+// connLabel (name ?? identity) + connIdentity come from trayStore — THE single
+// source for naming a connection, shared with the new-item destination picker.
+const connLabel = connectionLabel;
+const connIdentity = connectionIdentity;
+
+/** Row sub-label: the provider/server, plus the underlying identity when a custom
+ *  name is shown above it (so what the connection points at stays visible). */
+function connSubLabel(c: ConnectionSummary): string {
+  const provider = c.kind === 'bitwarden' ? c.serverLabel : kindLabel(c.kind);
+  const name = c.name?.trim();
+  return name ? `${provider} · ${connIdentity(c)}` : provider;
 }
 
 /** Short provider name for the row sub-label (Bitwarden shows its server). */
@@ -153,6 +167,12 @@ export default function TrayVaults(props: { onBack: () => void }): JSX.Element {
     void refresh();
   };
 
+  // Pin / unpin a writable connection as the default destination for new items
+  // (the add form preselects it); clicking the active default clears it.
+  const isDefault = (c: ConnectionSummary) => defaultAccount() === c.email;
+  const toggleDefault = (c: ConnectionSummary) =>
+    isDefault(c) ? clearDefaultAccount() : setDefaultAccount(c.email);
+
   const needsTf = (c: ConnectionSummary) => !c.unlocked && tfPending().includes(c.email);
   const dotState = (c: ConnectionSummary) => (c.unlocked ? 'unlocked' : needsTf(c) ? 'tf' : 'locked');
   const dotTitle = (c: ConnectionSummary) =>
@@ -214,13 +234,29 @@ export default function TrayVaults(props: { onBack: () => void }): JSX.Element {
                         <span class="tv-name">{connLabel(conn)}</span>
                       </span>
                       <span class="tv-sub">
-                        {conn.kind === 'bitwarden' ? conn.serverLabel : kindLabel(conn.kind)} ·{' '}
+                        {connSubLabel(conn)} ·{' '}
                         {conn.storeCredentials
                           ? t('connections.badgeAutoUnlock')
                           : t('connections.badgeManual')}
                       </span>
                     </span>
                     <span class="tv-actions">
+                      {/* Pin this vault as the create-item default (writable
+                          providers only — read-only ones can't take a new item). */}
+                      <Show when={isWritableKind(conn.kind)}>
+                        <button
+                          classList={{ 'tv-default-on': isDefault(conn) }}
+                          aria-pressed={isDefault(conn)}
+                          title={
+                            isDefault(conn)
+                              ? t('trayVaults.defaultVaultActive')
+                              : t('trayVaults.setDefaultVault')
+                          }
+                          onClick={() => toggleDefault(conn)}
+                        >
+                          <Star size={14} strokeWidth={1.75} />
+                        </button>
+                      </Show>
                       {/* Stored-credential file-based rows unlock with the app —
                           no row-level unlock (no 2FA fallback to offer). */}
                       <Show
@@ -235,9 +271,10 @@ export default function TrayVaults(props: { onBack: () => void }): JSX.Element {
                           <KeyRound size={14} strokeWidth={1.75} />
                         </button>
                       </Show>
-                      {/* Edit (server / password change) is Bitwarden-only; a
-                          KeePass "edit" would be re-adding the database. */}
-                      <Show when={conn.kind === 'bitwarden'}>
+                      {/* Edit connection settings: Bitwarden (name / server /
+                          stored password) and KeePass (name / remembered
+                          password). Other (legacy) providers have no edit panel. */}
+                      <Show when={conn.kind === 'bitwarden' || conn.kind === 'keepass'}>
                         <button
                           title={t('connections.editConnection')}
                           onClick={() => togglePanel('edit', conn.email)}
@@ -274,11 +311,22 @@ export default function TrayVaults(props: { onBack: () => void }): JSX.Element {
                     </Show>
                   </Show>
                   <Show when={isOpen('edit', conn.email)}>
-                    <EditPanel
-                      conn={conn}
-                      onDone={closePanelAndRefresh}
-                      onClose={() => setPanel(null)}
-                    />
+                    <Show
+                      when={conn.kind === 'keepass'}
+                      fallback={
+                        <EditPanel
+                          conn={conn}
+                          onDone={closePanelAndRefresh}
+                          onClose={() => setPanel(null)}
+                        />
+                      }
+                    >
+                      <KeepassEditPanel
+                        conn={conn}
+                        onDone={closePanelAndRefresh}
+                        onClose={() => setPanel(null)}
+                      />
+                    </Show>
                   </Show>
                   <Show when={isOpen('remove', conn.email)}>
                     <RemoveConfirm
@@ -313,21 +361,18 @@ function TwoFactorFields(props: {
     <>
       <div class="tv-field">
         <label>{t('connections.provider')}</label>
-        <select
-          aria-label={t('connections.provider')}
+        <Dropdown
+          ariaLabel={t('connections.provider')}
           value={props.provider}
-          onChange={(e) => props.setProvider(e.currentTarget.value as TwoFactorKind)}
-        >
-          <For each={props.providers}>
-            {(p) => (
-              <option value={p}>
-                {p === 'authenticator'
-                  ? t('connections.providerAuthenticator')
-                  : t('connections.providerEmail')}
-              </option>
-            )}
-          </For>
-        </select>
+          onChange={(v) => props.setProvider(v)}
+          options={props.providers.map((p) => ({
+            value: p,
+            label:
+              p === 'authenticator'
+                ? t('connections.providerAuthenticator')
+                : t('connections.providerEmail'),
+          }))}
+        />
       </div>
       <Show when={props.provider === 'email'}>
         <button
@@ -365,15 +410,16 @@ function ServerFields(props: {
     <>
       <div class="tv-field">
         <label>{t('connections.server')}</label>
-        <select
-          aria-label={t('connections.server')}
+        <Dropdown
+          ariaLabel={t('connections.server')}
           value={props.region}
-          onChange={(e) => props.setRegion(e.currentTarget.value as Region)}
-        >
-          <option value="us">{t('connections.serverUs')}</option>
-          <option value="eu">{t('connections.serverEu')}</option>
-          <option value="selfHosted">{t('connections.serverSelfHosted')}</option>
-        </select>
+          onChange={(v) => props.setRegion(v)}
+          options={[
+            { value: 'us' as Region, label: t('connections.serverUs') },
+            { value: 'eu' as Region, label: t('connections.serverEu') },
+            { value: 'selfHosted' as Region, label: t('connections.serverSelfHosted') },
+          ]}
+        />
       </div>
       <Show when={props.region === 'selfHosted'}>
         <div class="tv-field">
@@ -387,6 +433,27 @@ function ServerFields(props: {
         </div>
       </Show>
     </>
+  );
+}
+
+// ── Display-name field (shared) ──────────────────────────────────────────────
+// Optional custom label for a connection. Blank falls back to the derived label
+// (the underlying identity, shown as the placeholder so the user sees the
+// default they'd get).
+
+function NameField(props: { name: string; setName: (v: string) => void; placeholder: string }) {
+  return (
+    <div class="tv-field">
+      <label>
+        {t('connections.displayName')} <span class="tv-hint">{t('connections.displayNameOptional')}</span>
+      </label>
+      <input
+        aria-label={t('connections.displayName')}
+        value={props.name}
+        placeholder={props.placeholder}
+        onInput={(e) => props.setName(e.currentTarget.value)}
+      />
+    </div>
   );
 }
 
@@ -659,6 +726,7 @@ function LocalUnlockPanel(props: {
 // the change forces a re-authentication (server change or turning storage on).
 
 function EditPanel(props: { conn: ConnectionSummary; onDone: () => void; onClose: () => void }) {
+  const [name, setName] = createSignal(props.conn.name ?? '');
   const [region, setRegion] = createSignal<Region>(regionOf(props.conn.server));
   const [baseUrl, setBaseUrl] = createSignal(baseUrlOf(props.conn.server));
   const [store, setStore] = createSignal(props.conn.storeCredentials);
@@ -684,7 +752,14 @@ function EditPanel(props: { conn: ConnectionSummary; onDone: () => void; onClose
         ? { provider: tfProvider(), token: tfToken().trim(), remember: false }
         : undefined;
       const pwd = password() ? password() : undefined;
-      const result = await ipc.updateConnection(props.conn.email, server(), store(), pwd, tf);
+      const result = await ipc.updateConnection(
+        props.conn.email,
+        name().trim() || null,
+        server(),
+        store(),
+        pwd,
+        tf,
+      );
       if (result.status === 'twoFactorRequired') {
         setTfProviders(result.providers);
         setTfProvider(result.providers[0] ?? 'authenticator');
@@ -746,6 +821,7 @@ function EditPanel(props: { conn: ConnectionSummary; onDone: () => void; onClose
           />
         }
       >
+        <NameField name={name()} setName={setName} placeholder={connIdentity(props.conn)} />
         <ServerFields
           region={region()}
           setRegion={setRegion}
@@ -793,6 +869,93 @@ function EditPanel(props: { conn: ConnectionSummary; onDone: () => void; onClose
   );
 }
 
+// ── Edit a KeePass connection ────────────────────────────────────────────────
+// Settings only (no server, no 2FA): the display name, and whether the database
+// password is remembered (sealed under the VMK so it auto-unlocks). Turning
+// "remember" ON needs the database password to verify + seal it; turning it OFF
+// (or a name-only change) needs nothing more.
+
+function KeepassEditPanel(props: {
+  conn: ConnectionSummary;
+  onDone: () => void;
+  onClose: () => void;
+}) {
+  const [name, setName] = createSignal(props.conn.name ?? '');
+  const [store, setStore] = createSignal(props.conn.storeCredentials);
+  const [password, setPassword] = createSignal('');
+  const [busy, setBusy] = createSignal(false);
+
+  // Only enabling "remember" needs the database password (to verify + seal it).
+  const enablingStore = () => store() && !props.conn.storeCredentials;
+
+  async function save() {
+    if (enablingStore() && !password()) {
+      pushToast('error', t('trayVaults.enterDbPassword'));
+      return;
+    }
+    setBusy(true);
+    try {
+      await ipc.updateKeepassConnection(
+        props.conn.email,
+        name().trim() || null,
+        store(),
+        enablingStore() ? password() : undefined,
+      );
+      pushToast('success', t('connections.updated'));
+      props.onDone();
+    } catch (err) {
+      toastError(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form
+      class="tv-panel"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void save();
+      }}
+    >
+      <div class="tv-panel-head">
+        <span class="tv-panel-title">{t('connections.editConnection')}</span>
+        <button
+          type="button"
+          class="ghost tv-icon"
+          title={t('common.close')}
+          onClick={() => props.onClose()}
+        >
+          <X size={14} strokeWidth={1.75} />
+        </button>
+      </div>
+
+      <NameField name={name()} setName={setName} placeholder={connIdentity(props.conn)} />
+      <label class="tv-check">
+        <input type="checkbox" checked={store()} onChange={(e) => setStore(e.currentTarget.checked)} />
+        <span>{t('trayVaults.rememberDbPassword')}</span>
+      </label>
+      <Show when={enablingStore()}>
+        <div class="tv-field">
+          <label>{t('trayVaults.dbPassword')}</label>
+          <input
+            aria-label={t('trayVaults.dbPassword')}
+            type="password"
+            autocomplete="current-password"
+            placeholder={t('connections.pwRequiredForChange')}
+            value={password()}
+            onInput={(e) => setPassword(e.currentTarget.value)}
+          />
+        </div>
+      </Show>
+
+      <button type="submit" class="primary tv-submit" disabled={busy()}>
+        {busy() ? t('connections.saving') : t('connections.saveChanges')}
+      </button>
+    </form>
+  );
+}
+
 // ── Remove a connection (inline confirm) ─────────────────────────────────────
 
 function RemoveConfirm(props: {
@@ -806,6 +969,9 @@ function RemoveConfirm(props: {
     setBusy(true);
     try {
       await ipc.removeConnection(props.conn.email);
+      // Drop a dangling default pin so the add form doesn't point at a vault
+      // that no longer exists.
+      if (defaultAccount() === props.conn.email) clearDefaultAccount();
       pushToast('success', t('connections.removed'));
       props.onDone();
     } catch (err) {
@@ -834,14 +1000,10 @@ function RemoveConfirm(props: {
 // Step 1: pick the source — a Bitwarden account or a KeePass database. The
 // header's back button steps back to the choice (or to the list from there).
 
-type AddSource = 'choose' | 'bitwarden' | 'keepass' | 'pass' | 'enpass' | 'proton';
-
-// Proton Pass is shown in the picker but not yet selectable: its login pipeline
-// (Proton's hardened SRP + the OpenPGP key hierarchy) isn't implemented, so the
-// source sits behind this flag with a "coming soon" badge. Flip to true once the
-// pipeline lands — then add the `proton` branch's real AddProtonForm + the
-// `add_proton_connection` ipc wrapper (the backend command is already wired).
-const PROTON_AVAILABLE: boolean = false;
+// Only Bitwarden and KeePass are offered for now. The other providers (pass,
+// Enpass, Proton) stay implemented in the backend + the unlock paths for any
+// already-configured connection, but are not selectable when adding a new vault.
+type AddSource = 'choose' | 'bitwarden' | 'keepass';
 
 function AddVault(props: { onDone: () => void; onCancel: () => void }) {
   const [source, setSource] = createSignal<AddSource>('choose');
@@ -869,27 +1031,6 @@ function AddVault(props: { onDone: () => void; onCancel: () => void }) {
             <FileKey size={16} strokeWidth={1.75} />
             <span>{t('trayVaults.sourceKeepass')}</span>
           </button>
-          <button type="button" class="tv-source-btn" onClick={() => setSource('pass')}>
-            <Terminal size={16} strokeWidth={1.75} />
-            <span>{t('trayVaults.sourcePass')}</span>
-          </button>
-          <button type="button" class="tv-source-btn" onClick={() => setSource('enpass')}>
-            <Database size={16} strokeWidth={1.75} />
-            <span>{t('trayVaults.sourceEnpass')}</span>
-          </button>
-          <button
-            type="button"
-            class="tv-source-btn"
-            disabled={!PROTON_AVAILABLE}
-            title={PROTON_AVAILABLE ? undefined : t('trayVaults.comingSoon')}
-            onClick={() => setSource('proton')}
-          >
-            <ShieldCheck size={16} strokeWidth={1.75} />
-            <span>{t('trayVaults.sourceProton')}</span>
-            <Show when={!PROTON_AVAILABLE}>
-              <span class="tv-soon">{t('trayVaults.comingSoon')}</span>
-            </Show>
-          </button>
         </div>
       </Show>
       <Show when={source() === 'bitwarden'}>
@@ -897,17 +1038,6 @@ function AddVault(props: { onDone: () => void; onCancel: () => void }) {
       </Show>
       <Show when={source() === 'keepass'}>
         <AddKeepassForm onDone={props.onDone} />
-      </Show>
-      <Show when={source() === 'pass'}>
-        <AddPassForm onDone={props.onDone} />
-      </Show>
-      <Show when={source() === 'enpass'}>
-        <AddEnpassForm onDone={props.onDone} />
-      </Show>
-      <Show when={source() === 'proton'}>
-        <div class="tv-form">
-          <p class="tv-note">{t('trayVaults.protonComingSoon')}</p>
-        </div>
       </Show>
     </>
   );
@@ -1266,259 +1396,6 @@ function AddKeepassForm(props: { onDone: () => void }) {
           : mode() === 'create'
             ? t('trayVaults.createKeepass')
             : t('trayVaults.addKeepass')}
-      </button>
-    </form>
-  );
-}
-
-// ── Add a `pass` store (the standard unix password store) ────────────────────
-// Local read-only flow, no 2FA: pick the store root folder, pick the exported
-// OpenPGP secret-key file, enter its passphrase (blank for an unencrypted key),
-// and choose whether to remember the passphrase (sealed under the VMK).
-
-function AddPassForm(props: { onDone: () => void }) {
-  const [storeRoot, setStoreRoot] = createSignal<string | null>(null);
-  const [keyFile, setKeyFile] = createSignal<string | null>(null);
-  const [passphrase, setPassphrase] = createSignal('');
-  const [storeCredentials, setStoreCredentials] = createSignal(true);
-  const [busy, setBusy] = createSignal(false);
-
-  async function pickStore() {
-    try {
-      const picked = await ipc.pickPassStore();
-      if (picked !== null) setStoreRoot(picked);
-    } catch (err) {
-      toastError(err);
-    }
-  }
-
-  async function pickKey() {
-    try {
-      const picked = await ipc.pickPassKeyfile();
-      if (picked !== null) setKeyFile(picked);
-    } catch (err) {
-      toastError(err);
-    }
-  }
-
-  async function add() {
-    const root = storeRoot();
-    const key = keyFile();
-    if (!root || !key) {
-      pushToast('error', t('trayVaults.selectStoreAndKey'));
-      return;
-    }
-    setBusy(true);
-    try {
-      await ipc.addPassConnection(root, key, passphrase(), storeCredentials());
-      pushToast('success', t('trayVaults.added'));
-      props.onDone();
-    } catch (err) {
-      toastError(err);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const storeLabel = () => {
-    const p = storeRoot();
-    return p === null ? t('trayVaults.chooseFolder') : fileNameOf(p);
-  };
-  const keyLabel = () => {
-    const k = keyFile();
-    return k === null ? t('trayVaults.chooseFile') : fileNameOf(k);
-  };
-
-  return (
-    <form
-      class="tv-form"
-      onSubmit={(e) => {
-        e.preventDefault();
-        void add();
-      }}
-    >
-      <p class="tv-note">{t('trayVaults.readOnly')}</p>
-      <div class="tv-field">
-        <label>{t('trayVaults.passStore')}</label>
-        <button
-          type="button"
-          class="tv-file-btn"
-          classList={{ placeholder: storeRoot() === null }}
-          disabled={busy()}
-          title={storeRoot() ?? undefined}
-          onClick={() => void pickStore()}
-        >
-          {storeLabel()}
-        </button>
-      </div>
-      <div class="tv-field">
-        <label>{t('trayVaults.passKeyfile')}</label>
-        <button
-          type="button"
-          class="tv-file-btn"
-          classList={{ placeholder: keyFile() === null }}
-          disabled={busy()}
-          title={keyFile() ?? undefined}
-          onClick={() => void pickKey()}
-        >
-          {keyLabel()}
-        </button>
-      </div>
-      <div class="tv-field">
-        <label>
-          {t('trayVaults.passPassphrase')}{' '}
-          <span class="tv-hint">{t('trayVaults.passPassphraseHint')}</span>
-        </label>
-        <input
-          aria-label={t('trayVaults.passPassphrase')}
-          type="password"
-          autocomplete="current-password"
-          value={passphrase()}
-          onInput={(e) => setPassphrase(e.currentTarget.value)}
-        />
-      </div>
-      <label class="tv-check">
-        <input
-          type="checkbox"
-          checked={storeCredentials()}
-          onChange={(e) => setStoreCredentials(e.currentTarget.checked)}
-        />
-        <span>{t('trayVaults.rememberPassphrase')}</span>
-      </label>
-      <button type="submit" class="primary tv-submit" disabled={busy()}>
-        {busy() ? t('onboarding.adding') : t('trayVaults.addPass')}
-      </button>
-    </form>
-  );
-}
-
-// ── Add an Enpass vault ──────────────────────────────────────────────────────
-// Local read-only flow, no 2FA: pick the `vault.enpassdb` file, enter the
-// master password, optionally pick a key file, and choose whether to remember
-// the password (sealed under the VMK).
-
-function AddEnpassForm(props: { onDone: () => void }) {
-  const [path, setPath] = createSignal<string | null>(null);
-  const [password, setPassword] = createSignal('');
-  const [keyfile, setKeyfile] = createSignal<string | null>(null);
-  const [storeCredentials, setStoreCredentials] = createSignal(true);
-  const [busy, setBusy] = createSignal(false);
-
-  async function pickVault() {
-    try {
-      const picked = await ipc.pickEnpassVault();
-      if (picked !== null) setPath(picked);
-    } catch (err) {
-      toastError(err);
-    }
-  }
-
-  async function pickKeyfile() {
-    try {
-      const picked = await ipc.pickKeepassKeyfile();
-      if (picked !== null) setKeyfile(picked);
-    } catch (err) {
-      toastError(err);
-    }
-  }
-
-  async function add() {
-    const p = path();
-    if (!p || !password()) {
-      pushToast('error', t('trayVaults.selectVaultAndPassword'));
-      return;
-    }
-    setBusy(true);
-    try {
-      await ipc.addEnpassConnection(p, password(), keyfile(), storeCredentials());
-      pushToast('success', t('trayVaults.added'));
-      props.onDone();
-    } catch (err) {
-      toastError(err);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const vaultLabel = () => {
-    const p = path();
-    return p === null ? t('trayVaults.chooseFile') : fileNameOf(p);
-  };
-  const keyfileLabel = () => {
-    const k = keyfile();
-    return k === null ? t('trayVaults.chooseFile') : fileNameOf(k);
-  };
-
-  return (
-    <form
-      class="tv-form"
-      onSubmit={(e) => {
-        e.preventDefault();
-        void add();
-      }}
-    >
-      <p class="tv-note">{t('trayVaults.readOnly')}</p>
-      <div class="tv-field">
-        <label>{t('trayVaults.enpassVault')}</label>
-        <button
-          type="button"
-          class="tv-file-btn"
-          classList={{ placeholder: path() === null }}
-          disabled={busy()}
-          title={path() ?? undefined}
-          onClick={() => void pickVault()}
-        >
-          {vaultLabel()}
-        </button>
-      </div>
-      <div class="tv-field">
-        <label>{t('trayVaults.dbPassword')}</label>
-        <input
-          aria-label={t('trayVaults.dbPassword')}
-          type="password"
-          autocomplete="current-password"
-          value={password()}
-          onInput={(e) => setPassword(e.currentTarget.value)}
-        />
-      </div>
-      <div class="tv-field">
-        <label>
-          {t('trayVaults.keyfile')} <span class="tv-hint">{t('trayVaults.keyfileOptional')}</span>
-        </label>
-        <div class="tv-file-row">
-          <button
-            type="button"
-            class="tv-file-btn"
-            classList={{ placeholder: keyfile() === null }}
-            disabled={busy()}
-            title={keyfile() ?? undefined}
-            onClick={() => void pickKeyfile()}
-          >
-            {keyfileLabel()}
-          </button>
-          <Show when={keyfile() !== null}>
-            <button
-              type="button"
-              class="ghost tv-icon"
-              title={t('trayVaults.clearKeyfile')}
-              disabled={busy()}
-              onClick={() => setKeyfile(null)}
-            >
-              <X size={14} strokeWidth={1.75} />
-            </button>
-          </Show>
-        </div>
-      </div>
-      <label class="tv-check">
-        <input
-          type="checkbox"
-          checked={storeCredentials()}
-          onChange={(e) => setStoreCredentials(e.currentTarget.checked)}
-        />
-        <span>{t('trayVaults.rememberDbPassword')}</span>
-      </label>
-      <button type="submit" class="primary tv-submit" disabled={busy()}>
-        {busy() ? t('onboarding.adding') : t('trayVaults.addEnpass')}
       </button>
     </form>
   );

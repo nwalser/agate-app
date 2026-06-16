@@ -26,6 +26,7 @@ pub async fn list_connections(state: &AppState) -> AgateResult<Vec<ConnectionSum
         .map(|a| ConnectionSummary {
             kind: a.kind,
             email: a.email.clone(),
+            name: a.name.clone(),
             server_label: a.label(),
             server: a.server.clone(),
             unlocked: live.contains(&a.email),
@@ -99,18 +100,21 @@ pub async fn add_connection(
     }
 }
 
-/// Edit an existing connection: change its server and/or whether its password is
-/// stored, optionally re-authenticating with a new master password.
+/// Edit an existing connection: change its display name and/or server and/or
+/// whether its password is stored, optionally re-authenticating with a new master
+/// password.
 ///
+/// * `name` is always applied (a non-secret rename never needs the password).
 /// * With a `password` (required when the server changes or when turning storage
 ///   on): re-logs-in, refreshes the live client, then seals the password (store) or
 ///   drops it (manual).
-/// * Without a `password`: only the storage flag may change. Turning storage *off*
-///   deletes the sealed password; turning it *on* without a password is rejected
-///   (we can't seal what we don't have).
+/// * Without a `password`: only the display name and storage flag may change.
+///   Turning storage *off* deletes the sealed password; turning it *on* without a
+///   password is rejected (we can't seal what we don't have).
 pub async fn update_connection(
     state: &AppState,
     email: String,
+    name: Option<String>,
     server: ServerConfig,
     store_credentials: bool,
     password: Option<Zeroizing<String>>,
@@ -151,7 +155,8 @@ pub async fn update_connection(
                 }
                 state
                     .update_config(|cfg| {
-                        cfg.upsert_account(ConnectionKind::Bitwarden, server.clone(), &email, store_credentials)
+                        cfg.upsert_account(ConnectionKind::Bitwarden, server.clone(), &email, store_credentials);
+                        cfg.set_account_name(&email, name.clone());
                     })
                     .await?;
                 {
@@ -184,7 +189,8 @@ pub async fn update_connection(
     // remove_connection for the ordering rationale.
     state
         .update_config(|cfg| {
-            cfg.upsert_account(existing.kind, existing.server.clone(), &email, store_credentials)
+            cfg.upsert_account(existing.kind, existing.server.clone(), &email, store_credentials);
+            cfg.set_account_name(&email, name.clone());
         })
         .await?;
     if !store_credentials {
@@ -345,6 +351,102 @@ pub async fn create_keepass_connection(
         session.connections.insert(path.clone(), crate::providers::LiveConnection::Keepass(conn));
         if session.active_email.is_none() {
             session.active_email = Some(path);
+        }
+    }
+    Ok(())
+}
+
+/// Edit a KeePass connection's settings: its display name and/or whether its
+/// database password is remembered (sealed under the VMK so it auto-unlocks).
+///
+/// * `name` is always applied (a non-secret rename never needs the password).
+/// * Turning "remember" ON requires the database `password`: it is verified by
+///   opening the file (with the recorded key file), sealed, and the live handle
+///   refreshed — same ordering/compensation as [`add_keepass_connection`].
+/// * Turning "remember" OFF drops the sealed password (no password needed); the
+///   live session stays unlocked for now.
+/// * A name-only change touches neither the keychain nor the file.
+pub async fn update_keepass_connection(
+    state: &AppState,
+    path: String,
+    name: Option<String>,
+    store_credentials: bool,
+    password: Option<Zeroizing<String>>,
+) -> AgateResult<()> {
+    let existing = state
+        .config
+        .lock()
+        .await
+        .account_for(&path)
+        .cloned()
+        .ok_or_else(|| AgateError::bad_request("No such connection."))?;
+    if existing.kind != ConnectionKind::Keepass {
+        return Err(AgateError::bad_request("Not a KeePass connection."));
+    }
+
+    let enabling = store_credentials && !existing.store_credentials;
+    let disabling = !store_credentials && existing.store_credentials;
+
+    // Enabling "remember": verify the password by opening the file, then seal it
+    // before recording the change; compensate the keychain if the config write
+    // rolls back, exactly like add_keepass_connection.
+    if enabling {
+        let pw = password
+            .ok_or_else(|| AgateError::bad_request("Enter the database password to remember it."))?;
+        let vmk = appunlock::current_vmk(state)
+            .await
+            .map_err(|_| AgateError::bad_request("Unlock the app first."))?;
+        let conn = open_keepass(path.clone(), pw.clone(), existing.keyfile.clone()).await?;
+        let stored = StoredConnection {
+            kind: ConnectionKind::Keepass,
+            server: ServerConfig::default(),
+            email: path.clone(),
+            master_password: (*pw).clone(),
+            path: Some(path.clone()),
+            keyfile: existing.keyfile.clone(),
+        };
+        appunlock::seal_connection(&vmk, &stored)?;
+        if let Err(e) = state
+            .update_config(|cfg| {
+                cfg.upsert_account_with_keyfile(
+                    ConnectionKind::Keepass,
+                    ServerConfig::default(),
+                    &path,
+                    true,
+                    existing.keyfile.clone(),
+                );
+                cfg.set_account_name(&path, name.clone());
+            })
+            .await
+        {
+            let _ = secrets::delete_cred(&path); // ignore: best-effort compensation
+            return Err(e);
+        }
+        let mut session = state.session.lock().await;
+        session.connections.insert(path.clone(), crate::providers::LiveConnection::Keepass(conn));
+        if session.active_email.is_none() {
+            session.active_email = Some(path);
+        }
+        return Ok(());
+    }
+
+    // Name-only or disabling: config transaction first (rollback-able), keychain
+    // delete after — see remove_connection for the ordering rationale.
+    state
+        .update_config(|cfg| {
+            cfg.upsert_account_with_keyfile(
+                ConnectionKind::Keepass,
+                ServerConfig::default(),
+                &path,
+                store_credentials,
+                existing.keyfile.clone(),
+            );
+            cfg.set_account_name(&path, name.clone());
+        })
+        .await?;
+    if disabling {
+        if let Err(e) = secrets::delete_cred(&path) {
+            log::error!("could not delete the stored credential after turning storage off: {}", e.message);
         }
     }
     Ok(())

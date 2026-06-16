@@ -6,11 +6,12 @@
 // DOM, asserting on what the user sees and on the IPC the backend received.
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@solidjs/testing-library';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import TrayVaults from './TrayVaults.tsx';
 import { t } from '../../lib/i18n.ts';
 import { makeConnection } from '../../testing/factories.ts';
+import { clearDefaultAccount, defaultAccount } from '../../state/defaultAccount.ts';
 import type { ConnectionSummary, LoginResult, ServerConfig } from '../../lib/types.ts';
 
 // ── Fake backend ─────────────────────────────────────────────────────────────
@@ -115,6 +116,10 @@ function makeBackend(initial: ConnectionSummary[]) {
   return { state, calls };
 }
 
+// The default-vault pin is a module-singleton signal — reset it between tests so
+// one test's pin never leaks into the next.
+beforeEach(() => clearDefaultAccount());
+
 afterEach(() => {
   cleanup();
   clearMocks();
@@ -186,9 +191,8 @@ describe('TrayVaults', () => {
 
     fireEvent.click(await screen.findByTitle(t('connections.unlockNow')));
     // Stored connections go straight to the code step — no master password.
-    fireEvent.change(screen.getByLabelText(t('connections.provider')), {
-      target: { value: 'email' },
-    });
+    fireEvent.click(screen.getByRole('combobox', { name: t('connections.provider') }));
+    fireEvent.click(await screen.findByRole('option', { name: t('connections.providerEmail') }));
     fireEvent.click(screen.getByText(t('connections.sendCodeToEmail')));
     await waitFor(() =>
       expect(calls.some((c) => c.cmd === 'send_connection_email_code')).toBe(true),
@@ -212,9 +216,8 @@ describe('TrayVaults', () => {
 
     fireEvent.click(await screen.findByTitle(t('trayVaults.addVault')));
     fireEvent.click(screen.getByText(t('trayVaults.sourceBitwarden')));
-    fireEvent.change(screen.getByLabelText(t('connections.server')), {
-      target: { value: 'selfHosted' },
-    });
+    fireEvent.click(screen.getByRole('combobox', { name: t('connections.server') }));
+    fireEvent.click(await screen.findByRole('option', { name: t('connections.serverSelfHosted') }));
     fireEvent.input(screen.getByLabelText(t('connections.serverUrl')), {
       target: { value: 'https://vault.example.com' },
     });
@@ -382,7 +385,7 @@ describe('TrayVaults', () => {
     expect(call?.args.password).toBe(MASTER_PW);
   });
 
-  it('offers no edit action on KeePass rows and no row unlock for stored ones', async () => {
+  it('offers edit on Bitwarden + KeePass rows and no row unlock for stored ones', async () => {
     makeBackend([
       makeConnection({ email: 'bw@x.com', unlocked: false, storeCredentials: false }),
       makeConnection({
@@ -401,8 +404,8 @@ describe('TrayVaults', () => {
     render(() => <TrayVaults onBack={() => {}} />);
 
     await screen.findByText('manual.kdbx');
-    // Edit (server/password change) is Bitwarden-only.
-    expect(screen.getAllByTitle(t('connections.editConnection'))).toHaveLength(1);
+    // Edit (name + settings) is offered on Bitwarden AND KeePass rows.
+    expect(screen.getAllByTitle(t('connections.editConnection'))).toHaveLength(3);
     // Stored KeePass rows wait for the app-level unlock — no row unlock action.
     expect(screen.getAllByTitle(t('connections.unlockNow'))).toHaveLength(2);
     // Remove stays available on every row.
@@ -438,5 +441,43 @@ describe('TrayVaults', () => {
     expect(
       calls.some((c) => c.cmd === 'remove_connection' && c.args.email === 'gone@x.com'),
     ).toBe(true);
+  });
+
+  it('offers the default-vault star only on writable connections', async () => {
+    makeBackend([
+      makeConnection({ email: 'bw@x.com', kind: 'bitwarden' }),
+      makeConnection({ kind: 'keepass', email: 'C:\\vaults\\kp.kdbx', serverLabel: 'KeePass' }),
+      // Read-only provider — can't take a new item, so no default-vault star.
+      makeConnection({ kind: 'pass', email: 'C:\\store', serverLabel: 'pass' }),
+    ]);
+    render(() => <TrayVaults onBack={() => {}} />);
+
+    await screen.findByText('bw@x.com');
+    // Bitwarden + KeePass are writable → two stars; pass has none.
+    expect(screen.getAllByTitle(t('trayVaults.setDefaultVault'))).toHaveLength(2);
+  });
+
+  it('pins a writable connection as the default for new items, then unpins it', async () => {
+    makeBackend([makeConnection({ email: 'bw@x.com', kind: 'bitwarden' })]);
+    render(() => <TrayVaults onBack={() => {}} />);
+
+    fireEvent.click(await screen.findByTitle(t('trayVaults.setDefaultVault')));
+    expect(defaultAccount()).toBe('bw@x.com');
+
+    // The star now reads as the active default; clicking it again clears the pin.
+    fireEvent.click(await screen.findByTitle(t('trayVaults.defaultVaultActive')));
+    expect(defaultAccount()).toBe('');
+  });
+
+  it('clears the default pin when its connection is removed', async () => {
+    makeBackend([makeConnection({ email: 'pinned@x.com', kind: 'bitwarden' })]);
+    render(() => <TrayVaults onBack={() => {}} />);
+
+    fireEvent.click(await screen.findByTitle(t('trayVaults.setDefaultVault')));
+    expect(defaultAccount()).toBe('pinned@x.com');
+
+    fireEvent.click(screen.getByTitle(t('connections.removeConnection')));
+    fireEvent.click(screen.getByText(t('common.remove')));
+    await waitFor(() => expect(defaultAccount()).toBe(''));
   });
 });

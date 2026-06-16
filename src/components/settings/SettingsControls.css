@@ -87,9 +87,11 @@
 }
 
 /* Dropdown picker ------------------------------------------------------------ */
-/* The one <select> for choosing a value (timeout, clipboard, threshold, format).
-   Sized to its content + left-aligned, not full-bleed like a form field. */
-.setting-select {
+/* The shared <Dropdown> for choosing a value (timeout, clipboard, threshold,
+   format). On Settings it is sized to its content + left-aligned, not full-bleed
+   like a form field — the doubled `.dropdown.setting-select` beats the base
+   `.dropdown { width: 100% }`. */
+.dropdown.setting-select {
   width: auto;
   min-width: 200px;
   max-width: 100%;

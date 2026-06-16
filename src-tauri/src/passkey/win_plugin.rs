@@ -33,12 +33,18 @@
 
 use std::sync::Arc;
 
-use windows::core::{implement, interface, IUnknown, IUnknown_Vtbl, Interface, GUID, HRESULT, PCWSTR};
-use windows::Win32::Foundation::{BOOL, CLASS_E_NOAGGREGATION, E_INVALIDARG, E_POINTER, HWND, S_OK};
+use windows::core::{
+    implement, interface, w, IUnknown, IUnknown_Vtbl, Interface, GUID, HRESULT, PCSTR, PCWSTR,
+};
+use windows::Win32::Foundation::{
+    BOOL, CLASS_E_NOAGGREGATION, E_INVALIDARG, E_NOTIMPL, E_POINTER, S_OK,
+};
+use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Com::{
     CoRegisterClassObject, CoRevokeClassObject, CoTaskMemAlloc, IClassFactory, IClassFactory_Impl,
     CLSCTX_LOCAL_SERVER, REGCLS_MULTIPLEUSE,
 };
+use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
 
 use crate::error::AgateResult;
 
@@ -106,16 +112,23 @@ pub struct WEBAUTHN_PLUGIN_ADD_AUTHENTICATOR_RESPONSE {
     pub pbOpSignPubKey: *mut u8,
 }
 
-// `webauthn.dll` exports (still `EXPERIMENTAL_*` on some SDKs — names may need a
-// suffix tweak when building against a specific kit). `cargo check` does not
-// link, so these resolve only in a real build with the 24H2 SDK import lib.
-#[link(name = "webauthn")]
-extern "system" {
-    fn WebAuthNPluginAddAuthenticator(
-        options: *const WEBAUTHN_PLUGIN_ADD_AUTHENTICATOR_OPTIONS,
-        response: *mut *mut WEBAUTHN_PLUGIN_ADD_AUTHENTICATOR_RESPONSE,
-    ) -> HRESULT;
-    fn WebAuthNPluginRemoveAuthenticator(rclsid: *const GUID) -> HRESULT;
+// `webauthn.dll`'s plugin exports are still `EXPERIMENTAL_*` and present only on
+// recent Windows builds, so they are resolved at RUNTIME rather than statically
+// imported. A static `#[link]` import would make the whole module fail to load
+// on a machine without the exports (and won't even link against an SDK whose
+// `webauthn.lib` lacks them); runtime resolution lets `register` fail with a
+// clear, recoverable error instead.
+type WebAuthNPluginAddAuthenticatorFn = unsafe extern "system" fn(
+    *const WEBAUTHN_PLUGIN_ADD_AUTHENTICATOR_OPTIONS,
+    *mut *mut WEBAUTHN_PLUGIN_ADD_AUTHENTICATOR_RESPONSE,
+) -> HRESULT;
+type WebAuthNPluginRemoveAuthenticatorFn = unsafe extern "system" fn(*const GUID) -> HRESULT;
+
+/// Resolve a `webauthn.dll` export by null-terminated name, or `None` when this
+/// Windows build doesn't expose it.
+unsafe fn webauthn_export(name: PCSTR) -> Option<unsafe extern "system" fn() -> isize> {
+    let module = LoadLibraryW(w!("webauthn.dll")).ok()?;
+    GetProcAddress(module, name)
 }
 
 // ── COM interface: IPluginAuthenticator ──────────────────────────────────────
@@ -341,20 +354,126 @@ pub fn register(
         cSupportedRpIds: 0,
         ppwszSupportedRpIds: std::ptr::null(),
     };
+    // Resolve the export at runtime; a typed error when the OS lacks it.
+    let add_raw = unsafe { webauthn_export(PCSTR(c"WebAuthNPluginAddAuthenticator".as_ptr().cast())) }
+        .ok_or_else(|| {
+            windows::core::Error::new(
+                E_NOTIMPL,
+                "WebAuthNPluginAddAuthenticator is unavailable on this Windows build \
+                 (the plugin-authenticator API is still EXPERIMENTAL)",
+            )
+        })?;
+    let add: WebAuthNPluginAddAuthenticatorFn = unsafe { std::mem::transmute(add_raw) };
+
     let mut response: *mut WEBAUTHN_PLUGIN_ADD_AUTHENTICATOR_RESPONSE = std::ptr::null_mut();
     // SAFETY: FFI into webauthn.dll; `options` outlives the call, `response` is a
     // valid out-pointer. TODO: capture response.pbOpSignPubKey to verify request
     // signatures, and free the response per the API's ownership rules.
-    unsafe { WebAuthNPluginAddAuthenticator(&options, &mut response).ok()? };
+    unsafe { add(&options, &mut response).ok()? };
     Ok(cookie)
 }
 
-/// Reverses [`register`]: removes the authenticator and revokes the class object.
+/// Reverses [`register`]: removes the authenticator (best-effort — skipped if the
+/// export is unavailable) and revokes the class object.
 pub fn unregister(cookie: u32) -> windows::core::Result<()> {
     // SAFETY: FFI; CLSID is 'static, cookie came from CoRegisterClassObject.
     unsafe {
-        WebAuthNPluginRemoveAuthenticator(&AGATE_PLUGIN_CLSID).ok()?;
+        if let Some(remove_raw) =
+            webauthn_export(PCSTR(c"WebAuthNPluginRemoveAuthenticator".as_ptr().cast()))
+        {
+            let remove: WebAuthNPluginRemoveAuthenticatorFn = std::mem::transmute(remove_raw);
+            remove(&AGATE_PLUGIN_CLSID).ok()?;
+        }
         CoRevokeClassObject(cookie)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows::Win32::System::Com::CoTaskMemFree;
+
+    /// Stand-in for the tray: echoes the request so the COM glue can be asserted
+    /// without the OS WebAuthn layer or a real ceremony.
+    struct FakeHost;
+    impl PluginCeremonyHost for FakeHost {
+        fn make_credential(&self, request_cbor: &[u8]) -> AgateResult<Vec<u8>> {
+            let mut out = b"made:".to_vec();
+            out.extend_from_slice(request_cbor);
+            Ok(out)
+        }
+        fn get_assertion(&self, _request_cbor: &[u8]) -> AgateResult<Vec<u8>> {
+            Ok(b"asserted".to_vec())
+        }
+        fn is_unlocked(&self) -> bool {
+            true
+        }
+    }
+
+    fn authenticator() -> IPluginAuthenticator {
+        AgatePluginAuthenticator { host: Arc::new(FakeHost) }.into()
+    }
+
+    fn request(req_type: i32, cbor: &[u8]) -> WEBAUTHN_PLUGIN_OPERATION_REQUEST {
+        WEBAUTHN_PLUGIN_OPERATION_REQUEST {
+            hWnd: HWND::default(),
+            transactionId: GUID::from_u128(0),
+            cbRequestSignature: 0,
+            pbRequestSignature: std::ptr::null(),
+            requestType: req_type,
+            cbEncodedRequest: cbor.len() as u32,
+            pbEncodedRequest: cbor.as_ptr(),
+        }
+    }
+
+    /// The full COM path — vtable dispatch → our impl → host → a
+    /// `CoTaskMemAlloc`'d response — exercised in-process.
+    #[test]
+    fn make_credential_runs_the_host_and_allocates_a_response() {
+        let auth = authenticator();
+        let cbor = [0x01u8, 0x02, 0x03];
+        let req = request(WEBAUTHN_PLUGIN_REQUEST_TYPE_CTAP2_CBOR, &cbor);
+        let mut response: *mut WEBAUTHN_PLUGIN_OPERATION_RESPONSE = std::ptr::null_mut();
+
+        let hr = unsafe { auth.MakeCredential(&req, &mut response) };
+
+        assert!(hr.is_ok(), "hr = {hr:?}");
+        assert!(!response.is_null());
+        unsafe {
+            let resp = &*response;
+            let bytes =
+                std::slice::from_raw_parts(resp.pbEncodedResponse, resp.cbEncodedResponse as usize);
+            assert_eq!(bytes, b"made:\x01\x02\x03");
+            CoTaskMemFree(Some(resp.pbEncodedResponse as *const core::ffi::c_void));
+            CoTaskMemFree(Some(response as *const core::ffi::c_void));
+        }
+    }
+
+    #[test]
+    fn rejects_non_ctap2_request_type() {
+        let auth = authenticator();
+        let req = request(0x99, &[1, 2, 3]);
+        let mut response: *mut WEBAUTHN_PLUGIN_OPERATION_RESPONSE = std::ptr::null_mut();
+        let hr = unsafe { auth.MakeCredential(&req, &mut response) };
+        assert_eq!(hr, E_INVALIDARG);
+        assert!(response.is_null());
+    }
+
+    #[test]
+    fn null_request_is_e_pointer() {
+        let auth = authenticator();
+        let mut response: *mut WEBAUTHN_PLUGIN_OPERATION_RESPONSE = std::ptr::null_mut();
+        let hr = unsafe { auth.MakeCredential(std::ptr::null(), &mut response) };
+        assert_eq!(hr, E_POINTER);
+    }
+
+    #[test]
+    fn lock_status_reflects_the_host() {
+        let auth = authenticator();
+        let mut status: i32 = -1;
+        let hr = unsafe { auth.GetLockStatus(&mut status) };
+        assert!(hr.is_ok());
+        assert_eq!(status, PLUGIN_UNLOCKED);
+    }
 }

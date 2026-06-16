@@ -37,6 +37,23 @@ describe('copyWithAutoClear', () => {
     expect(copyState().remaining).toBe(0); // countdown ended
   });
 
+  it('does NOT wipe a value the user copied over the secret (no clobber)', async () => {
+    vi.useFakeTimers();
+    // By the time the timer fires the clipboard holds something the user copied
+    // AFTER our secret — wiping it would destroy the user's own copy.
+    readMock.mockResolvedValue('user-copied-this-later');
+    await copyWithAutoClear('Password', 's3cret');
+
+    expect(writeMock).toHaveBeenCalledWith('s3cret');
+    await vi.runAllTimersAsync();
+    // The wipe is conditional on the clipboard still holding our secret; it
+    // doesn't, so we must never blank what replaced it.
+    expect(writeMock).not.toHaveBeenCalledWith('');
+    expect(writeMock).toHaveBeenCalledTimes(1);
+    // Our countdown still ended (the clipboard is no longer ours to manage).
+    expect(copyState().remaining).toBe(0);
+  });
+
   it.each(['Username', 'Website', 'URL', 'Folder', 'Public key', 'Fingerprint', 'Cardholder'])(
     'never auto-clears a copied %s (no countdown, no toast)',
     async (label) => {

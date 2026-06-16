@@ -80,6 +80,10 @@ pub struct ConnectionSummary {
     /// Which provider backs this connection.
     pub kind: ConnectionKind,
     pub email: String,
+    /// Optional user-given display name; when set it overrides the derived label
+    /// (the account email / database file name) in the UI. `None` = use the
+    /// derived label.
+    pub name: Option<String>,
     pub server_label: String,
     /// The full server config, so the add-connection form can prefill it.
     pub server: ServerConfig,

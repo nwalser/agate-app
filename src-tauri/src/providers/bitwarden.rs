@@ -8,8 +8,10 @@
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
-use bitwarden_api_api::models::CipherRequestModel;
+use bitwarden_api_api::models::{CipherRequestModel, ProfileOrganizationResponseModel};
 use bitwarden_collections::collection::{Collection as SdkCollection, CollectionView};
+use bitwarden_core::key_management::crypto::InitOrgCryptoRequest;
+use bitwarden_core::OrganizationId;
 use bitwarden_pm::PasswordManagerClient;
 use bitwarden_vault::{
     Cipher, CipherRepromptType, CipherView, Fido2CredentialFullView,
@@ -406,6 +408,42 @@ async fn adopt_user_id(client: &PasswordManagerClient, profile_id: Option<uuid::
     }
 }
 
+/// Build the org-crypto init request from the sync profile's organization
+/// memberships. Each org carries its symmetric key encrypted to the user
+/// (`organizations[].key`); an entry is kept only when it has BOTH a real id and
+/// a parseable key. A missing/malformed key skips that one org (a bad key for one
+/// must not block decrypting the others) — never panics.
+fn org_init_request(orgs: &[ProfileOrganizationResponseModel]) -> InitOrgCryptoRequest {
+    let organization_keys = orgs
+        .iter()
+        .filter_map(|o| Some((OrganizationId::new(o.id?), o.key.as_deref()?.parse().ok()?)))
+        .collect();
+    InitOrgCryptoRequest { organization_keys }
+}
+
+/// Load the account's organization keys into the SDK key store so org-OWNED data
+/// (collections + org ciphers) can decrypt. The SDK's password login initializes
+/// only the USER key; without this, `key_store.decrypt` fails for every org
+/// collection — `list_collections` returns nothing and the create-item
+/// org/collection picker silently stays empty (orgs are derived from collections).
+///
+/// Must run after the user key is set (it is, by sync time) and before any org
+/// decrypt (those happen on demand, later). Idempotent: safe to re-run on every
+/// sync (re-login / cold-start unlock both re-sync). Best-effort + loud: a failure
+/// is logged, never fatal — personal-vault reads keep working.
+async fn init_org_crypto(
+    client: &PasswordManagerClient,
+    orgs: Option<&Vec<ProfileOrganizationResponseModel>>,
+) {
+    let req = org_init_request(orgs.map(Vec::as_slice).unwrap_or(&[]));
+    if req.organization_keys.is_empty() {
+        return; // personal-only account (or none parseable) — nothing to load
+    }
+    if let Err(e) = client.crypto().initialize_org_crypto(req).await {
+        log::warn!("org crypto init failed; org collections and ciphers will not decrypt: {e}");
+    }
+}
+
 /// Sync one connection from the server and decode its material.
 ///
 /// NOTE (unstable SDK): `sync()` returns the raw `SyncResponseModel`; the SDK
@@ -431,6 +469,10 @@ pub(crate) async fn sync_connection(
     // Sync is the first authenticated call after login, so it's where we learn the
     // account id the write path needs. See `adopt_user_id`.
     adopt_user_id(client, response.profile.as_ref().and_then(|p| p.id)).await;
+
+    // ...and where we load the account's org keys, so org collections / ciphers
+    // can decrypt (the SDK login only sets up the user key). See `init_org_crypto`.
+    init_org_crypto(client, response.profile.as_ref().and_then(|p| p.organizations.as_ref())).await;
 
     let mut ciphers: Vec<Cipher> = Vec::new();
     for model in response.ciphers.unwrap_or_default() {
@@ -542,5 +584,42 @@ mod tests {
         let client = PasswordManagerClient::new(None);
         adopt_user_id(&client, None).await;
         assert!(client.0.internal.get_user_id().is_none());
+    }
+
+    fn org_membership(id: Option<uuid::Uuid>, key: Option<&str>) -> ProfileOrganizationResponseModel {
+        ProfileOrganizationResponseModel {
+            id,
+            key: key.map(str::to_string),
+            ..Default::default()
+        }
+    }
+
+    /// `org_init_request` keeps only org memberships with BOTH a real id and a
+    /// parseable key, and skips the rest — so collections in the good orgs can
+    /// decrypt even when one membership's key is missing or malformed. (A "4."
+    /// prefix is the RSA-OAEP-SHA1 UnsignedSharedKey wire form; the body just has
+    /// to base64-decode for `FromStr` to accept it.)
+    #[test]
+    fn org_init_request_keeps_valid_orgs_and_skips_the_rest() {
+        let good = uuid::Uuid::parse_str("d5b1fde2-a1e3-4c5b-9e0f-1a2b3c4d5e6f").unwrap();
+        let orgs = vec![
+            org_membership(Some(good), Some("4.AAAA")),                  // kept
+            org_membership(Some(uuid::Uuid::new_v4()), Some("garbage")), // malformed key → skipped
+            org_membership(Some(uuid::Uuid::new_v4()), None),            // no key → skipped
+            org_membership(None, Some("4.AAAA")),                        // no id → skipped
+        ];
+
+        let req = org_init_request(&orgs);
+
+        assert_eq!(req.organization_keys.len(), 1, "only the well-formed org is loaded");
+        assert!(req.organization_keys.contains_key(&OrganizationId::new(good)));
+    }
+
+    /// A personal-only account (no org memberships) yields an empty request — the
+    /// caller skips the SDK call, and the org/collection picker stays hidden by
+    /// design (nothing to file into).
+    #[test]
+    fn org_init_request_is_empty_without_memberships() {
+        assert!(org_init_request(&[]).organization_keys.is_empty());
     }
 }

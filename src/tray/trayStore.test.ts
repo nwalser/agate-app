@@ -22,8 +22,11 @@ import type {
 import {
   type AddDraft,
   buildEditInput,
+  connectionIdentity,
+  connectionLabel,
   copyActionForKey,
   createTrayStore,
+  domainOf,
   draftFromContext,
   fillQueryFromContext,
   filterTrayItems,
@@ -52,7 +55,7 @@ function makeCandidate(over: Partial<AutofillCandidate> = {}): AutofillCandidate
 function makePending(over: Partial<AutofillPending> = {}): AutofillPending {
   return {
     token: 'tok-1',
-    context: { field: 'password', processName: 'outlook', windowTitle: 'Sign in', url: null, associateUri: null },
+    context: { field: 'password', processName: 'outlook', windowTitle: 'Sign in', url: null, associateUri: null, typedUsername: null },
     candidates: [makeCandidate()],
     ...over,
   };
@@ -81,6 +84,7 @@ function makeDeps(over: {
   generated?: string;
   reuseCount?: number;
   strength?: number;
+  defaultAccount?: string;
 } = {}) {
   const deps = {
     ipc: {
@@ -116,7 +120,7 @@ function makeDeps(over: {
     onError: vi.fn(),
     onRepromptBlocked: vi.fn(),
     onTwoFactorPending: vi.fn(),
-    onAssociated: vi.fn(),
+    defaultAccount: vi.fn(() => over.defaultAccount ?? ''),
   } satisfies TrayStoreDeps;
   return deps;
 }
@@ -128,6 +132,14 @@ describe('filterTrayItems', () => {
       makeItem({ id: 'b', name: 'Binned', deleted: true }),
     ];
     expect(filterTrayItems(items, '').map((i) => i.id)).toEqual(['a']);
+  });
+
+  it('in trash mode lists ONLY deleted items (the inverse set)', () => {
+    const items = [
+      makeItem({ id: 'a', name: 'Alive' }),
+      makeItem({ id: 'b', name: 'Binned', deleted: true }),
+    ];
+    expect(filterTrayItems(items, '', true).map((i) => i.id)).toEqual(['b']);
   });
 
   it('with an empty query lists favorites first, then alphabetically', () => {
@@ -327,26 +339,63 @@ describe('loginNameFromUri', () => {
   });
 });
 
+describe('domainOf', () => {
+  it('strips scheme, path, query, port, userinfo and a leading www.', () => {
+    expect(domainOf('https://www.passwordmonster.com/test/page?x=1')).toBe('passwordmonster.com');
+    expect(domainOf('http://user:pw@accounts.google.com:8443/signin')).toBe('accounts.google.com');
+    expect(domainOf('passwordmonster.com')).toBe('passwordmonster.com');
+  });
+
+  it('keeps non-www subdomains (host-level, the registrable reduction is the matcher’s job)', () => {
+    expect(domainOf('https://login.github.com/x')).toBe('login.github.com');
+  });
+
+  it('is empty for a hostless input (blank or a synthetic app:// association)', () => {
+    expect(domainOf('')).toBe('');
+    expect(domainOf('   ')).toBe('');
+    expect(domainOf('app://outlook')).toBe('');
+  });
+});
+
 describe('draftFromContext', () => {
   // Spread from the shared pending fixture so this survives the AutofillContext
   // struct gaining fields (only url/associateUri/processName matter here).
   const ctx = (over: Partial<AutofillPending['context']>) => ({ ...makePending().context, ...over });
 
-  it('seeds the website from the real URL and a name guessed from it', () => {
+  it('recommends just the domain of the real URL (no scheme/path) and a name guessed from it', () => {
+    expect(
+      draftFromContext(
+        ctx({
+          processName: 'msedgewebview2',
+          url: 'https://accounts.google.com/signin?x=1',
+          associateUri: 'app://msedgewebview2',
+        }),
+      ),
+    ).toEqual({ name: 'Google', uri: 'accounts.google.com' });
+  });
+
+  it('falls back to the app-association URI and the process name', () => {
+    expect(
+      draftFromContext(ctx({ processName: 'outlook', url: null, associateUri: 'app://outlook' })),
+    ).toEqual({ name: 'Outlook', uri: 'app://outlook' });
+  });
+
+  it('prefills the username the backend read from the detected field', () => {
     expect(
       draftFromContext(
         ctx({
           processName: 'msedgewebview2',
           url: 'https://accounts.google.com/signin',
           associateUri: 'app://msedgewebview2',
+          typedUsername: 'neo@example.com',
         }),
       ),
-    ).toEqual({ name: 'Google', uri: 'https://accounts.google.com/signin' });
+    ).toEqual({ name: 'Google', uri: 'accounts.google.com', username: 'neo@example.com' });
   });
 
-  it('falls back to the app-association URI and the process name', () => {
+  it('ignores a blank / whitespace-only read username', () => {
     expect(
-      draftFromContext(ctx({ processName: 'outlook', url: null, associateUri: 'app://outlook' })),
+      draftFromContext(ctx({ processName: 'outlook', url: null, associateUri: 'app://outlook', typedUsername: '   ' })),
     ).toEqual({ name: 'Outlook', uri: 'app://outlook' });
   });
 
@@ -361,16 +410,20 @@ describe('draftFromContext', () => {
 describe('fillQueryFromContext', () => {
   const ctx = (over: Partial<AutofillPending['context']>) => ({ ...makePending().context, ...over });
 
-  it('prefers the registrable site label from the real URL', () => {
+  it('seeds the site domain from the real URL so the list filters by URL not name', () => {
     expect(
       fillQueryFromContext(ctx({ processName: 'msedgewebview2', url: 'https://login.github.com/x' })),
-    ).toBe('Github');
+    ).toBe('login.github.com');
+    // The reported bug: on passwordmonster.com the box showed "Passwordmonster".
+    expect(
+      fillQueryFromContext(ctx({ processName: 'chrome', url: 'https://www.passwordmonster.com/test' })),
+    ).toBe('passwordmonster.com');
   });
 
-  it('falls back to the app-association URI label', () => {
+  it('falls back to the process name for a native app (no URL)', () => {
     expect(
       fillQueryFromContext(ctx({ processName: 'outlook', url: null, associateUri: 'app://outlook' })),
-    ).toBe('Outlook');
+    ).toBe('outlook');
   });
 
   it('falls back to the process name when no URL/association is known', () => {
@@ -415,6 +468,35 @@ describe('createTrayStore add-login', () => {
     // Switching the destination re-derives the provider for the form's chrome.
     store.setAccount('kp@x.com');
     expect(store.accountKind()).toBe('keepass');
+  });
+
+  it('enterAdd preselects the pinned default account when it is an available destination', async () => {
+    const deps = makeDeps({
+      connections: [
+        makeConnection({ email: 'bw@x.com', kind: 'bitwarden' }),
+        makeConnection({ email: 'kp@x.com', kind: 'keepass' }),
+      ],
+      defaultAccount: 'kp@x.com',
+    });
+    const store = createTrayStore(deps);
+    await store.enterAdd();
+    // Not the first writable connection — the pinned default wins.
+    expect(store.account()).toBe('kp@x.com');
+  });
+
+  it('enterAdd ignores a default that is not an available destination (locked / read-only / gone)', async () => {
+    const deps = makeDeps({
+      connections: [
+        makeConnection({ email: 'bw@x.com', kind: 'bitwarden', unlocked: true }),
+        // Pinned default, but locked → not offered as a destination this session.
+        makeConnection({ email: 'kp@x.com', kind: 'keepass', unlocked: false }),
+      ],
+      defaultAccount: 'kp@x.com',
+    });
+    const store = createTrayStore(deps);
+    await store.enterAdd();
+    // Falls back to the first writable, unlocked connection.
+    expect(store.account()).toBe('bw@x.com');
   });
 
   it('generateDraftPassword fills the draft from the generator', async () => {
@@ -518,40 +600,55 @@ describe('createTrayStore add-login', () => {
     expect(deps.ipc.listItems.mock.calls.length).toBeGreaterThan(listCallsBefore);
   });
 
-  it('offers Bitwarden collections scoped to the selected account, reset on switch', async () => {
+  it('derives the org list from the account collections and scopes collections to the chosen org', async () => {
     const deps = makeDeps({
       connections: [
         makeConnection({ email: 'bw@x.com', kind: 'bitwarden' }),
         makeConnection({ email: 'kp@x.com', kind: 'keepass' }),
       ],
       collections: [
-        makeCollection({ id: 'c-eng', name: 'Engineering', accountEmail: 'bw@x.com', organizationId: 'org-9' }),
-        makeCollection({ id: 'c-other', name: 'Other', accountEmail: 'someone@else.com' }),
+        makeCollection({ id: 'c-eng', name: 'Engineering', accountEmail: 'bw@x.com', organizationId: 'org-9', organizationName: 'Acme' }),
+        makeCollection({ id: 'c-ops', name: 'Ops', accountEmail: 'bw@x.com', organizationId: 'org-9', organizationName: 'Acme' }),
+        makeCollection({ id: 'c-other', name: 'Other', accountEmail: 'someone@else.com', organizationId: 'org-x', organizationName: 'Else' }),
       ],
     });
     const store = createTrayStore(deps);
     await store.enterAdd();
-    // Only the selected Bitwarden account's collections show.
-    expect(store.collectionOptions().map((c) => c.id)).toEqual(['c-eng']);
-    store.setCollectionId('c-eng');
-    // Switching the destination drops the chosen collection (ids are per-vault).
+    // Orgs come from the selected account's collections (each org once).
+    expect(store.organizationOptions()).toEqual([{ id: 'org-9', name: 'Acme' }]);
+    // No org chosen yet → personal vault → no collections shown.
+    expect(store.organizationId()).toBeNull();
+    expect(store.collectionOptions()).toEqual([]);
+    // Choosing the org scopes its collections AND auto-selects the first (an org
+    // cipher must belong to a collection).
+    store.setOrganization('org-9');
+    expect(store.collectionOptions().map((c) => c.id)).toEqual(['c-eng', 'c-ops']);
+    expect(store.collectionId()).toBe('c-eng');
+    // Back to the personal vault clears the collection.
+    store.setOrganization(null);
+    expect(store.collectionId()).toBeNull();
+    // Switching the destination account resets org + collection (ids are per-vault).
+    store.setOrganization('org-9');
     store.setAccount('kp@x.com');
+    expect(store.organizationId()).toBeNull();
     expect(store.collectionId()).toBeNull();
     expect(store.collectionOptions()).toEqual([]);
   });
 
-  it('saveNew into a collection creates an org cipher (org + collectionIds from the collection)', async () => {
+  it('saveNew into an org collection creates an org cipher (org + collectionIds from the collection)', async () => {
     const deps = makeDeps({
       connections: [makeConnection({ email: 'bw@x.com', kind: 'bitwarden' })],
       collections: [
-        makeCollection({ id: 'c-eng', name: 'Engineering', accountEmail: 'bw@x.com', organizationId: 'org-9' }),
+        makeCollection({ id: 'c-eng', name: 'Engineering', accountEmail: 'bw@x.com', organizationId: 'org-9', organizationName: 'Acme' }),
       ],
     });
     const store = createTrayStore(deps);
     await store.refresh();
     await store.enterAdd();
     store.setDraft({ name: 'CI bot' });
-    store.setCollectionId('c-eng');
+    // Picking the org auto-selects its (only) collection.
+    store.setOrganization('org-9');
+    expect(store.collectionId()).toBe('c-eng');
     await expect(store.saveNew()).resolves.toBe(true);
     expect(deps.ipc.saveItem).toHaveBeenCalledWith(
       'bw@x.com',
@@ -893,16 +990,23 @@ describe('createTrayStore unlock', () => {
 });
 
 describe('createTrayStore autofill fill-mode', () => {
-  it('syncFill enters fill mode and seeds the search filter from the detected app', async () => {
+  it('syncFill enters fill mode with an EMPTY search box but filters secretly to the target', async () => {
     const deps = makeDeps({
-      pending: makePending({ context: { field: 'password', processName: 'outlook', windowTitle: 'Sign in', url: 'https://login.github.com', associateUri: null } }),
+      items: [
+        makeItem({ id: 'gh', name: 'GitHub', uri: 'https://github.com' }),
+        makeItem({ id: 'bank', name: 'Bank', uri: 'https://bank.example' }),
+      ],
+      pending: makePending({ context: { field: 'password', processName: 'chrome', windowTitle: 'Sign in', url: 'https://github.com/login', associateUri: null, typedUsername: null } }),
     });
     const store = createTrayStore(deps);
+    await store.refresh();
     await store.syncFill();
     expect(store.fillMode()).toBe(true);
     expect(store.pending()?.token).toBe('tok-1');
-    // The popup shows the normal list pre-filtered to the detected target.
-    expect(store.query()).toBe('Github');
+    // No visible query — the search box stays empty — but the list is filtered to
+    // the detected target (github.com) "secretly".
+    expect(store.query()).toBe('');
+    expect(store.filtered().map((i) => i.id)).toEqual(['gh']);
   });
 
   it('syncFill resolves to off (no fill mode) when nothing is pending', async () => {
@@ -921,6 +1025,55 @@ describe('createTrayStore autofill fill-mode', () => {
     await store.syncFill();
     await store.fill({ accountEmail: 'me@x.com', itemId: 'x', reprompt: false });
     expect(deps.ipc.autofillFill).toHaveBeenCalledWith('tok-9', 'me@x.com', 'x');
+    expect(store.fillMode()).toBe(false);
+  });
+
+  it('fill() copies the login’s TOTP to the clipboard after a username/password fill', async () => {
+    const deps = makeDeps({
+      pending: makePending({ token: 'tok-t' }),
+      totp: { code: '987654', period: 30, remaining: 12 },
+    });
+    const store = createTrayStore(deps);
+    await store.syncFill();
+    await store.fill({ accountEmail: 'me@x.com', itemId: 'x', reprompt: false, hasTotp: true });
+    // The password was filled, then the current code copied for the (later) TOTP step.
+    expect(deps.ipc.autofillFill).toHaveBeenCalledOnce();
+    expect(deps.ipc.itemTotp).toHaveBeenCalledWith('me@x.com', 'x');
+    expect(deps.copy).toHaveBeenCalledWith('TOTP code', '987654');
+  });
+
+  it('fill() does NOT copy a TOTP when the filled field WAS the one-time-code box', async () => {
+    const deps = makeDeps({
+      pending: makePending({
+        context: { field: 'totp', processName: 'outlook', windowTitle: 'Sign in', url: null, associateUri: null, typedUsername: null },
+      }),
+    });
+    const store = createTrayStore(deps);
+    await store.syncFill();
+    await store.fill({ accountEmail: 'me@x.com', itemId: 'x', reprompt: false, hasTotp: true });
+    // The injector already typed the code into that field — no clipboard copy.
+    expect(deps.ipc.itemTotp).not.toHaveBeenCalled();
+    expect(deps.copy).not.toHaveBeenCalled();
+  });
+
+  it('fill() does NOT copy a TOTP when the login has none', async () => {
+    const deps = makeDeps({ pending: makePending() });
+    const store = createTrayStore(deps);
+    await store.syncFill();
+    await store.fill({ accountEmail: 'me@x.com', itemId: 'x', reprompt: false, hasTotp: false });
+    expect(deps.ipc.itemTotp).not.toHaveBeenCalled();
+    expect(deps.copy).not.toHaveBeenCalled();
+  });
+
+  it('a failed TOTP copy never makes the completed fill look failed', async () => {
+    const deps = makeDeps({ pending: makePending({ token: 'tok-t2' }) });
+    deps.ipc.itemTotp.mockRejectedValueOnce(new Error('totp gen failed'));
+    const store = createTrayStore(deps);
+    await store.syncFill();
+    await store.fill({ accountEmail: 'me@x.com', itemId: 'x', reprompt: false, hasTotp: true });
+    // The fill went through; only the TOTP copy failed (surfaced, not fatal).
+    expect(deps.ipc.autofillFill).toHaveBeenCalledOnce();
+    expect(deps.onError).toHaveBeenCalledOnce();
     expect(store.fillMode()).toBe(false);
   });
 
@@ -962,70 +1115,100 @@ describe('createTrayStore autofill fill-mode', () => {
     expect(store.pending()).toBeNull();
   });
 
-  it('associate() remembers the login for the detected target and re-syncs candidates', async () => {
+  it('fill(remember) stores the site DOMAIN on the login (browser), then fills', async () => {
     const deps = makeDeps({
       pending: makePending({
-        context: {
-          field: 'password',
-          processName: 'discord',
-          windowTitle: 'Discord',
-          url: null,
-          associateUri: 'app://discord',
-        },
-        candidates: [makeCandidate({ itemId: 'x', accountEmail: 'me@x.com' })],
+        token: 'tok-5',
+        context: { field: 'password', processName: 'chrome', windowTitle: 'Sign in', url: 'https://www.github.com/login', associateUri: null, typedUsername: null },
       }),
     });
     const store = createTrayStore(deps);
     await store.syncFill();
-    // Re-sync after the association: the now-matching login appears.
-    deps.ipc.autofillPending.mockResolvedValueOnce(
-      makePending({ candidates: [makeCandidate({ itemId: 'x' }), makeCandidate({ itemId: 'y' })] }),
-    );
 
-    await store.associate({ accountEmail: 'me@x.com', itemId: 'x', reprompt: false });
+    await store.fill({ accountEmail: 'me@x.com', itemId: 'x', reprompt: false }, true);
+
+    // Remembers the DOMAIN (www/path stripped), not the full URL — then fills.
+    expect(deps.ipc.autofillAssociate).toHaveBeenCalledWith('me@x.com', 'x', 'github.com');
+    expect(deps.ipc.autofillFill).toHaveBeenCalledWith('tok-5', 'me@x.com', 'x');
+    expect(store.fillMode()).toBe(false);
+  });
+
+  it('fill(remember) on a native app remembers the app:// association', async () => {
+    const deps = makeDeps({
+      pending: makePending({
+        token: 'tok-6',
+        context: { field: 'password', processName: 'discord', windowTitle: 'Discord', url: null, associateUri: 'app://discord', typedUsername: null },
+      }),
+    });
+    const store = createTrayStore(deps);
+    await store.syncFill();
+
+    await store.fill({ accountEmail: 'me@x.com', itemId: 'x', reprompt: false }, true);
 
     expect(deps.ipc.autofillAssociate).toHaveBeenCalledWith('me@x.com', 'x', 'app://discord');
-    // The success path names the target (window title) and re-syncs the candidates.
-    expect(deps.onAssociated).toHaveBeenCalledWith('Discord');
-    expect(store.pending()?.candidates.map((c) => c.itemId)).toEqual(['x', 'y']);
-    expect(deps.onError).not.toHaveBeenCalled();
+    expect(deps.ipc.autofillFill).toHaveBeenCalledWith('tok-6', 'me@x.com', 'x');
   });
 
-  it('associate() is a no-op when the detection exposes no association URI', async () => {
+  it('fill(remember) still fills when the association fails (best-effort)', async () => {
     const deps = makeDeps({
       pending: makePending({
-        context: { field: 'password', processName: 'outlook', windowTitle: 'Sign in', url: null, associateUri: null },
-      }),
-    });
-    const store = createTrayStore(deps);
-    await store.syncFill();
-
-    await store.associate({ accountEmail: 'me@x.com', itemId: 'x', reprompt: false });
-
-    expect(deps.ipc.autofillAssociate).not.toHaveBeenCalled();
-    expect(deps.onAssociated).not.toHaveBeenCalled();
-  });
-
-  it('a failed associate routes to onError (no success toast, no crash)', async () => {
-    const deps = makeDeps({
-      pending: makePending({
-        context: {
-          field: 'password',
-          processName: 'discord',
-          windowTitle: null,
-          url: null,
-          associateUri: 'app://discord',
-        },
+        token: 'tok-8',
+        context: { field: 'password', processName: 'discord', windowTitle: 'Discord', url: null, associateUri: 'app://discord', typedUsername: null },
       }),
     });
     deps.ipc.autofillAssociate.mockRejectedValueOnce(new Error('sync first'));
     const store = createTrayStore(deps);
     await store.syncFill();
 
-    await store.associate({ accountEmail: 'me@x.com', itemId: 'x', reprompt: false });
+    await store.fill({ accountEmail: 'me@x.com', itemId: 'x', reprompt: false }, true);
 
+    // The failed remember is surfaced, but the fill the user asked for still happens.
     expect(deps.onError).toHaveBeenCalledOnce();
-    expect(deps.onAssociated).not.toHaveBeenCalled();
+    expect(deps.ipc.autofillFill).toHaveBeenCalledWith('tok-8', 'me@x.com', 'x');
+    expect(store.fillMode()).toBe(false);
+  });
+
+  it('fill(remember=false) fills without remembering', async () => {
+    const deps = makeDeps({
+      pending: makePending({
+        token: 'tok-2',
+        context: { field: 'password', processName: 'discord', windowTitle: 'Discord', url: null, associateUri: 'app://discord', typedUsername: null },
+      }),
+    });
+    const store = createTrayStore(deps);
+    await store.syncFill();
+
+    await store.fill({ accountEmail: 'me@x.com', itemId: 'x', reprompt: false }, false);
+
+    expect(deps.ipc.autofillAssociate).not.toHaveBeenCalled();
+    expect(deps.ipc.autofillFill).toHaveBeenCalledOnce();
+  });
+
+  it('canRemember + userSearchedInFill gate the "remember this site?" prompt', async () => {
+    const deps = makeDeps({
+      items: [makeItem({ id: 'gh', name: 'GitHub', uri: 'https://github.com' })],
+      pending: makePending({ context: { field: 'password', processName: 'chrome', windowTitle: 'Sign in', url: 'https://github.com/login', associateUri: null, typedUsername: null } }),
+    });
+    const store = createTrayStore(deps);
+    await store.refresh();
+    await store.syncFill();
+    // Something to remember (a URL), but no manual query yet → no prompt.
+    expect(store.canRemember()).toBe(true);
+    expect(store.userSearchedInFill()).toBe(false);
+    // The user types their own query → a manual pick should now prompt.
+    store.setQuery('git');
+    expect(store.userSearchedInFill()).toBe(true);
+  });
+
+  it('canRemember is false when the detection exposes neither a URL nor an app association', async () => {
+    const deps = makeDeps({
+      pending: makePending({
+        context: { field: 'password', processName: null, windowTitle: 'Sign in', url: null, associateUri: null, typedUsername: null },
+      }),
+    });
+    const store = createTrayStore(deps);
+    await store.syncFill();
+    expect(store.canRemember()).toBe(false);
   });
 });
 
@@ -1190,6 +1373,24 @@ describe('isWritableKind', () => {
     expect(isWritableKind('pass')).toBe(false);
     expect(isWritableKind('enpass')).toBe(false);
     expect(isWritableKind('proton')).toBe(false);
+  });
+});
+
+describe('connectionLabel / connectionIdentity', () => {
+  it('prefers the user-given name over the derived identity', () => {
+    expect(connectionLabel({ kind: 'bitwarden', email: 'me@x.com', name: 'Work' })).toBe('Work');
+    expect(
+      connectionLabel({ kind: 'keepass', email: 'C:\\vaults\\personal.kdbx', name: 'Personal' }),
+    ).toBe('Personal');
+  });
+
+  it('falls back to the derived identity when there is no name (or only blanks)', () => {
+    // Bitwarden → the account email; KeePass → the .kdbx file name, not the path.
+    expect(connectionLabel({ kind: 'bitwarden', email: 'me@x.com', name: null })).toBe('me@x.com');
+    expect(connectionLabel({ kind: 'keepass', email: 'C:\\vaults\\personal.kdbx', name: '  ' })).toBe(
+      'personal.kdbx',
+    );
+    expect(connectionIdentity({ kind: 'keepass', email: '/home/u/vault.kdbx' })).toBe('vault.kdbx');
   });
 });
 

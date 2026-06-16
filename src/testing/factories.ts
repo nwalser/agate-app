@@ -20,6 +20,7 @@ export function makeConnection(
 ): ConnectionSummary {
   return {
     kind: 'bitwarden',
+    name: null,
     serverLabel: 'Test server',
     server: { region: 'us' },
     unlocked: true,
@@ -41,6 +42,7 @@ export function makeCollection(
 ): Collection {
   return {
     organizationId: 'org-1',
+    organizationName: 'Test org',
     accountEmail: 'tester@example.com',
     accountLabel: 'Test vault',
     ...over,

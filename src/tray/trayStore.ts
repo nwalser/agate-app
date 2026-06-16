@@ -63,6 +63,10 @@ export interface FillTarget {
   accountEmail: string;
   itemId: string;
   reprompt: boolean;
+  /** The login carries a TOTP secret. After a username/password fill, its current
+   *  code is copied to the clipboard so the user can paste it on the (usually later)
+   *  one-time-code step. Optional: omit (falsy) for targets with no TOTP. */
+  hasTotp?: boolean;
 }
 
 /** The human label for the app/site a fill would land in: the window title, else
@@ -89,10 +93,11 @@ export interface TrayStoreDeps {
    *  2FA flow itself (same deferral as reprompt) — the user finishes these in
    *  the main window. */
   onTwoFactorPending: (emails: string[]) => void;
-  /** A "remember this login here" association succeeded — production shows a
-   *  success toast naming the target (the window title / process, else a generic
-   *  label). */
-  onAssociated: (targetLabel: string | null) => void;
+  /** The user's pinned default destination vault (a connection id), or '' for
+   *  none. The add form preselects it when it's an available destination, else
+   *  falls back to the first writable connection. Reactive accessor (production:
+   *  state/defaultAccount). */
+  defaultAccount: () => string;
 }
 
 /** Map a key event to the copy action it requests (the popup's Enter chords):
@@ -107,12 +112,17 @@ export function copyActionForKey(
   return 'password';
 }
 
-/** Filter + rank the unified list for the popup: drop trashed items, match the
- *  query against name/username/uri, and order by match quality (name prefix >
- *  name substring > username/uri), favorites and name breaking ties. The order
- *  is deliberately STABLE — no recency ranking, because rows that jump right
- *  after a copy made the list unusable (user feedback). */
-export function filterTrayItems(items: VaultItem[], query: string): VaultItem[] {
+/** Filter + rank the unified list for the popup: show the live items (or, in
+ *  trash mode, only the trashed ones), match the query against name/username/uri,
+ *  and order by match quality (name prefix > name substring > username/uri),
+ *  favorites and name breaking ties. The order is deliberately STABLE — no
+ *  recency ranking, because rows that jump right after a copy made the list
+ *  unusable (user feedback). */
+export function filterTrayItems(
+  items: VaultItem[],
+  query: string,
+  showTrash = false,
+): VaultItem[] {
   const q = query.trim().toLowerCase();
 
   // Lower rank sorts first; null = no match at all.
@@ -126,7 +136,7 @@ export function filterTrayItems(items: VaultItem[], query: string): VaultItem[] 
   };
 
   return items
-    .filter((it) => !it.deleted)
+    .filter((it) => (showTrash ? it.deleted : !it.deleted))
     .map((it) => ({ it, r: rank(it) }))
     .filter((e): e is { it: VaultItem; r: number } => e.r !== null)
     .sort(
@@ -171,6 +181,31 @@ const EMPTY_DRAFT: AddDraft = {
  *  are read-only in Agate (see `mutate::route_for`). */
 export function isWritableKind(kind: ConnectionKind): boolean {
   return kind === 'bitwarden' || kind === 'keepass';
+}
+
+/** Last path segment of a file path (either separator). */
+function fileNameOf(path: string): string {
+  const i = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+  return i >= 0 ? path.slice(i + 1) : path;
+}
+
+/** A connection's underlying identity for display: the file name for file-based
+ *  providers (KeePass / pass / Enpass), else the id (the account email). */
+export function connectionIdentity(c: { kind: ConnectionKind; email: string }): string {
+  const local = c.kind === 'keepass' || c.kind === 'pass' || c.kind === 'enpass';
+  return local ? fileNameOf(c.email) : c.email;
+}
+
+/** A connection's display label: the user-given name when set, else the
+ *  underlying identity. THE single source for how a connection is named in the
+ *  UI (the Vaults list + the new-item destination picker). */
+export function connectionLabel(c: {
+  kind: ConnectionKind;
+  email: string;
+  name: string | null;
+}): string {
+  const name = c.name?.trim();
+  return name ? name : connectionIdentity(c);
 }
 
 /** Generator options for the add-form's one-click password (same defaults as
@@ -294,30 +329,50 @@ export function loginNameFromUri(uri: string): string {
   return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
-/** Seed an add-login draft from a detected autofill target: the website is the
- *  real URL when the field exposed one, else the synthetic `app://<process>`
- *  association so the saved login matches this app next time (per the
- *  AutofillContext docs). The name is guessed from that URI, falling back to the
- *  process name. Only the fields we can fill are returned. Pure. */
+/** The bare website host of a URL: scheme, path, query, port, userinfo and a
+ *  leading `www.` stripped, lowercased — `https://www.passwordmonster.com/x` →
+ *  `passwordmonster.com`. Mirrors the backend matcher's host normalization so a
+ *  recommended/searched URI lines up with what autofill matches on. Empty when
+ *  there's no host-like part (e.g. a synthetic `app://` association). Pure. */
+export function domainOf(uri: string): string {
+  const raw = uri.trim();
+  if (!raw) return '';
+  const afterScheme = raw.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '');
+  const authority = afterScheme.split(/[/?#]/)[0] ?? '';
+  const host = (authority.split('@').pop() ?? authority).split(':')[0].toLowerCase();
+  const bare = host.startsWith('www.') ? host.slice(4) : host;
+  return bare.includes('.') ? bare : '';
+}
+
+/** Seed an add-login draft from a detected autofill target. For a real website the
+ *  recommended URI is just its domain (no scheme/path), so the saved login lines up
+ *  with how autofill matches; a synthetic `app://<process>` association is kept
+ *  verbatim (it has no host) so the login matches this app next time. The name is
+ *  guessed from the site, falling back to the process name. The username is the
+ *  text the backend read from the target's username/email box (best-effort), so a
+ *  brand-new login captures what the user just typed. The user can still edit any
+ *  field. Only the fields we can fill are returned. Pure. */
 export function draftFromContext(ctx: AutofillContext | null | undefined): Partial<AddDraft> {
   if (!ctx) return {};
-  const uri = (ctx.url || ctx.associateUri || '').trim();
-  const name = loginNameFromUri(uri) || (ctx.processName ?? '').trim();
+  const uri = ctx.url ? domainOf(ctx.url) || ctx.url.trim() : (ctx.associateUri ?? '').trim();
+  const name = loginNameFromUri(ctx.url || ctx.associateUri || '') || (ctx.processName ?? '').trim();
+  const username = (ctx.typedUsername ?? '').trim();
   const patch: Partial<AddDraft> = {};
   if (name) patch.name = name;
   if (uri) patch.uri = uri;
+  if (username) patch.username = username;
   return patch;
 }
 
 /** The search filter to pre-apply when the popup opens for a detected autofill
- *  target: the registrable site label (from the real URL or the app-association
- *  URI), else the process name. The popup shows the normal list filtered by
- *  this — the matching login surfaces first, but the search box stays editable
- *  so the user can type to reach any other item. Empty string when the context
- *  yields nothing usable (the list then shows everything). Pure. */
+ *  target: the site's DOMAIN (from the real URL) so the list filters by URL, not by
+ *  a guessed name, else the process name for a native app. The popup shows the
+ *  normal list filtered by this — the matching login surfaces first, but the search
+ *  box stays editable so the user can type to reach any other item. Empty string
+ *  when the context yields nothing usable (the list then shows everything). Pure. */
 export function fillQueryFromContext(ctx: AutofillContext | null | undefined): string {
   if (!ctx) return '';
-  return (loginNameFromUri(ctx.url || ctx.associateUri || '') || ctx.processName || '').trim();
+  return domainOf(ctx.url ?? '') || (ctx.processName ?? '').trim();
 }
 
 /** Whether two list entries are field-for-field identical (VaultItem is a flat
@@ -349,6 +404,9 @@ export function createTrayStore(deps: TrayStoreDeps) {
   const [unlocking, setUnlocking] = createSignal(false);
   const [items, setItems] = createSignal<VaultItem[]>([]);
   const [query, setQuery] = createSignal('');
+  // Trash mode: the same ranked list, but over the trashed items (the only way
+  // to reach a soft-deleted item to restore or permanently delete it).
+  const [showTrash, setShowTrash] = createSignal(false);
   // Autofill fill-mode: a detection in another app is awaiting a pick. `pending`
   // carries the one-shot token + the detected context + ranked candidates.
   const [fillMode, setFillMode] = createSignal(false);
@@ -418,7 +476,22 @@ export function createTrayStore(deps: TrayStoreDeps) {
     }
   }
 
-  const filtered = () => filterTrayItems(items(), query());
+  /** The detected-target filter for fill mode — the site domain (or app), derived
+   *  from the pending context. NOT shown in the search box: in fill mode the list
+   *  filters by this "secretly" so the user sees a clean fill chooser, not a
+   *  pre-typed search. '' (matches everything) outside fill mode. */
+  const fillContextQuery = () => fillQueryFromContext(pending()?.context);
+
+  // Fill mode: filter by the user's own query when they've typed one (they're
+  // reaching past the auto-matched logins), else by the secret context filter; trash
+  // is never offered for a fill. Normal mode: the user's query, trash-toggle aware.
+  const filtered = () =>
+    fillMode()
+      ? filterTrayItems(items(), query().trim() || fillContextQuery())
+      : filterTrayItems(items(), query(), showTrash());
+
+  /** How many items are in the trash — gates the Trash entry (hidden at 0). */
+  const trashCount = () => items().filter((it) => it.deleted).length;
 
   /** More than one connection in the list — rows then show an account dot. */
   const multiAccount = () => new Set(items().map((i) => i.accountEmail)).size > 1;
@@ -463,23 +536,42 @@ export function createTrayStore(deps: TrayStoreDeps) {
    *  for "is a detection awaiting a pick". Called on every show/focus and on the
    *  `autofill://detected` event (and after an unlock, so candidates are computed
    *  against the now-unlocked vault). The tray-icon open path clears the backend
-   *  pending, so a normal open reconciles to off here. A fresh detection seeds the
-   *  search with a best-guess filter for the detected app (see
-   *  fillQueryFromContext) so the matching login surfaces first — the box stays
-   *  editable, so the user can still search for any other item. */
+   *  pending, so a normal open reconciles to off here. A fresh detection starts with
+   *  an EMPTY search box — the list still filters to the detected target via the
+   *  secret `fillContextQuery()`, so the user sees a clean fill chooser, not a
+   *  pre-typed search. The box stays editable: typing reaches any other login. */
   async function syncFill(): Promise<void> {
     try {
       const p = await deps.ipc.autofillPending();
       const wasOff = !fillMode();
       setPending(p);
       setFillMode(p !== null);
-      if (p && wasOff) setQuery(fillQueryFromContext(p.context));
+      if (p && wasOff) setQuery('');
     } catch (err) {
       deps.onError(err);
       setFillMode(false);
       setPending(null);
     }
   }
+
+  /** The URI `fill(remember)` stores on the chosen login so it auto-matches this
+   *  target next time: the site DOMAIN for a browser (per the domain-only matching
+   *  rule), else the synthetic `app://` association for a native app. Null when the
+   *  detection exposed neither — nothing to remember. */
+  const associationUri = (): string | null => {
+    const ctx = pending()?.context;
+    if (!ctx) return null;
+    return (ctx.url ? domainOf(ctx.url) : '') || ctx.associateUri || null;
+  };
+
+  /** Whether the detected target can be remembered for a login (something to store).
+   *  Drives the "remember this site?" prompt on a manual pick. */
+  const canRemember = (): boolean => associationUri() !== null;
+
+  /** In fill mode the user has typed their own query — i.e. they reached past the
+   *  auto-matched logins for a different one. Picking such a login offers to remember
+   *  this target for it (it presumably doesn't match the site yet). */
+  const userSearchedInFill = (): boolean => fillMode() && query().trim() !== '';
 
   /** Leave fill mode and tell the backend to drop the detection (popup dismissed
    *  or Escape). */
@@ -489,9 +581,18 @@ export function createTrayStore(deps: TrayStoreDeps) {
     void deps.ipc.autofillDismiss().catch(deps.onError);
   }
 
-  /** Fill the chosen login into the detected target. Reprompt-protected items are
-   *  deferred to the main window (never filled here), mirroring the copy path. */
-  async function fill(target: FillTarget): Promise<void> {
+  /** Fill the chosen login into the detected target. When `remember` is set (the
+   *  user reached this login via their own search, then chose to remember the site),
+   *  the target's association URI is first added to the login so it auto-matches next
+   *  time — best-effort: a failed remember surfaces an error but never blocks the
+   *  fill the user asked for. Reprompt-protected items are deferred to the main
+   *  window (never filled here), mirroring the copy path.
+   *
+   *  After a username/password fill, a login that ALSO has a TOTP gets its current
+   *  code copied to the clipboard (via the auto-clear secret path), so the user can
+   *  paste it on the one-time-code step that usually follows. Skipped when the filled
+   *  field WAS the one-time-code box (the injector already typed it). Best-effort. */
+  async function fill(target: FillTarget, remember = false): Promise<void> {
     const p = pending();
     if (!p) return;
     if (target.reprompt) {
@@ -500,10 +601,22 @@ export function createTrayStore(deps: TrayStoreDeps) {
     }
     setFilling(true);
     try {
+      if (remember) {
+        const uri = associationUri();
+        if (uri) {
+          // Best-effort: don't let a failed association abort the fill.
+          await deps.ipc
+            .autofillAssociate(target.accountEmail, target.itemId, uri)
+            .catch(deps.onError);
+        }
+      }
       await deps.ipc.autofillFill(p.token, target.accountEmail, target.itemId);
       // The backend hides the popup on success; just leave fill mode locally.
       setFillMode(false);
       setPending(null);
+      if (target.hasTotp && p.context.field !== 'totp') {
+        await copyTotpForFill(target);
+      }
     } catch (err) {
       deps.onError(err);
     } finally {
@@ -511,19 +624,13 @@ export function createTrayStore(deps: TrayStoreDeps) {
     }
   }
 
-  /** "Use here": remember THIS login for THIS detected app/site so it matches
-   *  next time. Adds the detection's association URI to the login's autofill
-   *  URIs, then re-syncs so the now-matching login shows as a candidate. A no-op
-   *  when the detection exposed no association URI (the affordance is hidden in
-   *  that case, but guard defensively). Does NOT fill. */
-  async function associate(target: FillTarget): Promise<void> {
-    const p = pending();
-    const uri = p?.context.associateUri;
-    if (!uri) return;
+  /** Copy the target login's current TOTP code to the clipboard after a fill, so the
+   *  user can paste it on the next step. Best-effort and isolated: a TOTP failure
+   *  must never look like the fill itself failed (the password is already typed). */
+  async function copyTotpForFill(target: FillTarget): Promise<void> {
     try {
-      await deps.ipc.autofillAssociate(target.accountEmail, target.itemId, uri);
-      deps.onAssociated(fillTargetLabel(p?.context));
-      await syncFill();
+      const totp = await deps.ipc.itemTotp(target.accountEmail, target.itemId);
+      await deps.copy('TOTP code', totp.code);
     } catch (err) {
       deps.onError(err);
     }
@@ -541,6 +648,10 @@ export function createTrayStore(deps: TrayStoreDeps) {
   // Provider kind per selectable account, so the form can render provider-specific
   // fields (e.g. the Bitwarden-only reprompt toggle, the folder-vs-group label).
   const [accountKinds, setAccountKinds] = createSignal<Map<string, ConnectionKind>>(new Map());
+  // Display label per selectable account (the user-given connection name, else the
+  // derived identity) so the destination picker reads as named vaults, not raw
+  // emails / .kdbx paths. Keyed by the same account id as `accounts`.
+  const [accountLabels, setAccountLabels] = createSignal<Map<string, string>>(new Map());
   // Destination folder/group for the new (or moved) item, scoped to `account`.
   // null = the vault root ("no folder"). Folders are per-connection, so every
   // unlocked vault's folders are loaded together and filtered by account below.
@@ -551,6 +662,10 @@ export function createTrayStore(deps: TrayStoreDeps) {
   // cipher); null = the personal vault. Account-scoped, like folders. Collections
   // are a Bitwarden-only concept, so this stays empty for KeePass.
   const [collections, setCollections] = createSignal<Collection[]>([]);
+  // Where a Bitwarden item is filed: the chosen organization (null = the user's
+  // personal vault) and, within it, the collection. An org cipher MUST belong to
+  // a collection, so picking an org auto-selects its first collection.
+  const [organizationId, setOrganizationId] = createSignal<string | null>(null);
   const [collectionId, setCollectionId] = createSignal<string | null>(null);
   const [saving, setSaving] = createSignal(false);
   const [reuseCount, setReuseCount] = createSignal(0);
@@ -562,6 +677,10 @@ export function createTrayStore(deps: TrayStoreDeps) {
    *  specific form chrome (reprompt toggle, folder-vs-group label, collections). */
   const accountKind = (): ConnectionKind | null => accountKinds().get(account()) ?? null;
 
+  /** Display label for a selectable account id — its connection name when set,
+   *  else the derived identity. Falls back to the raw id if unknown. */
+  const accountLabel = (email: string): string => accountLabels().get(email) ?? email;
+
   /** Folders (Bitwarden) / groups (KeePass) of the selected destination vault,
    *  name-sorted — the form's "store in" options. A folder id is account-scoped,
    *  so this MUST follow `account()`. */
@@ -570,20 +689,52 @@ export function createTrayStore(deps: TrayStoreDeps) {
       .filter((f) => f.accountEmail === account() && f.id != null)
       .sort((a, b) => a.name.localeCompare(b.name));
 
-  /** Bitwarden collections of the selected destination vault, name-sorted — the
-   *  create form's "save into a shared collection" options. Account-scoped, so
-   *  this MUST follow `account()`. Empty for KeePass (no collections). */
+  /** Organizations the selected account can file into — derived from its
+   *  collections (you can only store into an org where you hold a collection), so
+   *  each org appears once, name-sorted. Empty for a personal-only account
+   *  (or KeePass), which hides the org picker. */
+  const organizationOptions = (): { id: string; name: string }[] => {
+    const byId = new Map<string, string>();
+    for (const c of collections()) {
+      if (c.accountEmail === account()) byId.set(c.organizationId, c.organizationName);
+    }
+    return [...byId.entries()]
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  };
+
+  /** Bitwarden collections of the SELECTED organization, name-sorted — the create
+   *  form's "save into" options once an org is chosen. Account- and org-scoped, so
+   *  this MUST follow `account()` and `organizationId()`. Empty for the personal
+   *  vault and for KeePass (no collections). */
   const collectionOptions = (): Collection[] =>
     collections()
-      .filter((c) => c.accountEmail === account())
+      .filter((c) => c.accountEmail === account() && c.organizationId === organizationId())
       .sort((a, b) => a.name.localeCompare(b.name));
 
-  /** Pick the destination vault. Folder/collection ids are per-vault, so switching
-   *  vaults drops any chosen folder/collection back to the default — an id from the
-   *  old vault would be meaningless (or, worse, a real one) in the new one. */
+  /** Pick the destination organization (null = personal vault). An org cipher must
+   *  belong to a collection, so selecting an org defaults to its first collection;
+   *  personal clears the collection. */
+  function setOrganization(orgId: string | null): void {
+    setOrganizationId(orgId);
+    if (orgId === null) {
+      setCollectionId(null);
+      return;
+    }
+    const first = collections()
+      .filter((c) => c.accountEmail === account() && c.organizationId === orgId)
+      .sort((a, b) => a.name.localeCompare(b.name))[0];
+    setCollectionId(first?.id ?? null);
+  }
+
+  /** Pick the destination vault. Org/folder/collection ids are per-vault, so
+   *  switching vaults drops any chosen org/folder/collection back to the default —
+   *  an id from the old vault would be meaningless (or, worse, a real one) in the
+   *  new one. */
   function setAccount(email: string): void {
     setAccountSignal(email);
     setFolderId(null);
+    setOrganizationId(null);
     setCollectionId(null);
   }
 
@@ -632,12 +783,17 @@ export function createTrayStore(deps: TrayStoreDeps) {
       const cons = await deps.ipc.listConnections();
       const writable = cons.filter((c) => c.unlocked && isWritableKind(c.kind));
       setAccountKinds(new Map(writable.map((c) => [c.email, c.kind])));
+      setAccountLabels(new Map(writable.map((c) => [c.email, connectionLabel(c)])));
       const emails = writable.map((c) => c.email);
       setAccounts(emails);
-      setAccount(emails[0] ?? '');
+      // Preselect the pinned default when it's an available destination (unlocked
+      // + writable); otherwise the first writable connection.
+      const preferred = deps.defaultAccount();
+      setAccount(emails.includes(preferred) ? preferred : (emails[0] ?? ''));
     } catch (err) {
       deps.onError(err);
       setAccountKinds(new Map());
+      setAccountLabels(new Map());
       setAccounts([]);
       setAccount('');
     }
@@ -672,10 +828,12 @@ export function createTrayStore(deps: TrayStoreDeps) {
       // default (no reprompt toggle), never blocks the edit.
       try {
         const cons = await deps.ipc.listConnections();
-        const kind = cons.find((c) => c.email === item.accountEmail)?.kind;
-        setAccountKinds(kind ? new Map([[item.accountEmail, kind]]) : new Map());
+        const con = cons.find((c) => c.email === item.accountEmail);
+        setAccountKinds(con ? new Map([[item.accountEmail, con.kind]]) : new Map());
+        setAccountLabels(con ? new Map([[item.accountEmail, connectionLabel(con)]]) : new Map());
       } catch {
         setAccountKinds(new Map());
+        setAccountLabels(new Map());
       }
       setFolders([]);
       // Collections aren't editable in the compact form (a collection move is a
@@ -700,6 +858,7 @@ export function createTrayStore(deps: TrayStoreDeps) {
     setFolders([]);
     setFolderId(null);
     setCollections([]);
+    setOrganizationId(null);
     setCollectionId(null);
     setAccountKinds(new Map());
     setReuseCount(0);
@@ -829,6 +988,9 @@ export function createTrayStore(deps: TrayStoreDeps) {
     query,
     setQuery,
     filtered,
+    showTrash,
+    setShowTrash,
+    trashCount,
     multiAccount,
     refresh,
     unlock,
@@ -843,7 +1005,8 @@ export function createTrayStore(deps: TrayStoreDeps) {
     syncFill,
     exitFill,
     fill,
-    associate,
+    canRemember,
+    userSearchedInFill,
     // add / edit form
     addMode,
     editing,
@@ -853,9 +1016,13 @@ export function createTrayStore(deps: TrayStoreDeps) {
     setAccount,
     accounts,
     accountKind,
+    accountLabel,
     folderOptions,
     folderId,
     setFolderId,
+    organizationOptions,
+    organizationId,
+    setOrganization,
     collectionOptions,
     collectionId,
     setCollectionId,

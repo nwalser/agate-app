@@ -16,8 +16,11 @@
 //!
 //! Signals, strongest first: a user-remembered recency boost (last login filled
 //! into this target) → synthetic app association → exact URL host →
-//! registrable-domain → suffix overlap → process-name (exe stem, plus a tiny hint
-//! table for app suites whose exe name doesn't carry their domain) → window title.
+//! registrable-domain → process-name (exe stem, plus a tiny hint table for app
+//! suites whose exe name doesn't carry their domain) → window title.
+//! The window title is only consulted when NO URL is present (a native app): in a
+//! browser the URL is authoritative and the title is arbitrary page text, so we
+//! never let it surface a login by name.
 //!
 //! Registrable-domain comparison uses the compiled-in Public Suffix List
 //! ([`registrable_domain`]), so multi-part suffixes (`example.co.uk`) compare
@@ -223,7 +226,12 @@ pub fn rank(
 ) -> Vec<AutofillCandidate> {
     let url_host = ctx.url.as_deref().and_then(host_of);
     let process = ctx.process_name.as_deref().map(normalize);
-    let title = ctx.window_title.as_deref().map(normalize);
+    // A real URL is authoritative. In a browser/webview the window title is arbitrary
+    // PAGE text (an article that merely mentions a brand), so when a URL is present we
+    // match on it ALONE and never let the title surface a login by name. The title is
+    // a signal only when no URL is available — a native app, where it is app chrome.
+    let title =
+        if ctx.url.is_some() { None } else { ctx.window_title.as_deref().map(normalize) };
 
     let mut scored: Vec<(u32, &MatchItem)> = items
         .iter()
@@ -309,7 +317,9 @@ fn score_item(
         }
     }
 
-    // 3. Window title — the item name or a URI host surfacing in the title.
+    // 3. Window title — the item name or a URI host surfacing in the title. Only
+    //    reached when no URL was present (`rank` zeroes the title under a URL), so this
+    //    name-based fallback never fires in a browser.
     if let Some(t) = title {
         if !t.is_empty() {
             let host_in_title = item.uris.iter().any(|u| {
@@ -329,14 +339,17 @@ fn score_item(
     score
 }
 
-/// Score the overlap between a target host and an item host.
+/// Score how well a target host matches an item host: an exact host is the strongest
+/// signal; the same registrable domain (eTLD+1) is a confident site-level match
+/// (`accounts.google.com` ↔ `google.com`). There is deliberately NO looser
+/// suffix-overlap tier — it would let `evil-github.com` match `github.com` (a phishing
+/// footgun) without being a meaningful "same site" signal. Path / query never
+/// participate (`host_of` already drops them).
 fn host_match_score(target: &str, item: &str) -> u32 {
     if target == item {
         100
     } else if registrable_domain(target) == registrable_domain(item) {
         80
-    } else if target.ends_with(item) || item.ends_with(target) {
-        60
     } else {
         0
     }
@@ -591,11 +604,31 @@ mod tests {
 
     #[test]
     fn window_title_matches_item_name() {
+        // Native app (no URL): the window title is the app's own chrome, so it is a
+        // valid last-resort signal.
         let items = vec![mi("a", "GitLab", Some("u"), &[])];
         let ctx = FillContext { window_title: Some("Sign in · GitLab".into()), ..Default::default() };
         let out = rank(&items, &ctx, None);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].item_id, "a");
+    }
+
+    #[test]
+    fn browser_url_context_ignores_window_title_name() {
+        // In a browser the window title is arbitrary PAGE text, not app chrome: a page
+        // that merely NAMES a login (a news article about PayPal) must not surface that
+        // login. With a URL present, matching is URL-only — never by name. The platform
+        // layer suppresses the (shared-host) process name, leaving url + title.
+        let items = vec![mi("pp", "PayPal", Some("u"), &["https://paypal.com"])];
+        let ctx = FillContext {
+            url: Some("https://news.example.com/article".into()),
+            window_title: Some("PayPal launches new feature — Example News".into()),
+            process_name: None,
+        };
+        assert!(
+            rank(&items, &ctx, None).is_empty(),
+            "a browser page that only mentions a login by name must not match it"
+        );
     }
 
     #[test]
@@ -671,6 +704,21 @@ mod tests {
         let items = vec![mi("a", "Foo", Some("u"), &["https://foo.co.uk"])];
         let ctx = FillContext { url: Some("https://bar.co.uk/login".into()), ..Default::default() };
         assert!(rank(&items, &ctx, None).is_empty(), "different co.uk registrable domains must not match");
+    }
+
+    #[test]
+    fn subdomain_matches_base_domain_but_a_lookalike_does_not() {
+        // The matching rule: same registrable domain matches (subdomains included), so
+        // welcome.hello.com ↔ hello.com. A DIFFERENT registrable domain that merely ends
+        // with the same string (a phishing lookalike) must NOT match — the removed loose
+        // suffix-overlap tier used to match it, which was a footgun.
+        let items = vec![mi("a", "Hello", Some("u"), &["https://hello.com"])];
+
+        let sub = FillContext { url: Some("https://welcome.hello.com/login".into()), ..Default::default() };
+        assert_eq!(rank(&items, &sub, None).first().map(|c| c.score), Some(80));
+
+        let evil = FillContext { url: Some("https://evil-hello.com/login".into()), ..Default::default() };
+        assert!(rank(&items, &evil, None).is_empty(), "a lookalike registrable domain must not match");
     }
 
     #[test]

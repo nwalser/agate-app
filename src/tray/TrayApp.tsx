@@ -28,18 +28,19 @@ import {
   Globe,
   Info,
   KeyRound,
-  Link,
   LockKeyhole,
   LockOpen,
   Pencil,
   Plus,
   RefreshCw,
+  Save,
   Search,
   Settings as SettingsIcon,
   ShieldAlert,
   ShieldCheck,
   Star,
   Timer,
+  Trash2,
   UserRound,
   Users,
   Wand2,
@@ -48,6 +49,7 @@ import {
 import ToastHost from '../components/Toast.tsx';
 import Favicon from '../components/Favicon.tsx';
 import CopyButton from '../components/CopyButton.tsx';
+import { Dropdown } from '../components/Dropdown.tsx';
 import { Switch as ToggleSwitch } from '../components/settings/SettingsControls.tsx';
 import { ipc } from '../lib/ipc.ts';
 import { t } from '../lib/i18n.ts';
@@ -60,6 +62,7 @@ import { recordRecent } from '../state/recentItems.ts';
 import { readColumnConfig } from '../state/columnConfig.ts';
 import { clearGeneratorHistory } from '../state/generatorHistory.ts';
 import { lockOnMinimize } from '../state/autolock.ts';
+import { defaultAccount } from '../state/defaultAccount.ts';
 import { useAutoLock } from '../hooks/useAutoLock.ts';
 import { UNLOCK_BEAT_MS } from '../lib/unlockBeat.ts';
 import type { VaultItem } from '../lib/types.ts';
@@ -129,10 +132,8 @@ export default function TrayApp() {
       pushToast('info', t('tray.twoFactorPending', { emails: emails.join(', ') }));
       setView('vaults');
     },
-    // "Use here" succeeded — name the target the same way the fill header does.
-    onAssociated: (label) => {
-      pushToast('success', t('autofill.remembered', { target: label ?? t('autofill.unknownTarget') }));
-    },
+    // The add form preselects the vault the user pinned as default in Vaults.
+    defaultAccount,
   });
   const [selected, setSelected] = createSignal(0);
   const [password, setPassword] = createSignal('');
@@ -181,6 +182,7 @@ export default function TrayApp() {
       clearGeneratorHistory(); // session-only secrets die with the session
       setView('list');
       setDetailItem(null);
+      store.setShowTrash(false);
       await store.refresh();
     } catch (err) {
       toastError(err);
@@ -190,6 +192,12 @@ export default function TrayApp() {
   // Idle vault timeout (Settings → Security). The minimize arm is meaningless
   // for the popup; lock-on-hide below covers "the popup went away".
   useAutoLock({ unlocked: store.unlocked, lock: () => void doLock() });
+
+  // Leave trash mode the moment it empties (the last item was restored or purged)
+  // so the user lands back on the live list instead of an empty trash.
+  createEffect(() => {
+    if (store.showTrash() && store.trashCount() === 0) store.setShowTrash(false);
+  });
 
   // Optional hard mode: lock the moment the popup hides (Settings → Security).
   // visibilitychange (not blur) so a pinned-but-unfocused popup stays unlocked.
@@ -207,9 +215,18 @@ export default function TrayApp() {
   const fillTargetLabel = () =>
     fillTargetLabelOf(store.pending()?.context) ?? t('autofill.unknownTarget');
 
-  /** Whether the current detection can be remembered for this app/site — the
-   *  "Use here" affordance only shows when the backend gave us an association URI. */
-  const canAssociate = () => store.pending()?.context.associateUri != null;
+  // A login the user reached via their OWN search in fill mode, awaiting the
+  // "remember this site for it?" decision before the fill goes through. Null
+  // otherwise (an auto-matched pick fills straight away).
+  const [fillChoice, setFillChoice] = createSignal<VaultItem | null>(null);
+  // Drop a stale choice whenever fill mode ends (filled, dismissed, or the detection
+  // cleared) so it never lingers into the next detection.
+  createEffect(on(() => store.fillMode(), (active) => !active && setFillChoice(null)));
+
+  /** Fill mode but nothing in the (pre-filtered) list matches the detected target —
+   *  the cue to offer "save a new login here" (browsers' save-password prompt).
+   *  Keyed on the visible list so the offer never contradicts a shown candidate. */
+  const noVaultMatch = () => store.fillMode() && store.filtered().length === 0;
 
   /** Cancel an autofill prompt: drop the backend detection and hide the popup. */
   function cancelFill() {
@@ -336,12 +353,15 @@ export default function TrayApp() {
     // While locked the only global key is Escape — Enter must keep submitting
     // the unlock form, not get preventDefault-ed away here.
     if (e.key === 'Escape') {
-      if (store.fillMode()) cancelFill();
+      // A pending "remember this site?" prompt backs out to the fill list first.
+      if (fillChoice()) setFillChoice(null);
+      else if (store.fillMode()) cancelFill();
       else if (store.addMode()) store.exitAdd();
       else if (view() !== 'list') {
         setView('list');
         setDetailItem(null);
-      } else void ipc.hideTrayWindow().catch(toastError);
+      } else if (store.showTrash()) store.setShowTrash(false);
+      else void ipc.hideTrayWindow().catch(toastError);
       return;
     }
     if (!store.unlocked()) return;
@@ -352,22 +372,27 @@ export default function TrayApp() {
 
     const list = store.filtered();
 
-    // Fill mode: the popup is the normal filtered list; Enter fills the selected
-    // login into the detected target instead of copying it.
+    // Fill mode: the list is filtered to the detected target; Enter picks the
+    // selected login to fill instead of copying it. With a "remember this site?"
+    // prompt open, Enter takes the recommended path (remember + fill).
     if (store.fillMode()) {
+      const choice = fillChoice();
       switch (e.key) {
         case 'ArrowDown':
           e.preventDefault();
-          move(1, list.length);
+          if (!choice) move(1, list.length);
           break;
         case 'ArrowUp':
           e.preventDefault();
-          move(-1, list.length);
+          if (!choice) move(-1, list.length);
           break;
         case 'Enter': {
           e.preventDefault();
-          const item = list[selected()];
-          if (item) fillItem(item);
+          if (choice) resolveFillChoice(choice, true);
+          else {
+            const item = list[selected()];
+            if (item) pickForFill(item);
+          }
           break;
         }
       }
@@ -438,6 +463,7 @@ export default function TrayApp() {
         await store.syncFill();
         setView('list');
         setDetailItem(null);
+        store.setShowTrash(false);
         setSelected(0);
       })();
     });
@@ -452,10 +478,30 @@ export default function TrayApp() {
     });
   });
 
-  /** Fill a login row into the detected target (fill mode only; logins only). */
-  const fillItem = (item: VaultItem) => {
+  const fillTarget = (item: VaultItem) => ({
+    accountEmail: item.accountEmail,
+    itemId: item.id,
+    reprompt: item.reprompt,
+    hasTotp: item.hasTotp,
+  });
+
+  /** Pick a login to fill (fill mode only; logins only). An auto-matched pick (no
+   *  manual search) fills straight away. A login the user found via their OWN search
+   *  presumably doesn't match this site yet, so — when there's a target to remember —
+   *  first ask whether to remember it (the confirm banner), instead of filling. */
+  const pickForFill = (item: VaultItem) => {
     if (item.itemType !== 'login') return;
-    void store.fill({ accountEmail: item.accountEmail, itemId: item.id, reprompt: item.reprompt });
+    if (!item.reprompt && store.userSearchedInFill() && store.canRemember()) {
+      setFillChoice(item);
+      return;
+    }
+    void store.fill(fillTarget(item));
+  };
+
+  /** Resolve the "remember this site?" prompt: fill, optionally remembering first. */
+  const resolveFillChoice = (item: VaultItem, remember: boolean) => {
+    setFillChoice(null);
+    void store.fill(fillTarget(item), remember);
   };
 
   // One row for both modes: normally a click opens the detail view; while a fill
@@ -465,7 +511,7 @@ export default function TrayApp() {
       class="tray-row"
       classList={{ selected: index() === selected() }}
       onMouseEnter={() => setSelected(index())}
-      onClick={() => (store.fillMode() ? fillItem(item) : openDetail(item))}
+      onClick={() => (store.fillMode() ? pickForFill(item) : openDetail(item))}
     >
       <span class="tray-type-icon">
         <Show
@@ -495,25 +541,6 @@ export default function TrayApp() {
       {/* Action clicks must not bubble into the row's open-detail / fill click. */}
       <span class="tray-actions" onClick={(e) => e.stopPropagation()}>
         <Show when={item.itemType === 'login'}>
-          {/* Fill mode: "Use here" remembers this login for the detected app/site
-              (instead of filling) — only when the backend gave us an association
-              URI. */}
-          <Show when={store.fillMode() && canAssociate()}>
-            <button
-              title={t('autofill.rememberHereTooltip', { target: fillTargetLabel() })}
-              aria-label={t('autofill.rememberHere')}
-              disabled={store.filling()}
-              onClick={() =>
-                void store.associate({
-                  accountEmail: item.accountEmail,
-                  itemId: item.id,
-                  reprompt: item.reprompt,
-                })
-              }
-            >
-              <Link size={14} />
-            </button>
-          </Show>
           <Show when={item.username}>
             <CopyButton
               size={14}
@@ -657,10 +684,10 @@ export default function TrayApp() {
                   <TraySettings onBack={() => setView('list')} />
                 </Match>
                 <Match when={view() === 'list'}>
-                  {/* Fill mode: a login field was detected in another app.
-                      The popup is the normal list with the search
-                      pre-filtered to that app; this banner names the target
-                      a click would fill, and lets the user abort (✕ / Esc). */}
+                  {/* Fill mode: a login field was detected in another app. The list is
+                      filtered to that target SECRETLY (the search box stays empty —
+                      see syncFill); this banner names the target a click would fill,
+                      and lets the user abort (✕ / Esc). */}
                   <Show when={store.fillMode()}>
                     <div class="tray-fill-target">
                       <AppWindow size={14} />
@@ -676,33 +703,118 @@ export default function TrayApp() {
                       </button>
                     </div>
                   </Show>
-                  <div class="tray-search">
-                    <Search size={14} />
-                    <input
-                      ref={searchEl}
-                      placeholder={t('tray.searchPlaceholder')}
-                      value={store.query()}
-                      onInput={(e) => {
-                        store.setQuery(e.currentTarget.value);
+                  {/* The user reached a login via their OWN search (so it likely
+                      doesn't match this site yet): before filling, ask whether to
+                      remember the site for it. "Remember & fill" stores the site's
+                      domain on the login; "Just fill" fills without remembering. */}
+                  <Show when={store.fillMode() && fillChoice()}>
+                    {(item) => (
+                      <div class="tray-fill-remember">
+                        <span class="tray-fill-remember-text">
+                          {t('autofill.rememberPrompt', {
+                            name: item().name,
+                            target: fillTargetLabel(),
+                          })}
+                        </span>
+                        <div class="tray-fill-remember-actions">
+                          <button
+                            class="tray-fill-remember-yes"
+                            disabled={store.filling()}
+                            onClick={() => resolveFillChoice(item(), true)}
+                          >
+                            {t('autofill.rememberAndFill')}
+                          </button>
+                          <button
+                            class="tray-fill-remember-no"
+                            disabled={store.filling()}
+                            onClick={() => resolveFillChoice(item(), false)}
+                          >
+                            {t('autofill.justFill')}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </Show>
+                  {/* No vault login matched the detected target — offer to save a
+                      new one (the browser-style "save this login?" prompt),
+                      prefilled with the site + the username we read. */}
+                  <Show when={noVaultMatch()}>
+                    <div class="tray-fill-save">
+                      <span class="tray-fill-save-text">
+                        {t('autofill.noneFound', { target: fillTargetLabel() })}
+                      </span>
+                      <button
+                        class="tray-fill-save-btn"
+                        onClick={() => void addFromDetection()}
+                      >
+                        <Save size={13} />
+                        {t('autofill.saveLogin')}
+                      </button>
+                    </div>
+                  </Show>
+                  {/* Trash mode: the same list over the trashed items, with a
+                      header to step back to the live vault. The row → detail
+                      path is where Restore / Delete-permanently live. */}
+                  <Show when={store.showTrash()}>
+                    <div class="tray-trash-bar">
+                      <Trash2 size={14} />
+                      <span class="tray-trash-bar-name">{t('tray.trash')}</span>
+                      <button
+                        class="tray-fill-cancel"
+                        title={t('common.back')}
+                        onClick={() => store.setShowTrash(false)}
+                      >
+                        <ArrowLeft size={14} />
+                      </button>
+                    </div>
+                  </Show>
+                  {/* Hidden while the "remember this site?" prompt is up, so that
+                      decision is a focused step rather than a searchable list. */}
+                  <Show when={!fillChoice()}>
+                    <div class="tray-search">
+                      <Search size={14} />
+                      <input
+                        ref={searchEl}
+                        placeholder={t('tray.searchPlaceholder')}
+                        value={store.query()}
+                        onInput={(e) => {
+                          store.setQuery(e.currentTarget.value);
+                          setSelected(0);
+                        }}
+                      />
+                      <Show when={!store.showTrash()}>
+                        <button
+                          class="tray-add-btn"
+                          title={t('tray.addLogin')}
+                          onClick={() => void (store.fillMode() ? addFromDetection() : openAdd())}
+                        >
+                          <Plus size={15} />
+                        </button>
+                      </Show>
+                    </div>
+                    <ul class="tray-list" ref={listEl}>
+                      <For
+                        each={store.filtered()}
+                        fallback={<li class="tray-status">{t('tray.noMatches')}</li>}
+                      >
+                        {row}
+                      </For>
+                    </ul>
+                  </Show>
+                  {/* Entry into the trash — only when something is in it, and not
+                      while autofill is mid-pick. */}
+                  <Show when={!store.showTrash() && !store.fillMode() && store.trashCount() > 0}>
+                    <button
+                      class="tray-trash-toggle"
+                      onClick={() => {
+                        store.setShowTrash(true);
                         setSelected(0);
                       }}
-                    />
-                    <button
-                      class="tray-add-btn"
-                      title={t('tray.addLogin')}
-                      onClick={() => void (store.fillMode() ? addFromDetection() : openAdd())}
                     >
-                      <Plus size={15} />
+                      <Trash2 size={13} />
+                      {t('tray.trash')} ({store.trashCount()})
                     </button>
-                  </div>
-                  <ul class="tray-list" ref={listEl}>
-                    <For
-                      each={store.filtered()}
-                      fallback={<li class="tray-status">{t('tray.noMatches')}</li>}
-                    >
-                      {row}
-                    </For>
-                  </ul>
+                  </Show>
                   <footer class="tray-footer">
                     <div class="tray-footer-nav">
                       <button
@@ -776,18 +888,18 @@ export default function TrayApp() {
                     </div>
                   }
                 >
-                  <label class="tray-add-field">
+                  <div class="tray-add-field">
                     <span class="tray-add-field-label">{t('tray.destinationVault')}</span>
-                    <select
-                      class="tray-add-account"
+                    <Dropdown
+                      ariaLabel={t('tray.destinationVault')}
                       value={store.account()}
-                      onChange={(e) => store.setAccount(e.currentTarget.value)}
-                    >
-                      <For each={store.accounts()}>
-                        {(email) => <option value={email}>{email}</option>}
-                      </For>
-                    </select>
-                  </label>
+                      onChange={(v) => store.setAccount(v)}
+                      options={store.accounts().map((email) => ({
+                        value: email,
+                        label: store.accountLabel(email),
+                      }))}
+                    />
+                  </div>
                 </Show>
               </Show>
 
@@ -913,44 +1025,57 @@ export default function TrayApp() {
                   KeePass "group", labeled for the destination's provider. Hidden
                   when the vault has none — there's only the root to pick. */}
               <Show when={store.folderOptions().length > 0}>
-                <label class="tray-add-field">
+                <div class="tray-add-field">
                   <span class="tray-add-field-label">{groupingLabel()}</span>
-                  <select
-                    class="tray-add-folder"
+                  <Dropdown
+                    ariaLabel={groupingLabel()}
                     value={store.folderId() ?? ''}
-                    onChange={(e) => store.setFolderId(e.currentTarget.value || null)}
-                  >
-                    <option value="">{rootGroupingLabel()}</option>
-                    <For each={store.folderOptions()}>
-                      {(f) => <option value={f.id ?? ''}>{f.name}</option>}
-                    </For>
-                  </select>
-                </label>
+                    onChange={(v) => store.setFolderId(v || null)}
+                    options={[
+                      { value: '', label: rootGroupingLabel() },
+                      ...store.folderOptions().map((f) => ({ value: f.id ?? '', label: f.name })),
+                    ]}
+                  />
+                </div>
               </Show>
-              {/* Bitwarden collection (the org-shared "bucket"): file a NEW item
-                  directly into a shared collection, or leave it in the personal
-                  vault. Create-only (a collection move is the main client's job)
-                  and Bitwarden-only — KeePass has no collections. */}
+              {/* WHERE a NEW Bitwarden item is stored: the organization (personal
+                  vault, or one the account belongs to) and — for an org — which
+                  collection. An org cipher must live in a collection, so picking an
+                  org auto-selects its first. Create-only (a move is the main
+                  client's job) and Bitwarden-only — KeePass has no orgs/collections. */}
               <Show
                 when={
                   !store.editing() &&
                   store.accountKind() === 'bitwarden' &&
-                  store.collectionOptions().length > 0
+                  store.organizationOptions().length > 0
                 }
               >
-                <label class="tray-add-field">
-                  <span class="tray-add-field-label">{t('tray.collection')}</span>
-                  <select
-                    class="tray-add-folder"
-                    value={store.collectionId() ?? ''}
-                    onChange={(e) => store.setCollectionId(e.currentTarget.value || null)}
-                  >
-                    <option value="">{t('tray.personalVault')}</option>
-                    <For each={store.collectionOptions()}>
-                      {(c) => <option value={c.id}>{c.name}</option>}
-                    </For>
-                  </select>
-                </label>
+                <div class="tray-add-field">
+                  <span class="tray-add-field-label">{t('tray.organization')}</span>
+                  <Dropdown
+                    ariaLabel={t('tray.organization')}
+                    value={store.organizationId() ?? ''}
+                    onChange={(v) => store.setOrganization(v || null)}
+                    options={[
+                      { value: '', label: t('tray.personalVault') },
+                      ...store.organizationOptions().map((o) => ({
+                        value: o.id,
+                        label: o.name || t('tray.unnamedOrganization'),
+                      })),
+                    ]}
+                  />
+                </div>
+                <Show when={store.organizationId() !== null && store.collectionOptions().length > 0}>
+                  <div class="tray-add-field">
+                    <span class="tray-add-field-label">{t('tray.collection')}</span>
+                    <Dropdown
+                      ariaLabel={t('tray.collection')}
+                      value={store.collectionId() ?? ''}
+                      onChange={(v) => store.setCollectionId(v || null)}
+                      options={store.collectionOptions().map((c) => ({ value: c.id, label: c.name }))}
+                    />
+                  </div>
+                </Show>
               </Show>
               {/* Favorite (both providers) + require-master-password ("reprompt",
                   a Bitwarden-only abstraction — KeePass has no per-item gate). */}

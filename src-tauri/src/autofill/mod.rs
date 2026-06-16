@@ -16,10 +16,14 @@
 //! - **The popup is the verification gate.** Nothing fills without the user
 //!   picking the login in the popup; reprompt-protected items defer to the main
 //!   window exactly as the copy path does.
-//! - **No window contents cross IPC.** UIA inspection stays in the backend; only
-//!   the minimal [`AutofillContext`] (process name / title / best-effort URL) and
-//!   ranked candidate metadata are sent to the popup. Secrets are fetched only at
-//!   fill time and zeroized after injection.
+//! - **Almost no window contents cross IPC.** UIA inspection stays in the backend;
+//!   only the minimal [`AutofillContext`] (process name / title / best-effort URL)
+//!   and ranked candidate metadata are sent to the popup. Secrets are fetched only
+//!   at fill time and zeroized after injection. The one deliberate exception is
+//!   [`AutofillContext::typed_username`]: when nothing in the vault matches, the
+//!   text already in the target's username/email box is read so the "save a new
+//!   login here" prompt can prefill it. It is a username/email, **never** a
+//!   password (`IsPassword` controls are never read), and rides this same opt-in.
 //! - **The one-shot token** binds a fill to the exact detection that raised the
 //!   popup, so a stale popup can't fill into a window that has since changed.
 //!

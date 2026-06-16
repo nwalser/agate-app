@@ -98,6 +98,7 @@ pub async fn sync(state: &AppState, force: bool) -> AgateResult<()> {
                 b.ciphers = synced.ciphers;
                 b.folders = synced.folders;
                 b.collections = synced.collections;
+                b.organizations = synced.organizations;
             }
         }
 

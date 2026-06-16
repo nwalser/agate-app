@@ -71,6 +71,7 @@ function makePending(over: Partial<AutofillPending> = {}): AutofillPending {
       windowTitle: 'Sign in – Outlook',
       url: null,
       associateUri: null,
+      typedUsername: null,
     },
     candidates: [],
     ...over,
@@ -172,6 +173,25 @@ function makeBackend(over: Partial<BackendState> = {}) {
             accountEmail: args.accountEmail as string,
           }),
         ];
+        return null;
+      }
+      case 'delete_items': {
+        const ids = args.ids as string[];
+        // permanent → drop the row; else soft-delete (the recycle-bin move).
+        if (args.permanent) {
+          state.items = state.items.filter((i) => !ids.includes(i.id));
+        } else {
+          state.items = state.items.map((i) =>
+            ids.includes(i.id) ? { ...i, deleted: true } : i,
+          );
+        }
+        return null;
+      }
+      case 'restore_items': {
+        const ids = args.ids as string[];
+        state.items = state.items.map((i) =>
+          ids.includes(i.id) ? { ...i, deleted: false } : i,
+        );
         return null;
       }
       case 'password_in_use':
@@ -442,6 +462,75 @@ describe('TrayApp integration — list, search and copy', () => {
   });
 });
 
+// ── Trash: view, restore, purge ───────────────────────────────────────────────
+// A trashed item is filtered out of the active list, so the Trash entry is the
+// ONLY way back to it — to restore it or delete it for good. The restore /
+// delete-permanently buttons live in TrayDetail, gated on item.deleted, and were
+// previously unreachable because nothing surfaced a trashed item.
+
+describe('TrayApp integration — trash', () => {
+  it('reaches a trashed item through the Trash entry and restores it to the list', async () => {
+    const backend = makeBackend({
+      items: [
+        makeItem({ id: 'gh', name: 'GitHub', username: 'neo' }),
+        makeItem({ id: 'old', name: 'Old Account', deleted: true }),
+      ],
+      passwords: { old: 'stale' },
+    });
+    renderTray(backend);
+
+    // The active list shows the live item, never the trashed one.
+    await screen.findByText('GitHub');
+    expect(screen.queryByText('Old Account')).toBeNull();
+
+    // The Trash entry (count = 1) is the only way back to the trashed item.
+    fireEvent.click(await screen.findByRole('button', { name: /trash/i }));
+    fireEvent.click(await screen.findByText('Old Account'));
+
+    // Detail offers Restore — only on a trashed item — and restoring returns it live.
+    fireEvent.click(await screen.findByTitle('Restore'));
+
+    await waitFor(() => expect(backend.invoked('restore_items')).toHaveLength(1));
+    expect(backend.invoked('restore_items')[0]?.args).toMatchObject({
+      accountEmail: 'tester@example.com',
+      ids: ['old'],
+    });
+    // Trash now empty → back on the active list, which shows BOTH items (the
+    // trash view never lists the live GitHub, so seeing both proves we exited).
+    await waitFor(() => {
+      expect(screen.getByText('Old Account')).toBeTruthy();
+      expect(screen.getByText('GitHub')).toBeTruthy();
+    });
+  });
+
+  it('permanently deletes a trashed item behind the inline confirm', async () => {
+    const backend = makeBackend({
+      items: [makeItem({ id: 'old', name: 'Old Account', deleted: true })],
+      passwords: { old: 'stale' },
+    });
+    renderTray(backend);
+
+    // No live items; the Trash entry is the only affordance.
+    await screen.findByText('No matches.');
+    fireEvent.click(await screen.findByRole('button', { name: /trash/i }));
+    fireEvent.click(await screen.findByText('Old Account'));
+
+    // Delete-permanently is irreversible → inline-confirmed before it fires.
+    fireEvent.click(await screen.findByTitle('Delete permanently'));
+    fireEvent.click(await screen.findByText('Delete'));
+
+    await waitFor(() => expect(backend.invoked('delete_items')).toHaveLength(1));
+    expect(backend.invoked('delete_items')[0]?.args).toMatchObject({
+      accountEmail: 'tester@example.com',
+      ids: ['old'],
+      permanent: true,
+    });
+    // Gone for good: trash empties → back to the (now empty) active list.
+    await waitFor(() => expect(screen.queryByText('Old Account')).toBeNull());
+    expect(screen.getByText('No matches.')).toBeTruthy();
+  });
+});
+
 // ── Cross-window events ──────────────────────────────────────────────────────
 
 describe('TrayApp integration — backend event channel', () => {
@@ -477,7 +566,7 @@ describe('TrayApp integration — backend event channel', () => {
 // ── Autofill fill mode ───────────────────────────────────────────────────────
 
 describe('TrayApp integration — autofill fill mode', () => {
-  it('autofill://detected shows the normal list pre-filtered to the app; clicking the match fills + dismisses', async () => {
+  it('autofill://detected filters the list SECRETLY (empty search box); clicking the match fills + dismisses', async () => {
     const backend = makeBackend({
       items: [makeItem({ id: 'gh', name: 'Outlook', username: 'neo', uri: 'https://outlook.com' })],
       pending: makePending({ token: 'tok-9' }),
@@ -487,19 +576,90 @@ describe('TrayApp integration — autofill fill mode', () => {
 
     await emit('autofill://detected');
     await screen.findByText('Fill into Sign in – Outlook');
-    // The detection seeds the normal search box with a filter for the app.
+    // The list is filtered to the app SECRETLY — the search box stays empty…
     const search = screen.getByPlaceholderText('Search vault…') as HTMLInputElement;
-    await waitFor(() => expect(search.value).toBe('outlook'));
+    expect(search.value).toBe('');
+    // …but the matching login is shown.
+    expect(screen.getByText('Outlook')).toBeTruthy();
 
     fireEvent.click(screen.getByText('Outlook'));
 
+    // An auto-matched pick (no manual query) fills straight away — no remember prompt.
     await waitFor(() => expect(backend.invoked('autofill_fill')).toHaveLength(1));
     expect(backend.invoked('autofill_fill')[0]?.args).toMatchObject({
       token: 'tok-9',
       accountEmail: 'tester@example.com',
       itemId: 'gh',
     });
+    expect(backend.invoked('autofill_associate')).toHaveLength(0);
     await waitFor(() => expect(screen.queryByText('Fill into Sign in – Outlook')).toBeNull());
+  });
+
+  it('a manual-search pick prompts to remember the site; "Remember & fill" stores the domain then fills', async () => {
+    const backend = makeBackend({
+      items: [
+        makeItem({ id: 'gh', name: 'GitHub', uri: 'https://github.com' }),
+        makeItem({ id: 'note', name: 'Secret Note', uri: '' }),
+      ],
+      pending: makePending({
+        token: 'tok-4',
+        context: {
+          field: 'password',
+          processName: 'chrome',
+          windowTitle: 'GitHub',
+          url: 'https://github.com/login',
+          associateUri: null,
+          typedUsername: null,
+        },
+      }),
+    });
+    renderTray(backend);
+    await screen.findByPlaceholderText('Search vault…');
+
+    await emit('autofill://detected');
+    await screen.findByText('Fill into GitHub');
+    // Secret filter (github.com): the GitHub login shows, the unrelated note hides.
+    expect(screen.getByText('GitHub')).toBeTruthy();
+    expect(screen.queryByText('Secret Note')).toBeNull();
+
+    // The user searches for a DIFFERENT login (one that doesn't match the site).
+    const search = screen.getByPlaceholderText('Search vault…') as HTMLInputElement;
+    fireEvent.input(search, { target: { value: 'note' } });
+    fireEvent.click(await screen.findByText('Secret Note'));
+
+    // Picking it asks whether to remember the site for it (instead of filling).
+    await screen.findByText('Remember Secret Note for GitHub?');
+    expect(backend.invoked('autofill_fill')).toHaveLength(0);
+
+    fireEvent.click(screen.getByText('Remember & fill'));
+
+    // Remembers the site DOMAIN on that login, then fills it.
+    await waitFor(() => expect(backend.invoked('autofill_associate')).toHaveLength(1));
+    expect(backend.invoked('autofill_associate')[0]?.args).toMatchObject({
+      accountEmail: 'tester@example.com',
+      itemId: 'note',
+      uri: 'github.com',
+    });
+    await waitFor(() => expect(backend.invoked('autofill_fill')).toHaveLength(1));
+    expect(backend.invoked('autofill_fill')[0]?.args).toMatchObject({ token: 'tok-4', itemId: 'note' });
+  });
+
+  it('after filling a login that also has a TOTP, the current code lands on the clipboard', async () => {
+    const backend = makeBackend({
+      items: [makeItem({ id: 'gh', name: 'Outlook', uri: 'https://outlook.com', hasTotp: true })],
+      pending: makePending({ token: 'tok-totp' }),
+    });
+    renderTray(backend);
+    await screen.findByPlaceholderText('Search vault…');
+
+    await emit('autofill://detected');
+    await screen.findByText('Fill into Sign in – Outlook');
+    fireEvent.click(screen.getByText('Outlook'));
+
+    // The password is filled, then the TOTP code is copied for the next step.
+    await waitFor(() => expect(backend.invoked('autofill_fill')).toHaveLength(1));
+    await waitFor(() => expect(backend.state.clipboard).toBe('123456'));
+    expect(backend.invoked('item_totp')).toHaveLength(1);
   });
 
   it('fill mode stays searchable: typing finds another item and clicking fills it; the window never resizes', async () => {
@@ -516,13 +676,14 @@ describe('TrayApp integration — autofill fill mode', () => {
     await emit('autofill://detected');
     await screen.findByText('Fill into Sign in – Outlook');
 
-    // Pre-filtered to the detected app: Outlook shown, GitHub hidden.
+    // Secretly filtered to the detected app: search box empty, Outlook shown, GitHub hidden.
     const search = screen.getByPlaceholderText('Search vault…') as HTMLInputElement;
-    await waitFor(() => expect(search.value).toBe('outlook'));
+    expect(search.value).toBe('');
     expect(screen.getByText('Outlook')).toBeTruthy();
     expect(screen.queryByText('GitHub')).toBeNull();
 
-    // The user can still search for a different item, then fill it.
+    // The user can still search for a different item, then fill it. This detection
+    // exposed no URL/app association, so there's nothing to remember → fills directly.
     fireEvent.input(search, { target: { value: 'github' } });
     await screen.findByText('GitHub');
     expect(screen.queryByText('Outlook')).toBeNull();
@@ -550,6 +711,40 @@ describe('TrayApp integration — autofill fill mode', () => {
     await waitFor(() => expect(backend.invoked('autofill_dismiss')).toHaveLength(1));
     await waitFor(() => expect(backend.invoked('hide_tray_window')).toHaveLength(1));
     expect(backend.state.pending).toBeNull();
+  });
+
+  it('offers to save a new login when nothing matches; opens the add form prefilled with the read username', async () => {
+    const backend = makeBackend({
+      items: [], // an empty vault: the detection has nothing to fill
+      pending: makePending({
+        token: 'tok-3',
+        context: {
+          field: 'password',
+          processName: 'msedgewebview2',
+          windowTitle: 'Sign in',
+          url: 'https://accounts.example.com/login',
+          associateUri: 'app://msedgewebview2',
+          typedUsername: 'neo@example.com',
+        },
+        candidates: [],
+      }),
+    });
+    renderTray(backend);
+    await screen.findByPlaceholderText('Search vault…');
+
+    await emit('autofill://detected');
+
+    // The save-new-login prompt appears (browser-style "save this login?").
+    const save = await screen.findByText('Save login');
+    fireEvent.click(save);
+
+    // Lands in the add form, prefilled from the detection: the site name + URI and
+    // the username the backend read from the target field.
+    const name = (await screen.findByPlaceholderText('Name')) as HTMLInputElement;
+    expect(name.value).toBe('Example');
+    expect((screen.getByPlaceholderText('Username') as HTMLInputElement).value).toBe(
+      'neo@example.com',
+    );
   });
 });
 
@@ -593,7 +788,11 @@ describe('TrayApp integration — add-login form', () => {
 
     fireEvent.click(screen.getByTitle('Add login'));
     await screen.findByPlaceholderText('Name');
-    // The lone connection is still offered as an explicit destination.
+    // The lone connection is still offered as an explicit destination: the picker
+    // shows it, and opening the dropdown lists it as an option.
+    const picker = await screen.findByRole('combobox', { name: 'Save to' });
+    expect(picker.textContent).toContain('me@x.com');
+    fireEvent.click(picker);
     await screen.findByRole('option', { name: 'me@x.com' });
   });
 
@@ -611,13 +810,10 @@ describe('TrayApp integration — add-login form', () => {
     const name = await screen.findByPlaceholderText('Name');
     fireEvent.input(name, { target: { value: 'Example Site' } });
 
-    // The folder picker shows once list_folders resolves; find it via its unique
-    // "No folder" option (the vault picker is also a combobox). Choose "Work".
-    const folderSelect = (await screen.findByRole('option', { name: 'No folder' })).closest(
-      'select',
-    ) as HTMLSelectElement;
-    await waitFor(() => expect(folderSelect.querySelector('option[value="work"]')).toBeTruthy());
-    fireEvent.change(folderSelect, { target: { value: 'work' } });
+    // The folder picker shows once list_folders resolves (it's the "Folder"
+    // combobox — the vault picker is "Save to"). Open it and choose "Work".
+    fireEvent.click(await screen.findByRole('combobox', { name: 'Folder' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Work' }));
 
     fireEvent.submit(name.closest('form')!);
 

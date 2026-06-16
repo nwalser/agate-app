@@ -5,9 +5,10 @@
 // stays in Settings.css. Forms (Connections, app-password) keep labelled inputs —
 // those are auth forms, not preferences.
 
-import { For, Show, type JSX } from 'solid-js';
+import { Show, type JSX } from 'solid-js';
 import { RotateCcw } from 'lucide-solid';
 import type { IconComponent } from '../../lib/icon.ts';
+import { Dropdown } from '../Dropdown.tsx';
 import './SettingsControls.css';
 
 // The one on/off switch for the whole app.
@@ -94,9 +95,10 @@ export function ToggleRow(props: {
   );
 }
 
-// The one dropdown picker: a styled native <select> for choosing a single value
-// from a list (timeouts, clipboard delay, thresholds, export format). Option values
-// may be numbers — the typed value is preserved across the string round-trip.
+// The one dropdown picker for choosing a single value from a list (timeouts,
+// clipboard delay, thresholds, export format). A thin wrapper over the shared
+// custom <Dropdown> with the Settings width (content-sized, min 200px); option
+// values may be numbers and the typed value is preserved.
 export function Select<T extends string | number>(props: {
   value: T;
   options: { value: T; label: string }[];
@@ -104,18 +106,13 @@ export function Select<T extends string | number>(props: {
   ariaLabel?: string;
 }) {
   return (
-    <select
+    <Dropdown
       class="setting-select"
-      aria-label={props.ariaLabel}
-      value={String(props.value)}
-      onChange={(e) => {
-        const raw = e.currentTarget.value;
-        const match = props.options.find((o) => String(o.value) === raw);
-        if (match) props.onChange(match.value);
-      }}
-    >
-      <For each={props.options}>{(o) => <option value={String(o.value)}>{o.label}</option>}</For>
-    </select>
+      value={props.value}
+      options={props.options}
+      onChange={props.onChange}
+      ariaLabel={props.ariaLabel}
+    />
   );
 }
 

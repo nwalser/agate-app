@@ -55,6 +55,147 @@
   background: var(--card-hover);
 }
 
+/* Save-new-login prompt: shown under the banner when nothing in the vault matches
+   the detected target — the browser-style "save this login?" offer. */
+.tray-fill-save {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.tray-fill-save-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+.tray-fill-save-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  padding: 5px 10px;
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.tray-fill-save-btn:hover {
+  background: var(--primary-hover, var(--primary));
+}
+
+/* "Remember this site?" prompt: a focused decision step shown in fill mode after the
+   user reaches a login via their own search (search + list are hidden behind it).
+   Fills the body like the list it replaces. */
+.tray-fill-remember {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  gap: 14px;
+  padding: 20px 16px;
+}
+
+.tray-fill-remember-text {
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: center;
+  color: var(--foreground);
+}
+
+.tray-fill-remember-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.tray-fill-remember-yes,
+.tray-fill-remember-no {
+  flex: 1;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.tray-fill-remember-yes {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.tray-fill-remember-yes:hover {
+  background: var(--primary-hover, var(--primary));
+}
+
+.tray-fill-remember-no {
+  background: transparent;
+  color: var(--foreground);
+}
+
+.tray-fill-remember-no:hover {
+  background: var(--card-hover);
+}
+
+.tray-fill-remember-yes:disabled,
+.tray-fill-remember-no:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* Trash mode banner: same shape as the fill-target banner, stepping the list
+   over the soft-deleted items (the back button reuses .tray-fill-cancel). */
+.tray-trash-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--card-hover);
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+
+.tray-trash-bar-name {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--foreground);
+}
+
+/* Entry into the trash, shown under the list only when it has contents. */
+.tray-trash-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 7px 12px;
+  border: none;
+  border-top: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.tray-trash-toggle:hover {
+  background: var(--card-hover);
+  color: var(--foreground);
+}
+
 /* ── Search ─────────────────────────────────────────────────────────────── */
 
 .tray-search {
@@ -219,8 +360,9 @@
 }
 
 .tray-add-form input,
-.tray-add-account,
-.tray-add-folder {
+/* The shared <Dropdown> triggers (destination vault / folder / collection) match
+   the form's card-on-card field look rather than the default surface trigger. */
+.tray-add-form .dropdown-trigger {
   width: 100%;
   background: var(--card);
   border: 1px solid var(--border);
@@ -230,10 +372,13 @@
   color: var(--foreground);
   outline: none;
 }
+.tray-add-form .dropdown-trigger:hover {
+  background: var(--card);
+}
 
 .tray-add-form input:focus,
-.tray-add-account:focus,
-.tray-add-folder:focus {
+.tray-add-form .dropdown.open .dropdown-trigger,
+.tray-add-form .dropdown-trigger:focus-visible {
   border-color: var(--primary);
 }
 

@@ -72,6 +72,13 @@ pub struct AutofillContext {
     /// store — it rides Bitwarden sync and the matcher recognizes it). None when
     /// neither is known.
     pub associate_uri: Option<String>,
+    /// Best-effort text already in the target's username/email box, used ONLY to
+    /// prefill a "save a new login here" prompt when nothing in the vault matches.
+    /// This is the single, deliberate exception to "no window contents cross IPC"
+    /// (see `autofill` mod docs): it is a username/email, **never** a password —
+    /// `IsPassword` controls are never read — and it rides the same opt-in as the
+    /// rest of detection. None when the box is empty or couldn't be read.
+    pub typed_username: Option<String>,
 }
 
 /// A vault login ranked as a possible fill for the detected target. No password —

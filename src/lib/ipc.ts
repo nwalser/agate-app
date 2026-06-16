@@ -125,6 +125,7 @@ export const ipc = {
 
   updateConnection: (
     email: string,
+    name: string | null,
     server: ServerConfig,
     storeCredentials: boolean,
     password?: string,
@@ -132,6 +133,7 @@ export const ipc = {
   ): Promise<LoginResult> =>
     invoke('update_connection', {
       email,
+      name,
       server,
       storeCredentials,
       password: password ?? null,
@@ -184,6 +186,23 @@ export const ipc = {
     storeCredentials: boolean,
   ): Promise<void> =>
     invoke('create_keepass_connection', { path, password, keyfile, storeCredentials }),
+
+  /** Edit a KeePass connection's settings: its display name and/or whether its
+   *  database password is remembered. `password` is required only when turning
+   *  "remember" on (it is verified and sealed); a name-only or remember-off
+   *  change leaves it null. */
+  updateKeepassConnection: (
+    path: string,
+    name: string | null,
+    storeCredentials: boolean,
+    password?: string,
+  ): Promise<void> =>
+    invoke('update_keepass_connection', {
+      path,
+      name,
+      storeCredentials,
+      password: password ?? null,
+    }),
 
   /** Unlock one KeePass connection on demand (manual-unlock connections). The
    *  key file, when configured, is read from the connection record. */

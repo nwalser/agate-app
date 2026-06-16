@@ -15,6 +15,11 @@
 //!   both-field fill; tab order is the near-universal username→password sequence).
 //! - **One-time-code** box → the current TOTP code.
 //!
+//! Each value REPLACES the field's existing content: we send **Ctrl+A** (select all)
+//! right before typing, so a half-typed username/password is overwritten, not appended
+//! to. Select-all is only ever sent immediately before a stored value is typed — a
+//! field we have no value for is left untouched (never cleared to empty).
+//!
 //! After the value(s) land, we press **Enter** to submit ONLY when the user has
 //! opted in (`FillValues.submit`) — off by default, since some forms break on a
 //! premature submit. Submitting also drives multi-step (username-page → password-
@@ -55,7 +60,7 @@ use windows::Win32::UI::Accessibility::{
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP,
-    KEYEVENTF_UNICODE, VIRTUAL_KEY, VK_RETURN, VK_TAB,
+    KEYEVENTF_UNICODE, VIRTUAL_KEY, VK_A, VK_CONTROL, VK_RETURN, VK_TAB,
 };
 use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
 
@@ -114,14 +119,14 @@ pub fn fill(hwnd: isize, detected: AutofillField, values: &FillValues) -> AgateR
     let typed = match field {
         AutofillField::Password => match values.password {
             Some(pw) => {
-                type_unicode(pw)?;
+                type_replacing(pw)?;
                 true
             }
             None => false,
         },
         AutofillField::Totp => match values.totp {
             Some(code) => {
-                type_unicode(code)?;
+                type_replacing(code)?;
                 true
             }
             None => false,
@@ -148,10 +153,10 @@ pub fn fill(hwnd: isize, detected: AutofillField, values: &FillValues) -> AgateR
                         let is_pw =
                             unsafe { el.CurrentIsPassword() }.map(|b| b.as_bool()).unwrap_or(false);
                         if is_pw {
-                            type_unicode(pw)?;
+                            type_replacing(pw)?;
                         }
                     }
-                    None => type_unicode(pw)?,
+                    None => type_replacing(pw)?,
                 }
             }
             // Even a username-only fill (no stored password) counts as typed, so an
@@ -184,25 +189,21 @@ unsafe fn wait_for_focused_element() -> Option<IUIAutomationElement> {
     }
 }
 
-/// Type a non-secret value and confirm it landed by reading the control's value
-/// back via UIA `ValuePattern`; on a mismatch, clear + retype once. This catches
-/// the "focus wasn't really in the field" silent no-fill. Used only for the
-/// username — a masked password field reports no readable value, so it is never
-/// verified (a read-back can't tell "didn't land" from "masked"). Best-effort: if
-/// the control exposes no ValuePattern we just trust the first type.
+/// Type a non-secret value (REPLACING any existing content) and confirm it landed by
+/// reading the control's value back via UIA `ValuePattern`; on a readable mismatch,
+/// replace once more. This catches the "focus wasn't really in the field" silent
+/// no-fill. Used only for the username — a masked password field reports no readable
+/// value, so it is never verified (a read-back can't tell "didn't land" from
+/// "masked"). Best-effort: if the control exposes no ValuePattern we trust the first
+/// type. The retry is safe because `type_replacing` overwrites — it never appends to
+/// whatever the field already held.
 fn type_and_verify(text: &str, focused: Option<&IUIAutomationElement>) -> AgateResult<()> {
-    type_unicode(text)?;
+    type_replacing(text)?;
     let Some(el) = focused else { return Ok(()) };
-    if unsafe { read_value(el) }.as_deref() == Some(text) {
-        return Ok(());
-    }
-    // Mismatch (or unreadable): if the field now holds some OTHER text, selecting
-    // all + retyping would be needed — but we don't synthesize Ctrl+A here (risk of
-    // unexpected accelerators). Only retype when the field reads back empty, the
-    // common "nothing landed" case; otherwise leave the first attempt as-is.
     match unsafe { read_value(el) } {
-        Some(v) if v.is_empty() => type_unicode(text),
-        _ => Ok(()),
+        Some(v) if v == text => Ok(()),    // landed
+        Some(_) => type_replacing(text),   // wrong / empty → replace once more
+        None => Ok(()),                    // unreadable → trust the first type
     }
 }
 
@@ -285,6 +286,27 @@ fn type_unicode(text: &str) -> AgateResult<()> {
         return Ok(());
     }
     send(&inputs)
+}
+
+/// Type `text` so it REPLACES the focused field's content: select-all first, then
+/// type — a half-typed value is overwritten, never appended. Harmless on an empty
+/// field (select-all selects nothing). Only ever called with a real stored value, so
+/// a field is never cleared and left empty.
+fn type_replacing(text: &str) -> AgateResult<()> {
+    select_all()?;
+    type_unicode(text)
+}
+
+/// Select all of the focused control's text (Ctrl+A) so the value typed next replaces
+/// it. Ctrl is held down across the 'A' press — 'A' is sent as a virtual key (not a
+/// Unicode event, which would ignore the held modifier).
+fn select_all() -> AgateResult<()> {
+    send(&[
+        vk_event(VK_CONTROL, false),
+        vk_event(VK_A, false),
+        vk_event(VK_A, true),
+        vk_event(VK_CONTROL, true),
+    ])
 }
 
 /// Press and release Tab (a virtual-key, not a Unicode char) to move focus from the

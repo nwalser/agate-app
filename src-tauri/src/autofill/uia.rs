@@ -113,6 +113,18 @@ pub fn detect_focused(own_pid: u32, denylist: &[String]) -> Option<Detected> {
             super::matching::classify_field(false, is_edit, &[&name, &automation_id, &help])?
         };
 
+        // Best-effort: the text already in the username/email box, so a
+        // "save a new login here" prompt can prefill it. Read ONLY off a
+        // non-secret edit — never a password control (the focused secret field
+        // itself, or any `IsPassword` node we walk to, is skipped). When the
+        // focused field IS the username box, read it directly; when it's the
+        // password box, walk its form for a sibling username box.
+        let typed_username = match field {
+            AutofillField::Username => element_value(&element),
+            AutofillField::Password => nearby_username_value(&automation, &element),
+            AutofillField::Totp => None,
+        };
+
         let process = raw_process;
 
         // A browser (or the shared WebView2 runtime) hosts many unrelated sites
@@ -140,10 +152,91 @@ pub fn detect_focused(own_pid: u32, denylist: &[String]) -> Option<Detected> {
                 window_title: window_title(foreground),
                 url,
                 associate_uri,
+                typed_username,
             },
             hwnd: foreground.0 as isize,
         })
     }
+}
+
+/// Read a non-secret edit control's current text via its Value pattern (trimmed,
+/// None when empty / unavailable). Guards `IsPassword` so a secret value is never
+/// read — defence in depth, since callers only pass non-password fields.
+unsafe fn element_value(element: &IUIAutomationElement) -> Option<String> {
+    if element.CurrentIsPassword().map(|b| b.as_bool()).unwrap_or(false) {
+        return None;
+    }
+    let pattern = element.GetCurrentPattern(UIA_ValuePatternId).ok()?;
+    let value: IUIAutomationValuePattern = pattern.cast().ok()?;
+    let text = value.CurrentValue().ok()?.to_string();
+    let text = text.trim();
+    (!text.is_empty()).then(|| text.to_string())
+}
+
+/// Best-effort: find the username/email box belonging to the same form as a focused
+/// password field and return its typed value. Walks a few ancestors up to a likely
+/// form container, then does a bounded depth-first scan of that subtree for the first
+/// non-secret edit control whose accessible label classifies as a username (reusing
+/// the platform-agnostic [`super::matching::classify_field`]). Never reads a password
+/// control. None when no such field is found within the node budget.
+///
+/// ⚠️ Live UIA tree shape varies per app/toolkit — this is a heuristic that must be
+/// verified on-device (CLAUDE.md DoD §3); a miss just means the save prompt isn't
+/// pre-seeded with the username, never a wrong fill.
+unsafe fn nearby_username_value(
+    automation: &IUIAutomation,
+    focused: &IUIAutomationElement,
+) -> Option<String> {
+    let walker: IUIAutomationTreeWalker = automation.ControlViewWalker().ok()?;
+    // Climb a few levels so the scan covers the whole form, not just the password
+    // field's immediate row. Stop early if we run out of ancestors.
+    let mut root = focused.clone();
+    for _ in 0..3 {
+        match walker.GetParentElement(&root) {
+            Ok(parent) => root = parent,
+            Err(_) => break,
+        }
+    }
+    // Bounded DFS over the container subtree (node budget guards a huge tree).
+    let mut stack = vec![root];
+    let mut budget = 200u32;
+    while let Some(node) = stack.pop() {
+        if budget == 0 {
+            break;
+        }
+        budget -= 1;
+        let is_password = node.CurrentIsPassword().map(|b| b.as_bool()).unwrap_or(false);
+        if !is_password {
+            let is_edit =
+                node.CurrentControlType().map(|t| t == UIA_EditControlTypeId).unwrap_or(false);
+            if is_edit {
+                let name = bstr(node.CurrentName());
+                let automation_id = bstr(node.CurrentAutomationId());
+                let help = bstr(node.CurrentHelpText());
+                if matches!(
+                    super::matching::classify_field(false, true, &[&name, &automation_id, &help]),
+                    Some(AutofillField::Username)
+                ) {
+                    if let Some(value) = element_value(&node) {
+                        return Some(value);
+                    }
+                }
+            }
+        }
+        // Push every child so the scan is a true DFS over the subtree.
+        if let Ok(child) = walker.GetFirstChildElement(&node) {
+            let mut sibling = child;
+            loop {
+                let next = walker.GetNextSiblingElement(&sibling);
+                stack.push(sibling);
+                match next {
+                    Ok(n) => sibling = n,
+                    Err(_) => break,
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Read a BSTR-returning UIA property into a plain String (empty on error). Used

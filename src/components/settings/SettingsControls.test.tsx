@@ -2,7 +2,7 @@
 // option picker used on every Settings page, so their behaviour (click toggles,
 // click selects, aria reflects state) is the contract every page relies on.
 
-import { cleanup, fireEvent, render } from '@solidjs/testing-library';
+import { cleanup, fireEvent, render, screen } from '@solidjs/testing-library';
 import { createSignal } from 'solid-js';
 import { afterEach, describe, expect, it } from 'vitest';
 import { Select, Switch, ToggleRow } from './SettingsControls.tsx';
@@ -48,7 +48,7 @@ describe('ToggleRow', () => {
 describe('Select', () => {
   afterEach(cleanup);
 
-  it('reflects the selected value and reports the typed (numeric) value on change', () => {
+  it('reflects the selected value and reports the typed (numeric) value on change', async () => {
     const [v, setV] = createSignal(5);
     render(() => (
       <Select
@@ -62,11 +62,15 @@ describe('Select', () => {
         ]}
       />
     ));
-    const sel = document.querySelector<HTMLSelectElement>('.setting-select')!;
-    expect(sel.value).toBe('5');
-    fireEvent.change(sel, { target: { value: '60' } });
+    // The trigger shows the selected option's label, not its raw value.
+    const trigger = screen.getByRole('combobox', { name: 'threshold' });
+    expect(trigger.textContent).toContain('Five');
+    // Open the menu and pick "Sixty".
+    fireEvent.click(trigger);
+    fireEvent.click(await screen.findByRole('option', { name: 'Sixty' }));
     // onChange must hand back the original number, not the stringified option value.
     expect(v()).toBe(60);
     expect(typeof v()).toBe('number');
+    expect(trigger.textContent).toContain('Sixty');
   });
 });

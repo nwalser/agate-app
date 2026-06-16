@@ -153,6 +153,16 @@
   color: var(--foreground);
 }
 
+/* The pinned default-vault star: accent colour + filled glyph, kept on hover. */
+.tray-vaults .tv-actions button.tv-default-on,
+.tray-vaults .tv-actions button.tv-default-on:hover {
+  color: var(--primary);
+}
+
+.tray-vaults .tv-actions button.tv-default-on svg {
+  fill: var(--primary);
+}
+
 /* ── Inline panel under a row (unlock / edit / remove) ──────────────────── */
 
 .tray-vaults .tv-panel {
@@ -318,12 +328,17 @@
 }
 
 .tray-vaults .tv-field input,
-.tray-vaults .tv-field select {
+/* The shared <Dropdown> trigger (provider / server pickers) matches the form's
+   card-on-card field look. */
+.tray-vaults .tv-field .dropdown-trigger {
   width: 100%;
   font-size: 13px;
   padding: 8px 10px;
   background: var(--card);
   border-radius: var(--radius);
+}
+.tray-vaults .tv-field .dropdown-trigger:hover {
+  background: var(--card);
 }
 
 .tray-vaults .tv-hint {

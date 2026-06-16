@@ -1,0 +1,100 @@
+/* The custom dropdown picker (see Dropdown.tsx). Design tokens only — never a
+   hardcoded color (CLAUDE.md). The trigger mirrors the input/select look from
+   styles.css so a Dropdown sits flush beside text inputs in a form; the menu is
+   a portaled, elevated surface. Square design: the global `border-radius: 0
+   !important` keeps corners sharp here too. */
+
+.dropdown {
+  position: relative;
+  width: 100%;
+}
+
+/* Trigger — looks like the global input/select (styles.css) but is a button. */
+.dropdown-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  font-family: inherit;
+  font-size: 13px;
+  text-align: left;
+  color: var(--foreground);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 9px 11px;
+  cursor: pointer;
+  transition: border-color 0.12s;
+}
+.dropdown-trigger:hover {
+  /* Override the global button:hover fill — the trigger reads as a field. */
+  background: var(--surface);
+  border-color: var(--border-strong);
+}
+.dropdown.open .dropdown-trigger,
+.dropdown-trigger:focus-visible {
+  border-color: var(--primary);
+  outline: none;
+}
+.dropdown-trigger:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.dropdown-trigger-label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.dropdown-chevron {
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+  transition: transform 0.15s;
+}
+.dropdown.open .dropdown-chevron {
+  transform: rotate(180deg);
+}
+
+/* Menu — portaled to <body>, positioned fixed against the trigger rect. */
+.dropdown-menu {
+  position: fixed;
+  z-index: var(--z-menu);
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.dropdown-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 9px;
+  font-size: 13px;
+  color: var(--foreground);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+/* Pointer hover and keyboard highlight share one resting state. */
+.dropdown-option.active {
+  background: var(--card-hover);
+}
+.dropdown-option.selected {
+  color: var(--primary);
+  font-weight: 600;
+}
+.dropdown-option-label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.dropdown-option-check {
+  flex-shrink: 0;
+  color: var(--primary);
+}

@@ -56,7 +56,16 @@ url: string | null;
  * store — it rides Bitwarden sync and the matcher recognizes it). None when
  * neither is known.
  */
-associateUri: string | null }
+associateUri: string | null; 
+/**
+ * Best-effort text already in the target's username/email box, used ONLY to
+ * prefill a "save a new login here" prompt when nothing in the vault matches.
+ * This is the single, deliberate exception to "no window contents cross IPC"
+ * (see `autofill` mod docs): it is a username/email, **never** a password —
+ * `IsPassword` controls are never read — and it rides the same opt-in as the
+ * rest of detection. None when the box is empty or couldn't be read.
+ */
+typedUsername: string | null }
 
 /**
  * Which kind of login field was detected — so the popup knows what a fill would
@@ -141,7 +150,13 @@ export type CardInput = { cardholderName: string | null; number: string | null; 
  * A decrypted collection (a shared-vault grouping). Per-connection in the
  * unified view, like folders. Read-only browsing for now.
  */
-export type Collection = { id: string; name: string; organizationId: string; accountEmail: string; accountLabel: string }
+export type Collection = { id: string; name: string; organizationId: string; 
+/**
+ * The owning organization's display name (from the sync profile). Empty when
+ * the name isn't known yet (e.g. profile lacked it) — the UI falls back to a
+ * generic label so the org is still selectable.
+ */
+organizationName: string; accountEmail: string; accountLabel: string }
 
 /**
  * One configured connection for the unlock screen, settings, and the
@@ -170,7 +185,13 @@ export type ConnectionSummary = {
 /**
  * Which provider backs this connection.
  */
-kind: ConnectionKind; email: string; serverLabel: string; 
+kind: ConnectionKind; email: string; 
+/**
+ * Optional user-given display name; when set it overrides the derived label
+ * (the account email / database file name) in the UI. `None` = use the
+ * derived label.
+ */
+name: string | null; serverLabel: string; 
 /**
  * The full server config, so the add-connection form can prefill it.
  */

@@ -184,6 +184,10 @@ pub struct Collection {
     pub id: String,
     pub name: String,
     pub organization_id: String,
+    /// The owning organization's display name (from the sync profile). Empty when
+    /// the name isn't known yet (e.g. profile lacked it) — the UI falls back to a
+    /// generic label so the org is still selectable.
+    pub organization_name: String,
     pub account_email: String,
     pub account_label: String,
 }
