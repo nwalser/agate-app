@@ -15,6 +15,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Least privilege: every job here only reads the repo. (A job that needs more
+# must request it explicitly.) Pinned action SHAs below close the other half of
+# the supply-chain gap — a moved tag can't inject new action code.
+permissions:
+  contents: read
+
 jobs:
   # JS gate — typecheck + eslint + vitest (incl. the i18n locale-parity test).
   # Linux-only: no Rust toolchain needed, so it is fast and independent.
@@ -22,8 +28,8 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: lts/*
           cache: npm
@@ -41,7 +47,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
       # Tauri 2 links webkit2gtk-4.1 on Linux — required even to compile/clippy.
       - name: Install Linux build dependencies
@@ -50,14 +56,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           components: clippy
 
       # Caches ~/.cargo (incl. the large Bitwarden sdk-internal git checkout) and
       # src-tauri/target so the long first SDK compile is reused on warm runs.
       # Keyed per-OS by the action so the three matrix legs never collide.
-      - uses: swatinem/rust-cache@v2
+      - uses: swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: './src-tauri -> target'
           cache-on-failure: true
@@ -77,8 +83,8 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2
         with:
           manifest-path: ./src-tauri/Cargo.toml
 
@@ -89,9 +95,9 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@v2
+      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
         env:
           GITLEAKS_CONFIG: .gitleaks.toml
