@@ -129,7 +129,7 @@ describe('TraySettings — autofill denylist editor', () => {
     // Two removable chips → two remove buttons.
     const removes = screen.getAllByRole('button', { name: t('common.remove') });
     expect(removes).toHaveLength(2);
-    fireEvent.click(removes[0]);
+    fireEvent.click(removes[0]!);
 
     await waitFor(() => expect(screen.queryByText('discord')).toBeNull());
     const call = calls.find((c) => c.cmd === 'autofill_set_denylist');

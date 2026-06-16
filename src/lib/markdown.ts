@@ -126,18 +126,23 @@ export function parseMarkdown(src: string): Block[] {
 
   while (i < lines.length) {
     const line = lines[i];
+    // i < lines.length guarantees `line` is defined; noUncheckedIndexedAccess
+    // can't follow the loop invariant, so narrow it explicitly (never taken).
+    if (line === undefined) break;
 
     if (line.trim() === '') {
       i++;
       continue;
     }
 
-    // ``` fenced code block — content is verbatim until the closing fence (or EOF)
+    // ``` fenced code block — content is verbatim until the closing fence (or EOF).
+    // `cur = lines[i]` is undefined exactly when i >= lines.length, so the
+    // `cur !== undefined` guard IS the bounds check.
     if (line.trim().startsWith('```')) {
       i++;
       const code: string[] = [];
-      while (i < lines.length && !lines[i].trim().startsWith('```')) {
-        code.push(lines[i]);
+      for (let cur = lines[i]; cur !== undefined && !cur.trim().startsWith('```'); cur = lines[i]) {
+        code.push(cur);
         i++;
       }
       if (i < lines.length) i++; // consume the closing fence
@@ -147,15 +152,18 @@ export function parseMarkdown(src: string): Block[] {
 
     const heading = RE_HEADING.exec(line);
     if (heading) {
-      blocks.push({ t: 'h', level: heading[1].length, c: parseInline(heading[2]) });
+      // Groups 1 (the #s) and 2 (the text) exist for any RE_HEADING match.
+      const hashes = heading[1] ?? '';
+      const text = heading[2] ?? '';
+      blocks.push({ t: 'h', level: hashes.length, c: parseInline(text) });
       i++;
       continue;
     }
 
     if (RE_QUOTE.test(line)) {
       const quote: string[] = [];
-      while (i < lines.length && RE_QUOTE.test(lines[i])) {
-        quote.push(lines[i].replace(RE_QUOTE, ''));
+      for (let cur = lines[i]; cur !== undefined && RE_QUOTE.test(cur); cur = lines[i]) {
+        quote.push(cur.replace(RE_QUOTE, ''));
         i++;
       }
       blocks.push({ t: 'quote', c: parseInline(quote.join(' ')) });
@@ -164,8 +172,8 @@ export function parseMarkdown(src: string): Block[] {
 
     if (RE_UL.test(line)) {
       const items: Inline[][] = [];
-      while (i < lines.length && RE_UL.test(lines[i])) {
-        items.push(parseInline(lines[i].replace(RE_UL, '')));
+      for (let cur = lines[i]; cur !== undefined && RE_UL.test(cur); cur = lines[i]) {
+        items.push(parseInline(cur.replace(RE_UL, '')));
         i++;
       }
       blocks.push({ t: 'ul', items });
@@ -174,8 +182,8 @@ export function parseMarkdown(src: string): Block[] {
 
     if (RE_OL.test(line)) {
       const items: Inline[][] = [];
-      while (i < lines.length && RE_OL.test(lines[i])) {
-        items.push(parseInline(lines[i].replace(RE_OL, '')));
+      for (let cur = lines[i]; cur !== undefined && RE_OL.test(cur); cur = lines[i]) {
+        items.push(parseInline(cur.replace(RE_OL, '')));
         i++;
       }
       blocks.push({ t: 'ol', items });
@@ -184,8 +192,8 @@ export function parseMarkdown(src: string): Block[] {
 
     // Paragraph: gather consecutive lines until a blank line or a block start.
     const para: string[] = [];
-    while (i < lines.length && lines[i].trim() !== '' && !isBlockStart(lines[i])) {
-      para.push(lines[i]);
+    for (let cur = lines[i]; cur !== undefined && cur.trim() !== '' && !isBlockStart(cur); cur = lines[i]) {
+      para.push(cur);
       i++;
     }
     blocks.push({ t: 'p', c: parseInline(para.join(' ')) });

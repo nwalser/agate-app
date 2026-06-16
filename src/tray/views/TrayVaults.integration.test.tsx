@@ -270,7 +270,7 @@ describe('TrayVaults', () => {
 
     // The database picker button shows the picked file's NAME (path as title).
     // Two pickers show the choose-file label: database first, key file second.
-    fireEvent.click(screen.getAllByText(t('trayVaults.chooseFile'))[0]);
+    fireEvent.click(screen.getAllByText(t('trayVaults.chooseFile'))[0]!);
     const fileBtn = await screen.findByText('personal.kdbx');
     expect(fileBtn.getAttribute('title')).toBe(KDBX_PATH);
 

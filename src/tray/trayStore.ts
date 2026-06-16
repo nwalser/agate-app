@@ -316,9 +316,9 @@ export function loginNameFromUri(uri: string): string {
   const raw = uri.trim();
   if (!raw) return '';
   // Drop the scheme, then keep only the authority up to the first path/query.
-  const host = raw
+  const host = (raw
     .replace(/^[a-z][a-z0-9+.-]*:\/\//i, '')
-    .split(/[/?#]/)[0]
+    .split(/[/?#]/)[0] ?? '')
     .toLowerCase();
   if (!host) return '';
   const labels = host.split('.').filter(Boolean);
@@ -339,7 +339,7 @@ export function domainOf(uri: string): string {
   if (!raw) return '';
   const afterScheme = raw.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '');
   const authority = afterScheme.split(/[/?#]/)[0] ?? '';
-  const host = (authority.split('@').pop() ?? authority).split(':')[0].toLowerCase();
+  const host = ((authority.split('@').pop() ?? authority).split(':')[0] ?? '').toLowerCase();
   const bare = host.startsWith('www.') ? host.slice(4) : host;
   return bare.includes('.') ? bare : '';
 }
