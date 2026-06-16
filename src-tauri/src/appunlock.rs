@@ -318,33 +318,46 @@ async fn unlock_one(state: &AppState, email: &str, vmk: &[u8; 32]) -> Result<(),
     }
 }
 
+/// Shared scaffold for the file-based providers (KeePass / Enpass / pass): load
+/// the sealed credentials, open the vault OFF the async runtime, and insert the
+/// resulting live variant. The provider-specific differences (argument order and
+/// whether the key file is optional) live entirely in `open`; everything around
+/// it — the load, the zeroized password, the `spawn_blocking`, the insert — was
+/// copy-pasted per provider and now lives here once.
+async fn unlock_one_file(
+    state: &AppState,
+    id: &str,
+    vmk: &[u8; 32],
+    interrupted: &'static str,
+    open: impl FnOnce(StoredConnection, Zeroizing<String>) -> AgateResult<crate::providers::LiveConnection>
+        + Send
+        + 'static,
+) -> Result<(), String> {
+    let stored = load_connection(id, vmk).map_err(|e| e.message)?;
+    let pw = Zeroizing::new(stored.master_password.clone());
+    let conn = tokio::task::spawn_blocking(move || open(stored, pw))
+        .await
+        .map_err(|_| interrupted.to_string())?
+        .map_err(|e| e.message)?;
+    state.session.lock().await.connections.insert(id.to_string(), conn);
+    Ok(())
+}
+
 /// Unlock one KeePass connection from its sealed credentials: open the database
 /// with the stored password (+ key file) off the async runtime, then add it live.
 /// No network, no 2FA — the only failure mode is a missing/corrupt/changed file
 /// or key, reported as a message.
 async fn unlock_one_keepass(state: &AppState, id: &str, vmk: &[u8; 32]) -> Result<(), String> {
-    let stored = load_connection(id, vmk).map_err(|e| e.message)?;
-    let path = stored.path.clone().unwrap_or_else(|| stored.email.clone());
-    let keyfile = stored.keyfile.clone();
-    let pw = Zeroizing::new(stored.master_password.clone());
-    let conn = tokio::task::spawn_blocking(move || {
-        crate::providers::KeepassConnection::open(
+    unlock_one_file(state, id, vmk, "database open was interrupted", |stored, pw| {
+        let path = stored.path.clone().unwrap_or_else(|| stored.email.clone());
+        let conn = crate::providers::KeepassConnection::open(
             std::path::Path::new(&path),
             pw.as_str(),
-            keyfile.as_deref().map(std::path::Path::new),
-        )
+            stored.keyfile.as_deref().map(std::path::Path::new),
+        )?;
+        Ok(crate::providers::LiveConnection::Keepass(conn))
     })
     .await
-    .map_err(|_| "database open was interrupted".to_string())?
-    .map_err(|e| e.message)?;
-
-    state
-        .session
-        .lock()
-        .await
-        .connections
-        .insert(id.to_string(), crate::providers::LiveConnection::Keepass(conn));
-    Ok(())
 }
 
 /// Unlock one `pass` connection from its sealed credentials: re-open the store
@@ -352,59 +365,36 @@ async fn unlock_one_keepass(state: &AppState, id: &str, vmk: &[u8; 32]) -> Resul
 /// live. No network, no 2FA — failures are a missing/unreadable store or a wrong
 /// key, reported as a message.
 async fn unlock_one_pass(state: &AppState, id: &str, vmk: &[u8; 32]) -> Result<(), String> {
-    let stored = load_connection(id, vmk).map_err(|e| e.message)?;
-    let root = stored.path.clone().unwrap_or_else(|| stored.email.clone());
-    let key_file = stored
-        .keyfile
-        .clone()
-        .ok_or_else(|| "No OpenPGP key file path stored for this connection.".to_string())?;
-    let pw = Zeroizing::new(stored.master_password.clone());
-    let conn = tokio::task::spawn_blocking(move || {
-        crate::providers::PassConnection::open(
+    unlock_one_file(state, id, vmk, "password store open was interrupted", |stored, pw| {
+        let root = stored.path.clone().unwrap_or_else(|| stored.email.clone());
+        // pass needs the OpenPGP key file — it is mandatory here, unlike KeePass.
+        let key_file = stored.keyfile.clone().ok_or_else(|| {
+            AgateError::bad_request("No OpenPGP key file path stored for this connection.")
+        })?;
+        let conn = crate::providers::PassConnection::open(
             std::path::Path::new(&root),
             std::path::Path::new(&key_file),
             pw.as_str(),
-        )
+        )?;
+        Ok(crate::providers::LiveConnection::Pass(conn))
     })
     .await
-    .map_err(|_| "password store open was interrupted".to_string())?
-    .map_err(|e| e.message)?;
-
-    state
-        .session
-        .lock()
-        .await
-        .connections
-        .insert(id.to_string(), crate::providers::LiveConnection::Pass(conn));
-    Ok(())
 }
 
 /// Unlock one Enpass connection from its sealed credentials: re-open the vault
 /// with the stored password (+ key file) off the async runtime, then add it live.
 /// No network, no 2FA — like the KeePass path.
 async fn unlock_one_enpass(state: &AppState, id: &str, vmk: &[u8; 32]) -> Result<(), String> {
-    let stored = load_connection(id, vmk).map_err(|e| e.message)?;
-    let path = stored.path.clone().unwrap_or_else(|| stored.email.clone());
-    let keyfile = stored.keyfile.clone();
-    let pw = Zeroizing::new(stored.master_password.clone());
-    let conn = tokio::task::spawn_blocking(move || {
-        crate::providers::EnpassConnection::open(
+    unlock_one_file(state, id, vmk, "vault open was interrupted", |stored, pw| {
+        let path = stored.path.clone().unwrap_or_else(|| stored.email.clone());
+        let conn = crate::providers::EnpassConnection::open(
             std::path::Path::new(&path),
             pw.as_str(),
-            keyfile.as_deref().map(std::path::Path::new),
-        )
+            stored.keyfile.as_deref().map(std::path::Path::new),
+        )?;
+        Ok(crate::providers::LiveConnection::Enpass(conn))
     })
     .await
-    .map_err(|_| "vault open was interrupted".to_string())?
-    .map_err(|e| e.message)?;
-
-    state
-        .session
-        .lock()
-        .await
-        .connections
-        .insert(id.to_string(), crate::providers::LiveConnection::Enpass(conn));
-    Ok(())
 }
 
 /// Unlock one Proton Pass connection from its sealed credentials by re-running the
