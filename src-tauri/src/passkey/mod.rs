@@ -24,7 +24,14 @@
 
 pub mod authenticator;
 pub mod codec;
+pub mod host;
 pub mod ipc;
 pub mod store;
+
+// Windows 11 24H2+ plugin-authenticator COM server. Off by default + Windows-only
+// — a header-transcribed binding that needs MSIX packaging + a real machine to
+// run (see the module docs). Build with `--features win-plugin-authenticator`.
+#[cfg(all(target_os = "windows", feature = "win-plugin-authenticator"))]
+pub mod win_plugin;
 
 pub use store::{CoseAlgorithm, PasskeyTarget, StoredPasskey};

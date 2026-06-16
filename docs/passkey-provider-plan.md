@@ -42,20 +42,42 @@ Built + tested:
   strips the KPEX attributes on KeePass (non-destructive — the login survives)
   and drops the FIDO2 credential from a Bitwarden cipher. i18n in en/de/es.
 - **Layer C IPC contract** — `passkey/ipc.rs` defines the shim↔tray messages
-  (the M1 model): destination + CBOR-carried CTAP request/response. Contract +
-  docs only; the native transport/shim isn't built (see below).
-- **140 Rust + 299 frontend tests pass, clippy `-D warnings` clean.** The KeePass
-  remove is covered by a Rust unit test *and* a tray integration test.
+  (the M1 model): destination + CBOR-carried CTAP request/response.
+- **Ceremony host** (`passkey/host.rs`) — the cross-platform bridge that decodes
+  a CBOR CTAP2 request, runs the ceremony, and encodes the CBOR response.
+  **Tested**: a full CBOR make→store-in-KeePass→assert round-trip. This is what
+  any OS shim calls.
+- **Windows plugin-authenticator COM server, in Rust** (`passkey/win_plugin.rs`,
+  behind `--features win-plugin-authenticator`, off by default) — `IPluginAuthenticator`
+  (IID + methods + the `WEBAUTHN_PLUGIN_*` structs transcribed from Microsoft's
+  public `microsoft/webauthn` headers) implemented via windows-rs `#[implement]`,
+  an `IClassFactory`, `CoRegisterClassObject`, and the `WebAuthNPlugin*` externs.
+  `MakeCredential`/`GetAssertion` bridge to `passkey::host` through a
+  `PluginCeremonyHost` seam the tray implements. **Type-checks (`cargo check
+  --features …`); NOT runtime-verified** (see below).
+- **145 Rust + 299 frontend tests pass, clippy `-D warnings` clean** (default and
+  with the feature). KeePass remove is covered by a Rust unit *and* tray
+  integration test; the CBOR host by a round-trip test.
 
-Not built yet (clearly staged):
+Not built yet / needs a real machine (clearly staged):
+- **Windows COM server: the un-verifiable last mile.** The Rust binding compiles,
+  but to actually function it needs, on a Win11 24H2+ box: (a) **MSIX packaging**
+  that registers `AGATE_PLUGIN_CLSID` as a passkey provider; (b) the
+  `PluginCeremonyHost` **tray implementation** (resolve the unlocked connection +
+  show the destination chooser + supply the Hello UV + run `passkey::host` via
+  `block_in_place`/`block_on`); (c) **request-signature verification** against the
+  key from `WebAuthNPluginAddAuthenticator`; (d) a real `authenticatorGetInfo`
+  CBOR blob at registration; (e) confirming the struct ABI + the (still
+  `EXPERIMENTAL_*`) `webauthn.dll` exports against the SDK it links. None of these
+  are verifiable here.
+- **macOS / Linux Layer C** — appex (mac) has the same shape via `host`; Linux has
+  no OS provider API (§5.3).
 - **Bitwarden assertion read** — `find_passkeys_for_rp` / `get_passkey` still
-  return empty for Bitwarden, so Agate can store a Bitwarden passkey but can't yet
-  assert one from it. (Blocked-ish: the SDK's `decrypt_fido2_credentials` yields a
-  `Fido2CredentialView` whose `key_value` stays an `EncString` — getting the
-  plaintext key for signing needs a `Fido2CredentialFullView` path to confirm.)
-- **The ceremony destination chooser UI** — the backend takes a `PasskeyTarget`;
-  the popup that lets the user pick vault/item/folder *during a registration*
-  only appears when the OS hands Agate a ceremony, i.e. with Layer C.
+  return empty for Bitwarden. (Blocked-ish: `decrypt_fido2_credentials` yields a
+  `Fido2CredentialView` whose `key_value` stays an `EncString`; the plaintext key
+  for signing needs a `Fido2CredentialFullView` path to confirm.)
+- **The ceremony destination chooser UI** — part of the `PluginCeremonyHost` tray
+  impl above; only fires when the OS hands Agate a ceremony (Layer C).
 - **OS integration (Layer C)** — §5; the `make_credential` / `get_assertion`
   entry points exist and are tested, but nothing calls them yet (the native shim
   isn't buildable/verifiable here), so they sit under documented

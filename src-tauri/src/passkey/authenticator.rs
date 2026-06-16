@@ -118,8 +118,7 @@ fn ceremony_status(status: StatusCode) -> AgateError {
 /// Run a make-credential (registration) ceremony, storing the new credential in
 /// `conn` at `target` (the item/folder the user chose). `user_validation` is the
 /// consent/verification gate — the OS shim supplies a Windows Hello / Touch ID
-/// backed implementation.
-#[allow(dead_code)] // entry point for the OS integration shim (Layer C); not yet wired.
+/// backed implementation. Driven by [`super::host`] (CBOR bridge).
 pub async fn make_credential<U>(
     conn: &mut LiveConnection,
     request: MakeCredentialRequest,
@@ -135,7 +134,7 @@ where
 }
 
 /// Run a get-assertion (sign-in) ceremony against the credentials in `conn`.
-#[allow(dead_code)] // entry point for the OS integration shim (Layer C); not yet wired.
+/// Driven by [`super::host`] (CBOR bridge).
 pub async fn get_assertion<U>(
     conn: &mut LiveConnection,
     request: GetAssertionRequest,

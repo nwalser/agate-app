@@ -107,6 +107,7 @@ dependencies = [
  "bitwarden-vault",
  "cbc 0.1.2",
  "chrono",
+ "ciborium",
  "coset 0.3.8",
  "hmac 0.12.1",
  "keepass",
@@ -145,6 +146,7 @@ dependencies = [
  "tokio",
  "uuid",
  "windows 0.58.0",
+ "windows-core 0.58.0",
  "zeroize",
  "zxcvbn",
 ]
