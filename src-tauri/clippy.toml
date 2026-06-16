@@ -1,0 +1,8 @@
+# Exempt test code from the unwrap/expect/dbg denials declared in Cargo.toml's
+# [lints.clippy]. Tests may unwrap/expect/dbg freely; non-test code may not.
+# This is what lets the deny-lints stay quiet on the 200+ test-module unwraps
+# without a per-module #[allow].
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-dbg-in-tests = true

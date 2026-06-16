@@ -101,6 +101,7 @@ pub fn run() {
             pick_keepass_new_database,
             add_keepass_connection,
             create_keepass_connection,
+            update_keepass_connection,
             unlock_keepass_connection,
             pick_pass_store,
             pick_pass_keyfile,
@@ -156,5 +157,10 @@ pub fn run() {
             autofill_dismiss,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running Agate");
+        .unwrap_or_else(|e| {
+            // A run() error is a fatal startup failure (e.g. context/asset
+            // load); there is no recovery and no window yet to surface it in.
+            log::error!("fatal: error while running Agate: {e}");
+            std::process::exit(1);
+        });
 }
