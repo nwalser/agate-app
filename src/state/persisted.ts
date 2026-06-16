@@ -33,6 +33,18 @@ export interface PersistedStore<T> {
   set: (next: T) => void;
   /** Reset to the fallback and persist it. */
   reset: () => void;
+  /** Remove the key from storage entirely and drop the signal to the fallback —
+   *  for callers that want the key ABSENT (e.g. clear-on-logout), not written as
+   *  the default value. */
+  clear: () => void;
+  /** Re-read from storage into the signal. For the multi-webview case: the tray
+   *  popup and the main window share localStorage but NOT signals, so a value the
+   *  other window wrote since this store loaded only reaches here on a re-read
+   *  (call it when the window regains focus / is shown). */
+  refresh: () => void;
+  /** The CURRENT persisted value as a fresh read (not the in-memory signal), for
+   *  callers that merge over what other webviews persisted before writing. */
+  peek: () => T;
 }
 
 export function createPersistedStore<T>(opts: PersistedStoreOptions<T>): PersistedStore<T> {
@@ -71,6 +83,16 @@ export function createPersistedStore<T>(opts: PersistedStoreOptions<T>): Persist
       const next = opts.fallback();
       setSignal(() => next);
       persist(next);
+    },
+    refresh: () => setSignal(() => read()),
+    peek: read,
+    clear: () => {
+      try {
+        localStorage.removeItem(opts.key);
+      } catch {
+        // ignore: removal is best-effort; the in-memory signal still resets
+      }
+      setSignal(() => opts.fallback());
     },
   };
 }
