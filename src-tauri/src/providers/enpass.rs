@@ -84,7 +84,6 @@ use std::path::{Path, PathBuf};
 use aes::Aes256;
 use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Nonce};
-use bitwarden_vault::generate_totp;
 // `cbc` re-exports the `cipher` crate, so we get its traits without depending on
 // `cipher` directly (the orchestrator only adds aes/cbc/hmac/sha*/pbkdf2).
 use cbc::cipher::{BlockDecryptMut, KeyIvInit};
@@ -394,12 +393,7 @@ impl EnpassConnection {
         let secret = item
             .first_field_value(FIELD_TYPE_TOTP)
             .ok_or_else(|| AgateError::bad_request("Item has no TOTP secret."))?;
-        let now = Utc::now();
-        let response = generate_totp(secret, Some(now))
-            .map_err(|e| AgateError::new(ErrorKind::Crypto, format!("TOTP failed: {e}")))?;
-        let period = response.period;
-        let remaining = if period == 0 { 0 } else { period - (now.timestamp() as u32 % period) };
-        Ok(TotpCode { code: response.code, period, remaining })
+        crate::totp::current(secret)
     }
 
     /// Every folder, stamped with the connection id + label. Empty for vaults

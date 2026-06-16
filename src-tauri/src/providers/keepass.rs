@@ -30,8 +30,7 @@ use std::time::SystemTime;
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
-use bitwarden_vault::generate_totp;
-use chrono::{NaiveDateTime, Utc};
+use chrono::NaiveDateTime;
 use keepass::config::{DatabaseConfig, DatabaseVersion, KdfConfig};
 use keepass::db::{fields as kpf, Database, Entry, EntryId, EntryRef, GroupId, Times};
 use keepass::error::{DatabaseKeyError, DatabaseOpenError};
@@ -722,12 +721,7 @@ impl KeepassConnection {
         let entry = self.find_entry(item_id)?;
         let secret = non_empty(entry.get_raw_otp_value())
             .ok_or_else(|| AgateError::bad_request("Item has no TOTP secret."))?;
-        let now = Utc::now();
-        let response = generate_totp(secret, Some(now))
-            .map_err(|e| AgateError::new(ErrorKind::Crypto, format!("TOTP failed: {e}")))?;
-        let period = response.period;
-        let remaining = if period == 0 { 0 } else { period - (now.timestamp() as u32 % period) };
-        Ok(TotpCode { code: response.code, period, remaining })
+        crate::totp::current(secret)
     }
 
     /// Every group except the root and the recycle-bin subtree, as

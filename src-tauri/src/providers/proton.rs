@@ -68,7 +68,7 @@
 //! - `ItemType` is derived from the protobuf `Content` oneof discriminant:
 //!   login→Login, note→SecureNote, creditCard→Card, identity→Identity,
 //!   sshKey→SshKey, everything else (alias/wifi/custom)→Unknown.
-//! - TOTP = the login's `totp_uri` field, run through `bitwarden_vault::generate_totp`
+//! - TOTP = the login's `totp_uri` field, run through `crate::totp`
 //!   (same generator the other two providers use — it accepts an otpauth:// URI
 //!   or a bare base32 secret).
 //! - favorite/deleted come from the item flags (`Flags`) / trash state the Pass
@@ -81,7 +81,6 @@
 //! and high-risk. `save_item` etc. are intentionally absent (the orchestrator
 //! must not route writes here).
 
-use bitwarden_vault::generate_totp;
 use chrono::{TimeZone, Utc};
 use zeroize::{Zeroize, Zeroizing};
 
@@ -404,12 +403,7 @@ impl ProtonConnection {
             .filter(|t| !t.is_empty())
             .ok_or_else(|| AgateError::bad_request("Item has no TOTP secret."))?;
 
-        let now = Utc::now();
-        let response = generate_totp(secret, Some(now))
-            .map_err(|e| AgateError::new(ErrorKind::Crypto, format!("TOTP failed: {e}")))?;
-        let period = response.period;
-        let remaining = if period == 0 { 0 } else { period - (now.timestamp() as u32 % period) };
-        Ok(TotpCode { code: response.code, period, remaining })
+        crate::totp::current(secret)
     }
 
     /// Proton vaults (shares) map to folders. `folder_id` = `ShareID`.

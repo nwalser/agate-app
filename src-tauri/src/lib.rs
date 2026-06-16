@@ -32,6 +32,7 @@ mod server;
 mod setup;
 mod state;
 mod strength;
+mod totp;
 mod tray;
 mod vault;
 

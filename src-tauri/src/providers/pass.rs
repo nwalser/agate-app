@@ -60,7 +60,6 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use bitwarden_vault::generate_totp;
 use chrono::Utc;
 use sequoia_openpgp::cert::Cert;
 use sequoia_openpgp::crypto::SessionKey;
@@ -328,12 +327,7 @@ impl PassConnection {
             .totp
             .as_deref()
             .ok_or_else(|| AgateError::bad_request("Item has no TOTP secret."))?;
-        let now = Utc::now();
-        let response = generate_totp(secret.to_string(), Some(now))
-            .map_err(|e| AgateError::new(ErrorKind::Crypto, format!("TOTP failed: {e}")))?;
-        let period = response.period;
-        let remaining = if period == 0 { 0 } else { period - (now.timestamp() as u32 % period) };
-        Ok(TotpCode { code: response.code, period, remaining })
+        crate::totp::current(secret)
     }
 
     /// Every directory under the store root that contains entries, as

@@ -12,7 +12,7 @@ use bitwarden_api_api::models::CipherRequestModel;
 use bitwarden_collections::collection::{Collection as SdkCollection, CollectionView};
 use bitwarden_pm::PasswordManagerClient;
 use bitwarden_vault::{
-    generate_totp, Cipher, CipherRepromptType, CipherView, Fido2CredentialFullView,
+    Cipher, CipherRepromptType, CipherView, Fido2CredentialFullView,
     Fido2CredentialView, Folder as SdkFolder, FolderView,
 };
 use chrono::Utc;
@@ -23,6 +23,9 @@ use crate::passkey::codec::pkcs8_pem_to_der;
 use crate::passkey::{PasskeyTarget, StoredPasskey};
 use crate::vault::{view_to_detail, view_to_list_item};
 
+use super::LiveConnection;
+use crate::state::Session;
+
 /// One live, unlocked Bitwarden connection: its SDK client plus the last sync's
 /// encrypted ciphers / folders / collections.
 pub struct BitwardenConnection {
@@ -30,11 +33,42 @@ pub struct BitwardenConnection {
     pub ciphers: Vec<Cipher>,
     pub folders: Vec<SdkFolder>,
     pub collections: Vec<SdkCollection>,
+    /// Org id → display name, from the sync profile's organization memberships.
+    /// Lets `list_collections` stamp each collection with its org's name so the
+    /// UI can group "where to store" by organization.
+    pub organizations: std::collections::HashMap<String, String>,
+}
+
+// Bitwarden-specific accessors on the live `Session` live HERE, not in state.rs,
+// so the lowest config/data layer never names an SDK type — the Bitwarden SDK
+// stays contained to the provider layer (CLAUDE.md's containment promise).
+impl Session {
+    /// A fresh handle to a Bitwarden connection's SDK client (the inner `Client`
+    /// is cheap to clone — `Arc`-backed, sharing the unlocked key store). `None`
+    /// when the connection is absent or not a Bitwarden one.
+    pub fn client_for(&self, email: &str) -> Option<PasswordManagerClient> {
+        self.connections
+            .get(email)
+            .and_then(LiveConnection::bitwarden)
+            .map(|b| PasswordManagerClient(b.client.0.clone()))
+    }
+
+    /// Insert/replace a live Bitwarden connection.
+    pub fn insert_bitwarden(&mut self, email: String, client: PasswordManagerClient) {
+        self.connections
+            .insert(email, LiveConnection::Bitwarden(BitwardenConnection::new(client)));
+    }
 }
 
 impl BitwardenConnection {
     pub fn new(client: PasswordManagerClient) -> Self {
-        Self { client, ciphers: Vec::new(), folders: Vec::new(), collections: Vec::new() }
+        Self {
+            client,
+            ciphers: Vec::new(),
+            folders: Vec::new(),
+            collections: Vec::new(),
+            organizations: std::collections::HashMap::new(),
+        }
     }
 
     /// A fresh handle to the SDK client (`Arc`-backed, cheap, shares the
@@ -143,13 +177,7 @@ impl BitwardenConnection {
             .and_then(|l| l.totp.clone())
             .ok_or_else(|| AgateError::bad_request("Item has no TOTP secret."))?;
 
-        let now = Utc::now();
-        let response = generate_totp(secret, Some(now))
-            .map_err(|e| AgateError::new(ErrorKind::Crypto, format!("TOTP failed: {e}")))?;
-
-        let period = response.period;
-        let remaining = if period == 0 { 0 } else { period - (now.timestamp() as u32 % period) };
-        Ok(TotpCode { code: response.code, period, remaining })
+        crate::totp::current(secret)
     }
 
     pub fn list_folders(&self, id: &str, label: &str) -> Vec<Folder> {
@@ -176,13 +204,18 @@ impl BitwardenConnection {
         for collection in &self.collections {
             let decrypted: Result<CollectionView, _> = key_store.decrypt(collection);
             match decrypted {
-                Ok(view) => out.push(Collection {
-                    id: view.id.map(|i| i.to_string()).unwrap_or_default(),
-                    name: view.name,
-                    organization_id: view.organization_id.to_string(),
-                    account_email: id.to_string(),
-                    account_label: label.to_string(),
-                }),
+                Ok(view) => {
+                    let org_id = view.organization_id.to_string();
+                    let organization_name = self.organizations.get(&org_id).cloned().unwrap_or_default();
+                    out.push(Collection {
+                        id: view.id.map(|i| i.to_string()).unwrap_or_default(),
+                        name: view.name,
+                        organization_id: org_id,
+                        organization_name,
+                        account_email: id.to_string(),
+                        account_label: label.to_string(),
+                    })
+                }
                 Err(e) => log::warn!("skipping collection that failed to decrypt: {e}"),
             }
         }
@@ -348,6 +381,8 @@ pub(crate) struct SyncedMaterial {
     pub ciphers: Vec<Cipher>,
     pub folders: Vec<SdkFolder>,
     pub collections: Vec<SdkCollection>,
+    /// Org id → display name from the sync profile (see [`BitwardenConnection`]).
+    pub organizations: std::collections::HashMap<String, String>,
 }
 
 /// Ensure the client's `user_id` is set. The SDK's password-login flow
@@ -442,7 +477,20 @@ pub(crate) async fn sync_connection(
         }
     }
 
-    Ok(SyncedMaterial { ciphers, folders, collections })
+    // The sync profile lists the account's organization memberships (id + name) —
+    // cache id → name so collections can be grouped by their org in the UI.
+    let organizations = response
+        .profile
+        .as_ref()
+        .and_then(|p| p.organizations.as_ref())
+        .map(|orgs| {
+            orgs.iter()
+                .filter_map(|o| Some((o.id?.to_string(), o.name.clone().unwrap_or_default())))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Ok(SyncedMaterial { ciphers, folders, collections, organizations })
 }
 
 #[cfg(test)]

@@ -140,3 +140,46 @@ pub(crate) async fn send_email_code(
         .await
         .map_err(|e| AgateError::new(ErrorKind::Network, format!("Could not send email code: {e}")))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Pins the substring-based fallback (the SDK's password-manager error type is
+    // not stable enough to match on at the pinned rev — see classify_login_error).
+    // If the SDK changes its error wording, the live login path may regress
+    // silently; this locks the mapping so an intentional change is a visible diff.
+    #[test]
+    fn maps_bad_credentials_to_invalid_credentials() {
+        for msg in [
+            "Username or password is incorrect",
+            "Two-step token is invalid", // unrelated wording → not creds
+            "invalid_grant",
+            "error response: invalid_grant",
+        ] {
+            let kind = classify_login_error(msg).kind;
+            let is_creds = matches!(kind, ErrorKind::InvalidCredentials);
+            // Only the username/password + invalid_grant strings are credential errors.
+            let expect_creds = msg.to_lowercase().contains("username or password")
+                || msg.to_lowercase().contains("invalid_grant");
+            assert_eq!(is_creds, expect_creds, "msg: {msg:?} → {kind:?}");
+        }
+    }
+
+    #[test]
+    fn maps_transport_words_to_network() {
+        for msg in ["failed to connect to host", "DNS lookup failed", "request timeout"] {
+            assert!(
+                matches!(classify_login_error(msg).kind, ErrorKind::Network),
+                "msg: {msg:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn falls_back_to_internal_and_keeps_the_detail() {
+        let err = classify_login_error("some unexpected server response");
+        assert!(matches!(err.kind, ErrorKind::Internal));
+        assert!(err.message.contains("some unexpected server response"));
+    }
+}

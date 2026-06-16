@@ -10,14 +10,13 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use bitwarden_pm::PasswordManagerClient;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use zeroize::Zeroizing;
 
 use crate::dto::{AutofillMode, ConnectionKind, ServerConfig};
 use crate::error::{AgateError, AgateResult, ErrorKind};
-use crate::providers::{BitwardenConnection, LiveConnection};
+use crate::providers::LiveConnection;
 
 /// A known connection for the unlock-all set + add-connection prefill
 /// (non-secret: provider kind + server + email only).
@@ -31,6 +30,10 @@ pub struct AccountRef {
     /// The connection id: the account email for Bitwarden, the database file
     /// path for KeePass (kept under this name for config back-compat).
     pub email: String,
+    /// Optional user-given display name. When set it overrides the derived
+    /// [`AccountRef::label`] in the UI; `None` keeps the derived label. Non-secret.
+    #[serde(default)]
+    pub name: Option<String>,
     /// KeePass only: absolute path of the key file, when one is required.
     /// Non-secret (a path, not key material) — the key file itself must exist
     /// at unlock time.
@@ -141,6 +144,10 @@ impl PersistedConfig {
     }
 
     /// `upsert_account` carrying a KeePass key-file path.
+    ///
+    /// A re-add / re-auth of an existing id PRESERVES its user-given display
+    /// name — only [`Self::set_account_name`] changes it, so re-authenticating a
+    /// connection never silently drops the name the user set.
     pub fn upsert_account_with_keyfile(
         &mut self,
         kind: ConnectionKind,
@@ -149,14 +156,28 @@ impl PersistedConfig {
         store_credentials: bool,
         keyfile: Option<String>,
     ) {
+        let name = self.account_for(email).and_then(|a| a.name.clone());
         self.accounts.retain(|a| a.email != email);
         self.accounts.push(AccountRef {
             kind,
             server,
             email: email.to_string(),
+            name,
             keyfile,
             store_credentials,
         });
+    }
+
+    /// Set (or clear, with `None`) a connection's display name. Returns whether a
+    /// connection with that id existed. Non-secret config write.
+    pub fn set_account_name(&mut self, email: &str, name: Option<String>) -> bool {
+        match self.accounts.iter_mut().find(|a| a.email == email) {
+            Some(a) => {
+                a.name = name;
+                true
+            }
+            None => false,
+        }
     }
 
     /// The server recorded for `email`, if the connection is known.
@@ -239,22 +260,6 @@ pub struct Session {
 }
 
 impl Session {
-    /// A fresh handle to a BITWARDEN connection's SDK client (the inner `Client`
-    /// is cheap to clone — `Arc`-backed, sharing the unlocked key store). `None`
-    /// when the connection is absent or not a Bitwarden one.
-    pub fn client_for(&self, email: &str) -> Option<PasswordManagerClient> {
-        self.connections
-            .get(email)
-            .and_then(LiveConnection::bitwarden)
-            .map(|b| PasswordManagerClient(b.client.0.clone()))
-    }
-
-    /// Insert/replace a live Bitwarden connection.
-    pub fn insert_bitwarden(&mut self, email: String, client: PasswordManagerClient) {
-        self.connections
-            .insert(email, LiveConnection::Bitwarden(BitwardenConnection::new(client)));
-    }
-
     /// Number of live connections.
     pub fn connection_count(&self) -> usize {
         self.connections.len()
@@ -390,5 +395,34 @@ mod tests {
 
         assert!(c.account_for("a@b.com").is_none());
         assert!(c.account_for("other@b.com").is_some(), "other accounts survive");
+    }
+
+    #[test]
+    fn set_account_name_sets_and_clears() {
+        let mut c = cfg();
+        c.upsert_account(ConnectionKind::Bitwarden, ServerConfig::default(), "a@b.com", true);
+
+        assert!(c.set_account_name("a@b.com", Some("Work".into())));
+        assert_eq!(c.account_for("a@b.com").and_then(|a| a.name.clone()), Some("Work".into()));
+
+        assert!(c.set_account_name("a@b.com", None), "clearing an existing name still reports found");
+        assert_eq!(c.account_for("a@b.com").and_then(|a| a.name.clone()), None);
+
+        assert!(!c.set_account_name("missing@b.com", Some("x".into())), "unknown id reports not found");
+    }
+
+    #[test]
+    fn upsert_preserves_existing_display_name_across_reauth() {
+        // A re-auth/re-add upserts the connection; the user-given name must
+        // survive (only set_account_name should change it).
+        let mut c = cfg();
+        c.upsert_account(ConnectionKind::Bitwarden, ServerConfig::default(), "a@b.com", true);
+        c.set_account_name("a@b.com", Some("Personal".into()));
+
+        c.upsert_account(ConnectionKind::Bitwarden, ServerConfig::Eu, "a@b.com", false);
+
+        let acct = c.account_for("a@b.com").expect("still present");
+        assert_eq!(acct.name, Some("Personal".into()), "name survives re-auth");
+        assert!(!acct.store_credentials, "other fields still update");
     }
 }
