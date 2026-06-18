@@ -29,11 +29,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, GetForegroundWindow, GetMessageW, PostThreadMessageW, TranslateMessage,
-    EVENT_OBJECT_FOCUS, EVENT_SYSTEM_FOREGROUND, MSG, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS,
-    WM_HOTKEY, WM_QUIT,
+    EVENT_OBJECT_FOCUS, MSG, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WM_HOTKEY, WM_QUIT,
 };
-
-use tauri::Manager;
 
 use super::uia;
 use crate::dto::{AutofillField, AutofillMode};
@@ -114,23 +111,6 @@ fn is_suppressed() -> bool {
 fn last_detected() -> &'static Mutex<Option<(isize, AutofillField)>> {
     static LAST: OnceLock<Mutex<Option<(isize, AutofillField)>>> = OnceLock::new();
     LAST.get_or_init(|| Mutex::new(None))
-}
-
-/// The matchable identity (recency key: `host:` or `proc:`) the tray badge was last
-/// computed for. Foreground events storm and many resolve to the SAME site/app, so
-/// we only recompute the badge when this key actually changes — the cheap UIA scrape
-/// still runs per event, but the heavy vault index + ranking + icon repaint don't.
-/// `None` means "no app" (own window / denied / nothing matchable). Independent of
-/// the watcher thread's lifetime, so it survives mode restarts.
-fn last_badge_key() -> &'static Mutex<Option<String>> {
-    static LAST_BADGE: OnceLock<Mutex<Option<String>>> = OnceLock::new();
-    LAST_BADGE.get_or_init(|| Mutex::new(None))
-}
-
-/// Forget the last badge key so the next foreground event recomputes the badge from
-/// scratch. Called after a lock / logout / mode change (see `autofill::clear_badge`).
-pub fn reset_badge_state() {
-    *lock(last_badge_key()) = None;
 }
 
 /// What the watch hook does for one focus event.
@@ -222,14 +202,8 @@ fn run_thread(app: tauri::AppHandle, mode: Mode, tx: std::sync::mpsc::Sender<u32
     }
     let own_pid = unsafe { GetCurrentProcessId() };
     *lock(last_detected()) = None; // fresh guard per watcher start
-    *lock(last_badge_key()) = None; // fresh match-count badge per watcher start
 
-    // Watch mode installs TWO hooks: EVENT_OBJECT_FOCUS drives autofill offers (a
-    // login field gained focus), EVENT_SYSTEM_FOREGROUND drives the tray match-count
-    // badge (the foreground app/site changed — far less frequent than focus). Both
-    // route to `win_event_proc`, which branches on the event. Hotkey/Off: neither.
     let mut hook = HWINEVENTHOOK::default();
-    let mut hook_fg = HWINEVENTHOOK::default();
     match mode {
         Mode::Watch => {
             hook = unsafe {
@@ -244,23 +218,7 @@ fn run_thread(app: tauri::AppHandle, mode: Mode, tx: std::sync::mpsc::Sender<u32
                 )
             };
             if hook.is_invalid() {
-                log::warn!("autofill: SetWinEventHook (focus) failed; watch mode inactive");
-            }
-            hook_fg = unsafe {
-                SetWinEventHook(
-                    EVENT_SYSTEM_FOREGROUND,
-                    EVENT_SYSTEM_FOREGROUND,
-                    HMODULE::default(),
-                    Some(win_event_proc),
-                    0,
-                    0,
-                    WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
-                )
-            };
-            if hook_fg.is_invalid() {
-                log::warn!(
-                    "autofill: SetWinEventHook (foreground) failed; match-count badge inactive"
-                );
+                log::warn!("autofill: SetWinEventHook failed; watch mode inactive");
             }
         }
         Mode::Hotkey => {
@@ -306,9 +264,6 @@ fn run_thread(app: tauri::AppHandle, mode: Mode, tx: std::sync::mpsc::Sender<u32
         if mode == Mode::Watch && !hook.is_invalid() {
             let _ = UnhookWinEvent(hook);
         }
-        if mode == Mode::Watch && !hook_fg.is_invalid() {
-            let _ = UnhookWinEvent(hook_fg);
-        }
         if mode == Mode::Hotkey {
             let _ = UnregisterHotKey(HWND::default(), HOTKEY_ID);
         }
@@ -316,10 +271,9 @@ fn run_thread(app: tauri::AppHandle, mode: Mode, tx: std::sync::mpsc::Sender<u32
     *lock(hook_app()) = None;
 }
 
-/// WinEvent callback (watch mode). Runs on the watcher thread, so it can call UIA
-/// directly. `WINEVENT_SKIPOWNPROCESS` already filters our own events. Branches by
-/// event: a focus change drives autofill offers; a foreground change drives the
-/// tray match-count badge.
+/// Focus-hook callback (watch mode). Runs on the watcher thread, so it can call
+/// UIA directly. `WINEVENT_SKIPOWNPROCESS` already filters our own focus events;
+/// `detect_focused` re-checks the pid as a belt-and-braces guard.
 unsafe extern "system" fn win_event_proc(
     _hook: HWINEVENTHOOK,
     event: u32,
@@ -329,47 +283,13 @@ unsafe extern "system" fn win_event_proc(
     _thread: u32,
     _time: u32,
 ) {
-    let Some(app) = lock(hook_app()).clone() else {
+    if event != EVENT_OBJECT_FOCUS {
         return;
-    };
-    let own_pid = GetCurrentProcessId();
-    match event {
-        EVENT_OBJECT_FOCUS => {
-            let fg = GetForegroundWindow().0 as isize;
-            on_watch_focus(&app, own_pid, fg);
-        }
-        EVENT_SYSTEM_FOREGROUND => on_foreground_changed(&app, own_pid),
-        _ => {}
     }
-}
-
-/// Foreground-window change (watch mode): recompute the tray match-count badge for
-/// the new app/site. The UIA scrape is cheap and runs here on the watcher thread;
-/// the heavy part (vault index + ranking + icon repaint) is deferred to the async
-/// runtime and skipped unless the matchable identity (host / process) actually
-/// changed. Our own window / a denied app / nothing matchable clears the badge.
-fn on_foreground_changed(app: &tauri::AppHandle, own_pid: u32) {
-    let context = uia::foreground_context(own_pid, &lock(denylist()));
-    let key = context.as_ref().and_then(super::matching::recency_key);
-    {
-        // Dedup: same site/app as last time → nothing to repaint.
-        let mut last = lock(last_badge_key());
-        if *last == key {
-            return;
-        }
-        *last = key;
-    }
-    match context {
-        Some(context) => {
-            // Hand the already-scraped (Send) context to the async runtime; the UIA
-            // objects themselves can't leave this thread.
-            let app = app.clone();
-            tauri::async_runtime::spawn(async move {
-                let state = app.state::<crate::state::AppState>();
-                super::refresh_badge(&app, &state, &context).await;
-            });
-        }
-        None => super::clear_badge(app),
+    let fg = GetForegroundWindow().0 as isize;
+    let app = lock(hook_app()).clone();
+    if let Some(app) = app {
+        on_watch_focus(&app, GetCurrentProcessId(), fg);
     }
 }
 

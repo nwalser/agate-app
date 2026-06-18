@@ -1,0 +1,17 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- shield silhouette minus the keyhole; white = keep, black = punch through -->
+    <mask id="cut" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <rect width="1024" height="1024" fill="black"/>
+      <path d="M276 268 L748 268 C762 512 690 700 512 808 C334 700 262 512 276 268 Z" fill="white"/>
+      <circle cx="512" cy="450" r="86" fill="black"/>
+      <path d="M466 498 L450 656 L574 656 L558 498 Z" fill="black"/>
+    </mask>
+  </defs>
+
+  <!-- flat dark tile -->
+  <rect width="1024" height="1024" fill="#0f1a22"/>
+
+  <!-- flat agate-blue gem shield, keyhole knocked out to the tile -->
+  <rect width="1024" height="1024" fill="#39b6ff" mask="url(#cut)"/>
+</svg>

@@ -23,8 +23,7 @@ pub use pass::PassConnection;
 pub use proton::ProtonConnection;
 
 use crate::dto::{Collection, ConnectionKind, Folder, ItemDetail, TotpCode, VaultItem};
-use crate::error::{AgateError, AgateResult};
-use crate::passkey::{PasskeyTarget, StoredPasskey};
+use crate::error::AgateResult;
 
 /// One live, unlocked connection.
 // large_enum_variant allow: a KeepassConnection embeds the decrypted Database
@@ -163,7 +162,7 @@ impl LiveConnection {
         self.as_read().custom_field_names()
     }
 
-    /// Decrypt one item into full detail (including passkey metadata).
+    /// Decrypt one item into full detail.
     pub fn item_detail(&self, id: &str, label: &str, item_id: &str) -> AgateResult<ItemDetail> {
         self.as_read().item_detail(id, label, item_id)
     }
@@ -189,60 +188,4 @@ impl LiveConnection {
     pub fn count_password_use(&self, candidate: &str) -> u32 {
         self.as_read().count_password_use(candidate)
     }
-}
-
-// ── passkeys (FIDO2 / WebAuthn) ──────────────────────────────────────────────
-//
-// The provider-agnostic boundary the passkey ceremony layer talks to. Reads
-// return whatever the provider can surface (empty for providers that don't store
-// passkeys yet); the create write requires a writable provider and otherwise
-// returns a typed `BadRequest`, mirroring `mutate::route_for`. Passkey *removal*
-// is routed in `mutate::remove_passkey` (it follows the same client-snapshot /
-// `keepass_write` patterns as the other writes).
-impl LiveConnection {
-    /// Every stored passkey for a relying-party id — the candidate set for a
-    /// get-assertion (sign-in) ceremony.
-    pub fn find_passkeys_for_rp(&self, rp_id: &str) -> AgateResult<Vec<StoredPasskey>> {
-        match self {
-            LiveConnection::Keepass(k) => k.find_passkeys_for_rp(rp_id),
-            // No passkey storage for these (yet): Bitwarden reads land here once
-            // the SDK Fido2 surface is wired; the rest are read-only sources that
-            // don't carry passkeys.
-            LiveConnection::Bitwarden(_)
-            | LiveConnection::Pass(_)
-            | LiveConnection::Enpass(_)
-            | LiveConnection::Proton(_) => Ok(Vec::new()),
-        }
-    }
-
-    /// One stored passkey by credential id, if this connection holds it.
-    pub fn get_passkey(&self, credential_id: &[u8]) -> AgateResult<Option<StoredPasskey>> {
-        match self {
-            LiveConnection::Keepass(k) => k.get_passkey(credential_id),
-            LiveConnection::Bitwarden(_)
-            | LiveConnection::Pass(_)
-            | LiveConnection::Enpass(_)
-            | LiveConnection::Proton(_) => Ok(None),
-        }
-    }
-
-    /// Store a freshly-minted passkey (a make-credential ceremony), at `target`
-    /// (attached to an existing item, or a new item in a folder). Async because
-    /// the Bitwarden path writes via the API; the KeePass path is synchronous.
-    pub async fn create_passkey(
-        &mut self,
-        passkey: StoredPasskey,
-        target: &PasskeyTarget,
-    ) -> AgateResult<()> {
-        match self {
-            LiveConnection::Keepass(k) => k.create_passkey(&passkey, target),
-            LiveConnection::Bitwarden(b) => b.create_passkey(passkey, target).await,
-            LiveConnection::Pass(_) | LiveConnection::Enpass(_) | LiveConnection::Proton(_) => {
-                Err(AgateError::bad_request(
-                    "This vault is read-only and can't store passkeys.",
-                ))
-            }
-        }
-    }
-
 }

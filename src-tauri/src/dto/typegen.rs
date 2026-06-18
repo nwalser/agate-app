@@ -53,7 +53,6 @@ fn ipc_types() -> TypeCollection {
         .register::<CustomFieldType>()
         .register::<CustomField>()
         .register::<ItemDetail>()
-        .register::<PasskeyCredential>()
         .register::<Collection>()
         .register::<TotpCode>()
         .register::<Folder>()

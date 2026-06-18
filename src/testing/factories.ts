@@ -71,7 +71,6 @@ export function makeItem(over: Partial<VaultItem> & { id: string; name: string }
     username: null,
     uri: null,
     hasTotp: false,
-    hasPasskey: false,
     reprompt: false,
     favorite: false,
     deleted: false,
@@ -99,7 +98,6 @@ export function makeDetail(over: Partial<ItemDetail> & { id: string; name: strin
     collectionIds: [],
     revisionDate: '2026-01-01T00:00:00Z',
     creationDate: '2026-01-01T00:00:00Z',
-    passkeys: [],
     ...over,
   };
 }

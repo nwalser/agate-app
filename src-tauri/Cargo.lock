@@ -95,7 +95,6 @@ dependencies = [
  "aes-gcm 0.10.3",
  "anyhow",
  "argon2 0.5.3",
- "async-trait",
  "base64 0.22.1",
  "bitwarden-api-api",
  "bitwarden-collections",
@@ -107,15 +106,10 @@ dependencies = [
  "bitwarden-vault",
  "cbc 0.1.2",
  "chrono",
- "ciborium",
- "coset 0.3.8",
  "hmac 0.12.1",
  "keepass",
  "keyring",
  "log",
- "p256 0.13.2",
- "passkey-authenticator 0.4.0",
- "passkey-types 0.4.0",
  "pbkdf2 0.12.2",
  "psl",
  "rand 0.8.6",
@@ -756,7 +750,7 @@ dependencies = [
  "cbc 0.2.1",
  "chacha20poly1305",
  "ciborium",
- "coset 0.4.2",
+ "coset",
  "ed25519-dalek 3.0.0-rc.0",
  "hex",
  "hkdf 0.13.0",
@@ -851,7 +845,7 @@ dependencies = [
  "bitwarden-encoding",
  "bitwarden-vault",
  "chrono",
- "coset 0.4.2",
+ "coset",
  "itertools 0.14.0",
  "p256 0.13.2",
  "passkey",
@@ -1771,16 +1765,6 @@ dependencies = [
  "bitflags 2.13.0",
  "core-foundation 0.10.1",
  "libc",
-]
-
-[[package]]
-name = "coset"
-version = "0.3.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f4c8cc80f631f8307b887faca24dcc3abc427cd0367f6eb6188f6e8f5b7ad8fb"
-dependencies = [
- "ciborium",
- "ciborium-io",
 ]
 
 [[package]]
@@ -5288,24 +5272,10 @@ name = "passkey"
 version = "0.5.0"
 source = "git+https://github.com/bitwarden/passkey-rs?rev=043279e92e2eb5f509bf87eb7fa50987fd377e32#043279e92e2eb5f509bf87eb7fa50987fd377e32"
 dependencies = [
- "passkey-authenticator 0.5.0",
+ "passkey-authenticator",
  "passkey-client",
  "passkey-transports",
- "passkey-types 0.5.0",
-]
-
-[[package]]
-name = "passkey-authenticator"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9b065ce31354bcf23a333003c77f0d71f00eb95761b3390a069546e078a7a5b"
-dependencies = [
- "async-trait",
- "coset 0.3.8",
- "log",
- "p256 0.13.2",
- "passkey-types 0.4.0",
- "rand 0.8.6",
+ "passkey-types",
 ]
 
 [[package]]
@@ -5314,10 +5284,10 @@ version = "0.5.0"
 source = "git+https://github.com/bitwarden/passkey-rs?rev=043279e92e2eb5f509bf87eb7fa50987fd377e32#043279e92e2eb5f509bf87eb7fa50987fd377e32"
 dependencies = [
  "async-trait",
- "coset 0.4.2",
+ "coset",
  "log",
  "p256 0.13.2",
- "passkey-types 0.5.0",
+ "passkey-types",
  "rand 0.8.6",
 ]
 
@@ -5327,12 +5297,12 @@ version = "0.5.0"
 source = "git+https://github.com/bitwarden/passkey-rs?rev=043279e92e2eb5f509bf87eb7fa50987fd377e32#043279e92e2eb5f509bf87eb7fa50987fd377e32"
 dependencies = [
  "ciborium",
- "coset 0.4.2",
+ "coset",
  "idna",
  "itertools 0.14.0",
  "nom 7.1.3",
- "passkey-authenticator 0.5.0",
- "passkey-types 0.5.0",
+ "passkey-authenticator",
+ "passkey-types",
  "public-suffix",
  "serde",
  "serde_json",
@@ -5346,34 +5316,12 @@ source = "git+https://github.com/bitwarden/passkey-rs?rev=043279e92e2eb5f509bf87
 
 [[package]]
 name = "passkey-types"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77144664f6aac5f629d7efa815f5098a054beeeca6ccafee5ec453fd2b0c53f9"
-dependencies = [
- "bitflags 2.13.0",
- "ciborium",
- "coset 0.3.8",
- "data-encoding",
- "getrandom 0.2.17",
- "hmac 0.12.1",
- "indexmap 2.14.0",
- "rand 0.8.6",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "strum 0.25.0",
- "typeshare",
- "zeroize",
-]
-
-[[package]]
-name = "passkey-types"
 version = "0.5.0"
 source = "git+https://github.com/bitwarden/passkey-rs?rev=043279e92e2eb5f509bf87eb7fa50987fd377e32#043279e92e2eb5f509bf87eb7fa50987fd377e32"
 dependencies = [
  "bitflags 2.13.0",
  "ciborium",
- "coset 0.4.2",
+ "coset",
  "data-encoding",
  "getrandom 0.2.17",
  "hmac 0.12.1",
@@ -5382,7 +5330,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "strum 0.27.2",
+ "strum",
  "url",
  "zeroize",
 ]
@@ -7625,33 +7573,11 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "strum"
-version = "0.25.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "290d54ea6f91c969195bdbcd7442c8c2a2ba87da8bf60a7ee86a235d4bc1e125"
-dependencies = [
- "strum_macros 0.25.3",
-]
-
-[[package]]
-name = "strum"
 version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af23d6f6c1a224baef9d3f61e287d2761385a5b88fdab4eb4c6f11aeb54c4bcf"
 dependencies = [
- "strum_macros 0.27.2",
-]
-
-[[package]]
-name = "strum_macros"
-version = "0.25.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23dc1fa9ac9c169a78ba62f0b841814b7abae11bdd047b9c58f893439e309ea0"
-dependencies = [
- "heck 0.4.1",
- "proc-macro2",
- "quote",
- "rustversion",
- "syn 2.0.117",
+ "strum_macros",
 ]
 
 [[package]]
@@ -8733,28 +8659,6 @@ name = "typenum"
 version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "562d481066bde0658276a35467c4af00bdc6ee726305698a55b86e61d7ad82bb"
-
-[[package]]
-name = "typeshare"
-version = "1.0.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da1bf9fe204f358ffea7f8f779b53923a20278b3ab8e8d97962c5e1b3a54edb7"
-dependencies = [
- "chrono",
- "serde",
- "serde_json",
- "typeshare-annotation",
-]
-
-[[package]]
-name = "typeshare-annotation"
-version = "1.0.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "621963e302416b389a1ec177397e9e62de849a78bd8205d428608553def75350"
-dependencies = [
- "quote",
- "syn 2.0.117",
-]
 
 [[package]]
 name = "uds_windows"

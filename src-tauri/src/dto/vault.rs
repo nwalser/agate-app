@@ -34,9 +34,6 @@ pub struct VaultItem {
     /// website column and favicon host. None for non-logins / no URI.
     pub uri: Option<String>,
     pub has_totp: bool,
-    /// Whether the login has at least one stored passkey (FIDO2 credential).
-    /// Presence only — the credential material is never sent to the frontend.
-    pub has_passkey: bool,
     /// Whether "require master password to view" (reprompt) is set — the list
     /// needs it so cell/context-menu copies can gate without a detail fetch.
     pub reprompt: bool,
@@ -140,8 +137,6 @@ pub struct ItemDetail {
     pub creation_date: String,
     /// Collections this item belongs to (IDs; resolve to names via list_collections).
     pub collection_ids: Vec<String>,
-    /// Stored passkeys (FIDO2 credentials) on this login — display metadata only.
-    pub passkeys: Vec<PasskeyCredential>,
 }
 
 /// A generated TOTP code plus timing so the UI can render a countdown.
@@ -153,26 +148,6 @@ pub struct TotpCode {
     pub period: u32,
     /// Seconds remaining until this code rolls over.
     pub remaining: u32,
-}
-
-/// A stored passkey (FIDO2 credential) on a login — display metadata only; the
-/// private key material never leaves the backend. Standalone vaults can show and
-/// manage passkeys; using them for sign-in needs browser integration (extension).
-#[derive(Debug, Clone, Serialize)]
-#[cfg_attr(test, derive(specta::Type))]
-#[serde(rename_all = "camelCase")]
-pub struct PasskeyCredential {
-    /// Credential id (base64url) — the public handle identifying this passkey,
-    /// so the UI can target it for removal. Not secret (it's the WebAuthn id).
-    pub credential_id: String,
-    /// Relying-party (site) id, e.g. "github.com".
-    pub rp_id: String,
-    pub rp_name: Option<String>,
-    pub user_name: Option<String>,
-    pub user_display_name: Option<String>,
-    pub key_algorithm: String,
-    /// Creation timestamp (RFC 3339).
-    pub creation_date: String,
 }
 
 /// A decrypted collection (a shared-vault grouping). Per-connection in the

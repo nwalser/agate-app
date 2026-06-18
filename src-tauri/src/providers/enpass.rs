@@ -382,7 +382,6 @@ impl EnpassConnection {
             revision_date: rfc3339(item.updated_at),
             creation_date: rfc3339(item.created_at),
             collection_ids: Vec::new(),
-            passkeys: Vec::new(),
         })
     }
 
@@ -514,7 +513,6 @@ impl EnpassItem {
             username: self.first_field_value(FIELD_TYPE_USERNAME),
             uri: self.first_field_value(FIELD_TYPE_URL),
             has_totp: self.first_field_value(FIELD_TYPE_TOTP).is_some(),
-            has_passkey: false,
             reprompt: false,
             favorite: self.favorite,
             deleted: self.deleted,

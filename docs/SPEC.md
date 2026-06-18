@@ -135,8 +135,6 @@ Full detail in CLAUDE.md and SECURITY.md; spec summary:
 - ✅ **Attachments: download** — decrypt to the Downloads folder.
 - 📋 **Attachments: upload/delete** — SDK requires manual api-api calls; no UI.
 - 📋 **Password history view** — SDK exposes `PasswordHistoryView`; no UI renders it.
-- 📋 **Passkey (FIDO2) display** — passkeys appear in the detail DTO but there is
-  no dedicated passkey management UI.
 
 ## 7. Vault organization & writes
 
@@ -340,7 +338,6 @@ Switch/ToggleRow/Segmented/ResetButton controls — never roll a new toggle.
 | Org/collection browsing | 📋 | §3 |
 | Password history view | 📋 | §6 |
 | Attachment upload/delete | 📋 | §6 |
-| Passkey management UI | 📋 | §6 |
 | Export selection | 📋 | §5 |
 | Encrypted export + more import formats | 📋 | §16 |
 | Active anti-phishing warning on open | 📋 | §11 |

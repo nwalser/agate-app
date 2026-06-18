@@ -141,39 +141,6 @@ pub fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     Ok(())
 }
 
-/// Paint a match-count badge onto the tray icon, or restore the plain icon when
-/// `count == 0`. Driven by [`crate::autofill::refresh_badge`] while autofill Watch
-/// mode is on, so the tray shows how many unlocked logins match the focused
-/// app / website. Best-effort: a missing base icon or tray just leaves it as-is.
-pub fn set_match_badge(app: &tauri::AppHandle, count: usize) {
-    // The tray icon belongs to the event-loop (main) thread; callers run on the
-    // async runtime / watcher thread, so marshal the swap onto the main thread.
-    let app = app.clone();
-    if let Err(e) = app.clone().run_on_main_thread(move || {
-        let Some(tray) = app.tray_by_id("main-tray") else {
-            log::warn!("tray: no main-tray to badge");
-            return;
-        };
-        let Some(base) = app.default_window_icon().cloned() else {
-            return;
-        };
-        // count 0 → the plain base icon; otherwise composite the numbered disc on a
-        // fresh copy of the base (never on an already-badged icon).
-        let icon = if count == 0 {
-            base
-        } else {
-            let rgba =
-                crate::badge::composite_badge(base.rgba(), base.width(), base.height(), count);
-            tauri::image::Image::new_owned(rgba, base.width(), base.height())
-        };
-        if let Err(e) = tray.set_icon(Some(icon)) {
-            log::warn!("tray: could not update match-count badge: {e}");
-        }
-    }) {
-        log::warn!("tray: could not schedule match-count badge update: {e}");
-    }
-}
-
 /// Show the popup next to the tray click, or hide it if it's already open.
 fn toggle_popup(app: &tauri::AppHandle, cursor: tauri::PhysicalPosition<f64>) {
     let Some(popup) = app.get_webview_window("tray") else {

@@ -62,7 +62,6 @@ export const de: PartialMessages = {
     type: 'Typ',
     oneTimeCode: 'Einmalcode',
     password: 'Passwort',
-    passkey: 'Passkey',
   },
 
   date: {
@@ -217,8 +216,6 @@ export const de: PartialMessages = {
     publicKey: 'Öffentlicher Schlüssel',
     fingerprint: 'Fingerabdruck',
     privateKey: 'Privater Schlüssel',
-    passkeys: 'Passkeys',
-    removePasskey: 'Passkey entfernen',
     updated: 'Aktualisiert {date}',
     copyField: '{label} kopieren',
     cardBrandFallback: 'Karte',

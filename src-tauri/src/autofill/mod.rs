@@ -114,12 +114,6 @@ pub async fn set_mode(
         clear_pending(state);
     }
     apply_mode(app.clone(), mode);
-    // The match-count badge only lives in Watch mode (the only mode with a
-    // continuous foreground hook). Any other mode → drop a stale badge so the icon
-    // doesn't keep showing a count that will never update.
-    if mode != AutofillMode::Watch {
-        clear_badge(app);
-    }
     Ok(())
 }
 
@@ -325,34 +319,6 @@ pub(crate) fn dismiss_popup_if_pending(app: &tauri::AppHandle) {
 
 fn clear_pending(state: &AppState) {
     state.autofill.lock().unwrap_or_else(std::sync::PoisonError::into_inner).pending = None;
-}
-
-/// Recompute the tray match-count badge for a freshly detected foreground context
-/// and push it onto the icon. Best-effort: a locked vault or a read error yields a
-/// zero count (the plain icon), never an error. Runs on the async runtime — the
-/// watcher hands it the already-scraped, `Send` context, because the UIA scrape
-/// itself can't leave the watcher thread.
-#[cfg(windows)]
-pub async fn refresh_badge(app: &tauri::AppHandle, state: &AppState, context: &AutofillContext) {
-    let count = match vault::autofill_index(state).await {
-        Ok(items) => {
-            matching::count_matches(&items, &matching::FillContext::from_context(context))
-        }
-        Err(e) => {
-            log::warn!("autofill: match-count badge index failed: {}", e.message);
-            0
-        }
-    };
-    crate::tray::set_match_badge(app, count);
-}
-
-/// Clear the tray match-count badge (restore the plain icon) and reset the
-/// watcher's badge-dedup state so the next foreground event recomputes from
-/// scratch. Called when the vault locks / logs out and when Watch mode turns off.
-pub fn clear_badge(app: &tauri::AppHandle) {
-    crate::tray::set_match_badge(app, 0);
-    #[cfg(windows)]
-    watcher::reset_badge_state();
 }
 
 /// Inject the chosen login's value(s) into the target window on a blocking thread

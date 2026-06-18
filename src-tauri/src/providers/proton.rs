@@ -388,7 +388,6 @@ impl ProtonConnection {
             revision_date: unix_to_rfc3339(it.modify_time),
             creation_date: unix_to_rfc3339(it.create_time),
             collection_ids: Vec::new(),
-            passkeys: Vec::new(),
         })
     }
 
@@ -475,7 +474,6 @@ fn item_to_list_row(it: &DecryptedItem, id: &str, label: &str) -> VaultItem {
         username,
         uri,
         has_totp,
-        has_passkey: false, // passkeys exist in the protobuf but aren't surfaced in v1
         reprompt: false,
         favorite: it.favorite,
         deleted: it.deleted,
@@ -796,7 +794,6 @@ mod tests {
         assert!(d.favorite);
         assert_eq!(d.folder_id.as_deref(), Some("share-personal"));
         assert!(d.collection_ids.is_empty());
-        assert!(d.passkeys.is_empty());
 
         let login = d.login.as_ref().unwrap();
         assert_eq!(login.username.as_deref(), Some("octocat"));

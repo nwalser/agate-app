@@ -72,7 +72,6 @@ export const en = {
     type: 'Type',
     oneTimeCode: 'One-time code',
     password: 'Password',
-    passkey: 'Passkey',
   },
 
   date: {
@@ -227,8 +226,6 @@ export const en = {
     publicKey: 'Public key',
     fingerprint: 'Fingerprint',
     privateKey: 'Private key',
-    passkeys: 'Passkeys',
-    removePasskey: 'Remove passkey',
     updated: 'Updated {date}',
     copyField: 'Copy {label}',
     cardBrandFallback: 'Card',

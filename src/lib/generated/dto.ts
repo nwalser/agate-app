@@ -308,11 +308,7 @@ creationDate: string;
 /**
  * Collections this item belongs to (IDs; resolve to names via list_collections).
  */
-collectionIds: string[]; 
-/**
- * Stored passkeys (FIDO2 credentials) on this login — display metadata only.
- */
-passkeys: PasskeyCredential[] }
+collectionIds: string[] }
 
 /**
  * One create-or-edit payload for any item type.
@@ -383,26 +379,6 @@ export type LoginResult =
  * A single login URI (with its match strategy so edits round-trip).
  */
 export type LoginUri = { uri: string | null; matchType: number | null }
-
-/**
- * A stored passkey (FIDO2 credential) on a login — display metadata only; the
- * private key material never leaves the backend. Standalone vaults can show and
- * manage passkeys; using them for sign-in needs browser integration (extension).
- */
-export type PasskeyCredential = { 
-/**
- * Credential id (base64url) — the public handle identifying this passkey,
- * so the UI can target it for removal. Not secret (it's the WebAuthn id).
- */
-credentialId: string; 
-/**
- * Relying-party (site) id, e.g. "github.com".
- */
-rpId: string; rpName: string | null; userName: string | null; userDisplayName: string | null; keyAlgorithm: string; 
-/**
- * Creation timestamp (RFC 3339).
- */
-creationDate: string }
 
 /**
  * Passphrase-generator options from the UI.
@@ -587,11 +563,6 @@ accountLabel: string; name: string; itemType: ItemType; username: string | null;
  * website column and favicon host. None for non-logins / no URI.
  */
 uri: string | null; hasTotp: boolean; 
-/**
- * Whether the login has at least one stored passkey (FIDO2 credential).
- * Presence only — the credential material is never sent to the frontend.
- */
-hasPasskey: boolean; 
 /**
  * Whether "require master password to view" (reprompt) is set — the list
  * needs it so cell/context-menu copies can gate without a detail fetch.

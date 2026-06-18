@@ -179,7 +179,6 @@ impl PassConnection {
                 username: parsed.username,
                 uri: parsed.url,
                 has_totp,
-                has_passkey: false,
                 reprompt: false,
                 favorite: false,
                 deleted: false,
@@ -313,7 +312,6 @@ impl PassConnection {
             revision_date: revision,
             creation_date: creation,
             collection_ids: Vec::new(),
-            passkeys: Vec::new(),
         })
     }
 

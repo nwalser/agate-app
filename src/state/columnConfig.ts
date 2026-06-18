@@ -14,8 +14,7 @@ export type BuiltinColumnId =
   | 'folder'
   | 'type'
   | 'totp'
-  | 'password'
-  | 'passkey';
+  | 'password';
 
 /** A visible column: a known built-in, or a custom field referenced by name.
  *  A custom column may carry a display `label` (a friendlier name than the raw
@@ -32,7 +31,7 @@ export type SortDir = 'asc' | 'desc';
 /** Columns the list can group rows under. Restricted to values available without
  *  fetching per-row item detail (so grouping never forces a bulk decrypt): the
  *  Name initial, Username, Website host, Folder, Type, and the
- *  TOTP/Password/Passkey PRESENCE flags — secret columns group by has/has-not,
+ *  TOTP/Password PRESENCE flags — secret columns group by has/has-not,
  *  never by value. Drives the group-header rows. */
 export type GroupKey =
   | 'name'
@@ -41,8 +40,7 @@ export type GroupKey =
   | 'folder'
   | 'type'
   | 'totp'
-  | 'password'
-  | 'passkey';
+  | 'password';
 
 export const GROUP_KEYS: GroupKey[] = [
   'name',
@@ -52,7 +50,6 @@ export const GROUP_KEYS: GroupKey[] = [
   'type',
   'totp',
   'password',
-  'passkey',
 ];
 
 /** Labels for the "Group by" picker (the per-group header text is derived from
@@ -66,7 +63,6 @@ export const GROUP_LABELS: Record<GroupKey, string> = {
   get type() { return t('column.type'); },
   get totp() { return t('column.oneTimeCode'); },
   get password() { return t('column.password'); },
-  get passkey() { return t('column.passkey'); },
 };
 
 /** What rows are grouped by: a builtin group key, or a custom field's value
@@ -115,7 +111,6 @@ export const ALL_BUILTINS: BuiltinColumnId[] = [
   'type',
   'totp',
   'password',
-  'passkey',
 ];
 
 /** Display labels for item types — single source in `lib/labels.ts`, re-exported
@@ -146,10 +141,6 @@ export function builtinMeta(id: BuiltinColumnId): ColumnMeta {
       return { label: t('column.oneTimeCode'), sortable: false, secret: true, needsDetail: true };
     case 'password':
       return { label: t('column.password'), sortable: false, secret: true, needsDetail: true };
-    case 'passkey':
-      // Presence flag from the list row (`hasPasskey`) — an icon, not a value, so
-      // not sortable/secret and no detail fetch.
-      return { label: t('column.passkey'), sortable: false, secret: false, needsDetail: false };
   }
 }
 
@@ -232,9 +223,6 @@ export function columnTrack(c: ColumnSpec): Track {
       return { template: 'minmax(0, 0.8fr)', min: 110 };
     case 'password':
       return { template: 'minmax(0, 1fr)', min: 120 };
-    case 'passkey':
-      // A single presence icon — tight track.
-      return { template: 'minmax(0, 72px)', min: 72 };
   }
 }
 

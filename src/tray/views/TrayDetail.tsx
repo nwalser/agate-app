@@ -3,7 +3,7 @@
 // components/VaultDetailPane.tsx (which it eventually replaces). Field coverage
 // per type: login (username / masked password / live TOTP / website links),
 // card (masked number + CVV, expiry), identity rows, SSH key, secure note,
-// custom fields (text / hidden / boolean / linked), passkey metadata, and the
+// custom fields (text / hidden / boolean / linked), and the
 // account + updated-ago footer.
 //
 // Reprompt: a reprompt-protected item is NOT fetched until the user re-enters
@@ -20,7 +20,6 @@ import {
   ExternalLink,
   Eye,
   EyeOff,
-  KeyRound,
   Link as LinkIcon,
   Pencil,
   RotateCcw,
@@ -121,22 +120,6 @@ export default function TrayDetail(props: {
       await ipc.restoreItems(props.item.accountEmail, [props.item.id]);
       props.onChanged();
       props.onBack();
-    } catch (err) {
-      toastError(err);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  /** Remove a stored passkey from this item (the item itself stays). */
-  async function removePasskey(credentialId: string) {
-    const d = detail();
-    if (!d || busy()) return;
-    setBusy(true);
-    try {
-      await ipc.removePasskey(d.accountEmail, d.id, credentialId);
-      setDetail({ ...d, passkeys: d.passkeys.filter((p) => p.credentialId !== credentialId) });
-      props.onChanged();
     } catch (err) {
       toastError(err);
     } finally {
@@ -369,43 +352,6 @@ export default function TrayDetail(props: {
               </For>
 
               <Show when={d().notes}>{(notes) => <NotesView notes={notes()} />}</Show>
-
-              {/* Stored passkeys — shown with the site/account; removable here.
-                  Signing in with one happens through the OS/browser. */}
-              <Show when={d().passkeys.length > 0}>
-                <div class="tray-detail-field">
-                  <label>{t('detail.passkeys')}</label>
-                  <For each={d().passkeys}>
-                    {(pk) => (
-                      <div class="tray-detail-passkey">
-                        <KeyRound size={13} strokeWidth={1.6} />
-                        <span class="tray-detail-passkey-info">
-                          <span class="tray-detail-trunc">{pk.rpName || pk.rpId}</span>
-                          <Show when={pk.userName}>
-                            <span class="muted tray-detail-trunc">{pk.userName}</span>
-                          </Show>
-                        </span>
-                        <span
-                          class="muted tray-detail-passkey-date"
-                          title={absoluteDate(pk.creationDate)}
-                        >
-                          {relativeFromNow(pk.creationDate)}
-                        </span>
-                        <Show when={!props.item.deleted}>
-                          <button
-                            class="tray-detail-iconbtn tray-detail-del"
-                            title={t('detail.removePasskey')}
-                            disabled={busy()}
-                            onClick={() => void removePasskey(pk.credentialId)}
-                          >
-                            <Trash2 size={12} />
-                          </button>
-                        </Show>
-                      </div>
-                    )}
-                  </For>
-                </div>
-              </Show>
 
               {/* Owning account + last update, pinned to the bottom of the scroll. */}
               <div class="tray-detail-meta">

@@ -28,7 +28,6 @@ export type {
   PasswordHistoryEntry,
   CustomField,
   ItemDetail,
-  PasskeyCredential,
   Collection,
   TotpCode,
   Folder,

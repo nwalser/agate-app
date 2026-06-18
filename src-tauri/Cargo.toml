@@ -62,23 +62,6 @@ rand = "0.8"
 zeroize = { version = "1", features = ["derive"] }
 base64 = "0.22"
 
-# Passkey (FIDO2 / WebAuthn) authenticator core (1Password's passkey-rs, Apache-2.0):
-# provider-agnostic CTAP2 + WebAuthn ceremony, COSE/CBOR, and signing — all
-# pure-Rust RustCrypto (no C deps, builds like the rest of the tree). Agate
-# implements its `CredentialStore` over the provider layer (see src/passkey/), so
-# the crate owns the protocol/crypto and a new provider only adds persistence.
-passkey-authenticator = "0.4"
-passkey-types = "0.4"
-coset = "0.3"
-# ES256 (P-256) key bridge: the passkey crate stores keys as COSE; Agate persists
-# them as PKCS#8 PEM (KeePassXC-interoperable). Pure-Rust RustCrypto.
-p256 = { version = "0.13", features = ["pkcs8", "pem"] }
-# Needed to implement the passkey crate's #[async_trait] CredentialStore.
-async-trait = "0.1"
-# CBOR for the passkey ceremony host: decode/encode the CTAP2 requests/responses
-# the OS WebAuthn layer exchanges with a plugin authenticator (see passkey/host.rs).
-ciborium = "0.2"
-
 # Bitwarden official SDK (sdk-internal). GPLv3. Pinned by rev because the
 # password-manager SDK is explicitly unstable ("changes without warning").
 # Bumping the rev is a deliberate, reviewed action — never float `main`.
@@ -137,16 +120,6 @@ sha2 = "0.10"
 sha1 = "0.10"
 pbkdf2 = { version = "0.12", default-features = false }
 
-[features]
-# Windows 11 24H2+ WebAuthn plugin-authenticator COM server
-# (src/passkey/win_plugin.rs). OFF by default: it is a binding transcribed from
-# Microsoft's public `microsoft/webauthn` headers, NOT yet verified on a real
-# machine, and it still needs MSIX packaging to actually register. Enable only to
-# build/iterate on that integration: `cargo build --features win-plugin-authenticator`.
-# Pulls windows-core (so the COM-authoring macros resolve) and the windows
-# crate's `implement` feature (the `*_Impl` traits for authoring COM objects).
-win-plugin-authenticator = ["dep:windows-core", "windows/implement"]
-
 # Cross-platform biometric consent (Touch ID on macOS, polkit on Linux) for the
 # non-Windows unlock path. ⚠️ The macOS/Linux arm (src/hello_unix.rs) is written
 # on a Windows host and is NOT compiled or run here — it must be built + verified
@@ -165,9 +138,6 @@ windows = { version = "0.58", features = [
     "Security_Credentials_UI",
     "Win32_Foundation",
     "Win32_System_Com",
-    # Runtime resolution of webauthn.dll's (experimental) plugin-authenticator
-    # exports for the win-plugin-authenticator feature (LoadLibraryW/GetProcAddress).
-    "Win32_System_LibraryLoader",
     "Win32_System_Threading",
     "Win32_System_WinRT",
     "Win32_UI_Accessibility",

@@ -364,9 +364,6 @@ pub async fn set_active_connection(state: State<'_>, email: String) -> AgateResu
 pub async fn lock(app: tauri::AppHandle, state: State<'_>) -> AgateResult<()> {
     let res = connections::lock(&state).await;
     if res.is_ok() {
-        // The locked vault matches nothing — drop the tray match-count badge now
-        // rather than waiting for the next foreground event to recompute it to zero.
-        crate::autofill::clear_badge(&app);
         super::emit_session_changed(&app);
     }
     res
@@ -376,7 +373,6 @@ pub async fn lock(app: tauri::AppHandle, state: State<'_>) -> AgateResult<()> {
 pub async fn logout(app: tauri::AppHandle, state: State<'_>) -> AgateResult<()> {
     let res = connections::logout(&state).await;
     if res.is_ok() {
-        crate::autofill::clear_badge(&app);
         super::emit_session_changed(&app);
     }
     res

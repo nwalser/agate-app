@@ -56,14 +56,13 @@ pub(crate) fn view_to_list_item(
     account_email: &str,
     account_label: &str,
 ) -> VaultItem {
-    let (username, has_totp, uri, has_passkey) = match &view.login {
+    let (username, has_totp, uri) = match &view.login {
         Some(login) => (
             login.username.clone(),
             login.totp.is_some(),
             login.uris.as_ref().and_then(|uris| uris.iter().find_map(|u| u.uri.clone())),
-            login.fido2_credentials.as_ref().is_some_and(|c| !c.is_empty()),
         ),
-        None => (None, false, None, false),
+        None => (None, false, None),
     };
     VaultItem {
         id: view.id.map(|i| i.to_string()).unwrap_or_default(),
@@ -74,7 +73,6 @@ pub(crate) fn view_to_list_item(
         username,
         uri,
         has_totp,
-        has_passkey,
         reprompt: matches!(view.reprompt, CipherRepromptType::Password),
         favorite: view.favorite,
         deleted: view.deleted_date.is_some(),
@@ -157,9 +155,6 @@ pub fn view_to_detail(view: &CipherView, account_email: &str, account_label: &st
         revision_date: view.revision_date.to_rfc3339(),
         creation_date: view.creation_date.to_rfc3339(),
         collection_ids: view.collection_ids.iter().map(std::string::ToString::to_string).collect(),
-        // Passkeys are decrypted separately (needs a KeyStoreContext on the view);
-        // `item_detail` fills this in. Defaults to none here.
-        passkeys: Vec::new(),
     }
 }
 

@@ -7,7 +7,6 @@
 mod appunlock;
 mod auth;
 mod autofill;
-mod badge;
 mod commands;
 mod connections;
 mod dto;
@@ -19,13 +18,6 @@ mod hello;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod hello_unix;
 mod mutate;
-// Provider-agnostic passkey (FIDO2/WebAuthn) storage + ceremony adapter. The
-// per-provider persistence is dispatched off `providers::LiveConnection`; the
-// CredentialStore adapter bridges to the `passkey-authenticator` crate; the
-// OS-integration shims (Layer C) call the ceremony entry points. Public so the
-// ceremony entry points read as the crate's API surface (their real caller, the
-// native shim, isn't built yet).
-pub mod passkey;
 mod providers;
 mod proxy;
 mod secrets;
@@ -126,7 +118,6 @@ pub fn run() {
             generate_passphrase,
             generate_username,
             save_item,
-            remove_passkey,
             clone_item,
             set_favorite,
             move_items,

@@ -28,8 +28,6 @@ use std::io::Seek;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use base64::Engine as _;
 use chrono::NaiveDateTime;
 use keepass::config::{DatabaseConfig, DatabaseVersion, KdfConfig};
 use keepass::db::{fields as kpf, Database, Entry, EntryId, EntryRef, GroupId, Times};
@@ -39,10 +37,9 @@ use zeroize::Zeroizing;
 
 use crate::dto::{
     Collection, CustomField, CustomFieldType, Folder, ItemDetail, ItemInput, ItemType,
-    LoginDetail, LoginUri, PasskeyCredential, TotpCode, VaultItem,
+    LoginDetail, LoginUri, TotpCode, VaultItem,
 };
 use crate::error::{AgateError, AgateResult, ErrorKind};
-use crate::passkey::{CoseAlgorithm, PasskeyTarget, StoredPasskey};
 
 /// KeePassXC's favorite convention: a literal "Favorite" tag on the entry.
 const FAVORITE_TAG: &str = "Favorite";
@@ -57,30 +54,6 @@ const ADDITIONAL_URL_FIELD: &str = "KP2A_URL";
 /// Name for a recycle-bin group we create on first soft delete (mirrors
 /// KeePassXC's default).
 const RECYCLE_BIN_NAME: &str = "Recycle Bin";
-
-/// KeePassXC's passkey storage convention: a passkey lives on a normal entry as
-/// a set of `KPEX_PASSKEY_*` string attributes plus a `Passkey` tag, so a
-/// credential Agate writes is usable by KeePassXC and vice-versa.
-/// - `CREDENTIAL_ID` / `USER_HANDLE`: raw bytes, base64url (no padding).
-/// - `PRIVATE_KEY_PEM`: the PKCS#8 private key in PEM, stored **protected**.
-/// - `ALGORITHM`: an Agate convenience attribute ("ES256"/"EdDSA"/"RS256") so a
-///   reader needn't parse the PEM; KeePassXC ignores unknown attributes, so it's
-///   harmless to interop. A passkey written by *another* client lacks it — we
-///   then default to ES256 (the common case) until the ceremony layer (which has
-///   the crypto crate) can infer the algorithm from the key.
-const PASSKEY_CREDENTIAL_ID: &str = "KPEX_PASSKEY_CREDENTIAL_ID";
-const PASSKEY_PRIVATE_KEY_PEM: &str = "KPEX_PASSKEY_PRIVATE_KEY_PEM";
-const PASSKEY_RELYING_PARTY: &str = "KPEX_PASSKEY_RELYING_PARTY";
-const PASSKEY_USER_HANDLE: &str = "KPEX_PASSKEY_USER_HANDLE";
-const PASSKEY_USERNAME: &str = "KPEX_PASSKEY_USERNAME";
-const PASSKEY_ALGORITHM: &str = "KPEX_PASSKEY_ALGORITHM";
-const PASSKEY_FLAG_BE: &str = "KPEX_PASSKEY_FLAG_BE";
-const PASSKEY_FLAG_BS: &str = "KPEX_PASSKEY_FLAG_BS";
-const PASSKEY_FIELD_PREFIX: &str = "KPEX_PASSKEY_";
-// Only the (currently-unwired) create path tags an entry; allow until the
-// ceremony adapter calls it.
-#[allow(dead_code)]
-const PASSKEY_TAG: &str = "Passkey";
 
 /// KeePass standard fields owned by the typed parts of `ItemInput` — never
 /// surfaced or writable as custom fields. Exact match: KeePass field names are
@@ -454,123 +427,6 @@ impl KeepassConnection {
     }
 }
 
-// ── passkeys (FIDO2 / WebAuthn) ──────────────────────────────────────────────
-//
-// A passkey is stored on its own entry as KeePassXC-compatible `KPEX_PASSKEY_*`
-// attributes (see the constants above) — so the same atomic-save guarantees as
-// any other write apply, and credentials interoperate with KeePassXC.
-//
-// `create_passkey` is driven by the ceremony adapter; `remove_passkey` by
-// `mutate::remove_passkey`. (Read-side display — `has_passkey` and the detail
-// metadata — is live via `list_items` / `item_detail`.)
-impl KeepassConnection {
-    /// Every stored passkey whose relying party matches `rp_id` (deleted entries
-    /// excluded). A malformed passkey entry is skipped with a warning, never
-    /// fatal to the lookup.
-    pub fn find_passkeys_for_rp(&self, rp_id: &str) -> AgateResult<Vec<StoredPasskey>> {
-        let bin = bin_group_ids(&self.db);
-        let mut out = Vec::new();
-        for entry in self.db.iter_all_entries() {
-            if bin.contains(&entry.parent().id()) {
-                continue;
-            }
-            if entry.get(PASSKEY_RELYING_PARTY) == Some(rp_id) {
-                if let Some(passkey) = read_stored_passkey(&entry) {
-                    out.push(passkey);
-                }
-            }
-        }
-        Ok(out)
-    }
-
-    /// One stored passkey by credential id, if present and not deleted.
-    pub fn get_passkey(&self, credential_id: &[u8]) -> AgateResult<Option<StoredPasskey>> {
-        let target = URL_SAFE_NO_PAD.encode(credential_id);
-        let bin = bin_group_ids(&self.db);
-        for entry in self.db.iter_all_entries() {
-            if bin.contains(&entry.parent().id()) {
-                continue;
-            }
-            if entry.get(PASSKEY_CREDENTIAL_ID) == Some(target.as_str()) {
-                return Ok(read_stored_passkey(&entry));
-            }
-        }
-        Ok(None)
-    }
-
-    /// Store a freshly-minted passkey at `target`, then save atomically:
-    /// - `target.item_id` set → attach it to that existing entry (e.g. the
-    ///   user's existing login for the site); refuses if the entry already holds
-    ///   a passkey (one passkey per entry, the KeePassXC convention).
-    /// - otherwise → create a new entry in `target.folder_id` (or the root),
-    ///   titled by the relying party.
-    pub fn create_passkey(&mut self, passkey: &StoredPasskey, target: &PasskeyTarget) -> AgateResult<()> {
-        match &target.item_id {
-            Some(item_id) => {
-                let eid = EntryId::from_uuid(parse_uuid(item_id, "No such item.")?);
-                self.mutate_and_save(|db| {
-                    match db.entry(eid) {
-                        Some(entry) if entry.get(PASSKEY_CREDENTIAL_ID).is_some_and(|v| !v.is_empty()) => {
-                            return Err(AgateError::bad_request("That item already has a passkey."));
-                        }
-                        Some(_) => {}
-                        None => return Err(AgateError::bad_request("No such item.")),
-                    }
-                    let mut entry = db
-                        .entry_mut(eid)
-                        .ok_or_else(|| AgateError::bad_request("No such item."))?;
-                    entry.edit_tracking(|tracked| {
-                        set_passkey_attrs(tracked, passkey);
-                        tracked.times.last_modification = Some(Times::now());
-                    });
-                    Ok(())
-                })
-            }
-            None => {
-                self.mutate_and_save(|db| {
-                    let group_id = resolve_target_group(db, target.folder_id.as_deref())?;
-                    let title = passkey.rp_name.clone().unwrap_or_else(|| passkey.rp_id.clone());
-                    let mut group = db
-                        .group_mut(group_id)
-                        .ok_or_else(|| AgateError::bad_request("No such folder."))?;
-                    let mut entry = group.add_entry();
-                    entry.set_unprotected(kpf::TITLE, title.as_str());
-                    if let Some(name) = &passkey.user_name {
-                        entry.set_unprotected(kpf::USERNAME, name.as_str());
-                    }
-                    set_passkey_attrs(&mut entry, passkey);
-                    Ok(())
-                })
-            }
-        }
-    }
-
-    /// Remove a passkey from its entry: strips the `KPEX_PASSKEY_*` attributes
-    /// and the `Passkey` tag, leaving the entry (and any login it was attached
-    /// to) intact. Non-destructive — it never deletes the item itself.
-    pub fn remove_passkey(&mut self, credential_id: &[u8]) -> AgateResult<()> {
-        let target = URL_SAFE_NO_PAD.encode(credential_id);
-        let eid = self
-            .db
-            .iter_all_entries()
-            .find(|e| e.get(PASSKEY_CREDENTIAL_ID) == Some(target.as_str()))
-            .map(|e| e.id());
-        let Some(eid) = eid else {
-            return Err(AgateError::bad_request("No such passkey."));
-        };
-        self.mutate_and_save(move |db| {
-            let mut entry = db
-                .entry_mut(eid)
-                .ok_or_else(|| AgateError::bad_request("No such passkey."))?;
-            entry.edit_tracking(|tracked| {
-                strip_passkey_attrs(tracked);
-                tracked.times.last_modification = Some(Times::now());
-            });
-            Ok(())
-        })
-    }
-}
-
 // ── read surface (mirrors BitwardenConnection) ──────────────────────────────
 
 impl KeepassConnection {
@@ -627,7 +483,7 @@ impl KeepassConnection {
             .flat_map(|e| {
                 e.fields
                     .keys()
-                    .filter(|k| !RESERVED_FIELDS.contains(&k.as_str()) && !is_passkey_field(k))
+                    .filter(|k| !RESERVED_FIELDS.contains(&k.as_str()))
                     .cloned()
                     .collect::<Vec<_>>()
             })
@@ -659,9 +515,7 @@ impl KeepassConnection {
         let mut fields: Vec<CustomField> = entry
             .fields
             .iter()
-            // Passkey `KPEX_PASSKEY_*` attributes (incl. the private key) must
-            // never surface as user-visible/editable custom fields.
-            .filter(|(name, _)| !RESERVED_FIELDS.contains(&name.as_str()) && !is_passkey_field(name))
+            .filter(|(name, _)| !RESERVED_FIELDS.contains(&name.as_str()))
             .map(|(name, value)| CustomField {
                 name: Some(name.clone()),
                 value: Some(value.get().clone()),
@@ -675,21 +529,6 @@ impl KeepassConnection {
             .collect();
         // KeePass stores fields unordered; sort for a stable detail pane.
         fields.sort_by(|a, b| a.name.cmp(&b.name));
-
-        // A passkey entry surfaces display-only metadata (the private key never
-        // leaves the backend, so it is not part of the DTO).
-        let passkeys = match read_stored_passkey(&entry) {
-            Some(pk) => vec![PasskeyCredential {
-                credential_id: URL_SAFE_NO_PAD.encode(&pk.credential_id),
-                rp_id: pk.rp_id,
-                rp_name: pk.rp_name,
-                user_name: pk.user_name,
-                user_display_name: pk.user_display_name,
-                key_algorithm: pk.algorithm.label().to_string(),
-                creation_date: pk.created,
-            }],
-            None => Vec::new(),
-        };
 
         Ok(ItemDetail {
             id: entry.id().uuid().to_string(),
@@ -710,7 +549,6 @@ impl KeepassConnection {
             revision_date: rfc3339(entry.times.last_modification),
             creation_date: rfc3339(entry.times.creation),
             collection_ids: Vec::new(),
-            passkeys,
         })
     }
 
@@ -1040,105 +878,6 @@ fn set_favorite_tag(entry: &mut Entry, favorite: bool) {
     }
 }
 
-/// Whether a field name is one of the passkey `KPEX_PASSKEY_*` attributes —
-/// managed by the passkey layer, never surfaced or editable as a custom field
-/// (the private key must never reach the frontend or be clobbered by an edit).
-fn is_passkey_field(name: &str) -> bool {
-    name.starts_with(PASSKEY_FIELD_PREFIX)
-}
-
-/// Whether an entry carries a passkey (has a non-empty credential-id attribute).
-fn entry_has_passkey(entry: &EntryRef<'_>) -> bool {
-    entry.get(PASSKEY_CREDENTIAL_ID).is_some_and(|v| !v.is_empty())
-}
-
-fn bool_str(value: bool) -> &'static str {
-    if value {
-        "true"
-    } else {
-        "false"
-    }
-}
-
-/// Write the `KPEX_PASSKEY_*` attributes (+ `Passkey` tag) for a passkey onto an
-/// entry, leaving the entry's other fields (title/username/etc.) untouched — so
-/// it works both for a fresh entry and for attaching to an existing login.
-fn set_passkey_attrs(entry: &mut Entry, passkey: &StoredPasskey) {
-    let cred_b64 = URL_SAFE_NO_PAD.encode(&passkey.credential_id);
-    let handle_b64 = URL_SAFE_NO_PAD.encode(&passkey.user_handle);
-    if let Some(name) = &passkey.user_name {
-        entry.set_unprotected(PASSKEY_USERNAME, name.as_str());
-    }
-    entry.set_unprotected(PASSKEY_RELYING_PARTY, passkey.rp_id.as_str());
-    entry.set_unprotected(PASSKEY_CREDENTIAL_ID, cred_b64.as_str());
-    entry.set_unprotected(PASSKEY_USER_HANDLE, handle_b64.as_str());
-    // The private key is the one secret here → store it protected.
-    entry.set_protected(PASSKEY_PRIVATE_KEY_PEM, passkey.private_key_pem.as_str());
-    entry.set_unprotected(PASSKEY_ALGORITHM, passkey.algorithm.label());
-    entry.set_unprotected(PASSKEY_FLAG_BE, bool_str(passkey.backup_eligible));
-    entry.set_unprotected(PASSKEY_FLAG_BS, bool_str(passkey.backup_state));
-    if !entry.tags.iter().any(|t| t == PASSKEY_TAG) {
-        entry.tags.push(PASSKEY_TAG.to_string());
-    }
-}
-
-/// Strip every `KPEX_PASSKEY_*` attribute (+ the `Passkey` tag) from an entry,
-/// removing the passkey while leaving the rest of the entry untouched.
-fn strip_passkey_attrs(entry: &mut Entry) {
-    for field in [
-        PASSKEY_USERNAME,
-        PASSKEY_RELYING_PARTY,
-        PASSKEY_CREDENTIAL_ID,
-        PASSKEY_USER_HANDLE,
-        PASSKEY_PRIVATE_KEY_PEM,
-        PASSKEY_ALGORITHM,
-        PASSKEY_FLAG_BE,
-        PASSKEY_FLAG_BS,
-    ] {
-        entry.fields.remove(field);
-    }
-    entry.tags.retain(|t| t != PASSKEY_TAG);
-}
-
-/// Read a passkey off an entry, or `None` when the entry holds no passkey (or
-/// its base64 is unreadable — logged and skipped, never fatal to a lookup).
-fn read_stored_passkey(entry: &EntryRef<'_>) -> Option<StoredPasskey> {
-    let cred_b64 = entry.get(PASSKEY_CREDENTIAL_ID).filter(|s| !s.is_empty())?;
-    let credential_id = match URL_SAFE_NO_PAD.decode(cred_b64) {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            log::warn!("skipping passkey entry with an unreadable credential id: {e}");
-            return None;
-        }
-    };
-    let user_handle = entry
-        .get(PASSKEY_USER_HANDLE)
-        .and_then(|s| URL_SAFE_NO_PAD.decode(s).ok())
-        .unwrap_or_default();
-    // A passkey written by another client has no ALGORITHM attribute; default to
-    // ES256 (the common case) until the ceremony layer can infer it from the key.
-    let algorithm = entry
-        .get(PASSKEY_ALGORITHM)
-        .and_then(CoseAlgorithm::from_label)
-        .unwrap_or(CoseAlgorithm::Es256);
-    Some(StoredPasskey {
-        credential_id,
-        rp_id: entry.get(PASSKEY_RELYING_PARTY).unwrap_or_default().to_string(),
-        rp_name: None,
-        user_handle,
-        user_name: non_empty(entry.get(PASSKEY_USERNAME)),
-        user_display_name: None,
-        algorithm,
-        private_key_pem: Zeroizing::new(
-            entry.get(PASSKEY_PRIVATE_KEY_PEM).unwrap_or_default().to_string(),
-        ),
-        sign_count: 0,
-        created: rfc3339(entry.times.creation),
-        backup_eligible: entry.get(PASSKEY_FLAG_BE) == Some("true"),
-        backup_state: entry.get(PASSKEY_FLAG_BS) == Some("true"),
-    })
-}
-
 /// Every group id in the recycle-bin subtree (the bin itself included), or
 /// empty when the database has no bin. Entries whose parent is in this set are
 /// "deleted".
@@ -1209,7 +948,6 @@ fn entry_to_list_item(
         username: non_empty(entry.get_username()),
         uri: non_empty(entry.get_url()),
         has_totp: non_empty(entry.get_raw_otp_value()).is_some(),
-        has_passkey: entry_has_passkey(entry),
         reprompt: false,
         favorite: has_favorite_tag(entry),
         deleted: bin.contains(&parent),
@@ -1277,10 +1015,6 @@ fn apply_input(entry: &mut Entry, input: &ItemInput) {
         let Some(name) = field.name.as_deref().filter(|n| !n.is_empty()) else { continue };
         if RESERVED_FIELDS.contains(&name) {
             log::warn!("ignoring custom field that collides with a standard KeePass field");
-            continue;
-        }
-        if is_passkey_field(name) {
-            log::warn!("ignoring custom field that collides with a passkey attribute");
             continue;
         }
         match field.value.as_deref() {
@@ -1637,7 +1371,6 @@ mod tests {
         assert!(github.has_totp);
         assert!(github.favorite);
         assert!(!github.deleted);
-        assert!(!github.has_passkey);
         assert!(!github.reprompt);
         assert_eq!(github.folder_id, None, "root entries have no folder");
         assert_eq!(github.organization_id, None);
@@ -1661,7 +1394,6 @@ mod tests {
         assert_eq!(detail.notes.as_deref(), Some("main account"));
         assert!(detail.favorite);
         assert!(detail.collection_ids.is_empty());
-        assert!(detail.passkeys.is_empty());
 
         let login = detail.login.as_ref().unwrap();
         assert_eq!(login.username.as_deref(), Some("octocat"));
@@ -2141,174 +1873,4 @@ mod tests {
         conn.set_favorite(&fx.note_id, true).unwrap();
     }
 
-    // ── passkeys ──────────────────────────────────────────────────────────────
-
-    fn sample_passkey(rp: &str) -> StoredPasskey {
-        StoredPasskey {
-            credential_id: vec![1, 2, 3, 4, 5, 6, 7, 8],
-            rp_id: rp.to_string(),
-            rp_name: Some("Example Site".into()),
-            user_handle: vec![9, 8, 7],
-            user_name: Some("octocat".into()),
-            user_display_name: Some("Octo Cat".into()),
-            algorithm: CoseAlgorithm::Es256,
-            // The storage layer treats the PEM as an opaque protected blob — a
-            // placeholder is enough here; real key material arrives with the
-            // ceremony layer.
-            private_key_pem: Zeroizing::new(
-                "-----BEGIN PRIVATE KEY-----\nMIIfake\n-----END PRIVATE KEY-----\n".into(),
-            ),
-            sign_count: 0,
-            created: String::new(),
-            backup_eligible: true,
-            backup_state: true,
-        }
-    }
-
-    #[test]
-    fn passkey_create_find_get_roundtrips_through_disk() {
-        let fx = fixture();
-        let mut conn = open_conn(&fx.path);
-        conn.create_passkey(&sample_passkey("github.com"), &PasskeyTarget::default()).unwrap();
-
-        // reopened from disk → the credential persisted
-        let conn2 = open_conn(&fx.path);
-        let found = conn2.find_passkeys_for_rp("github.com").unwrap();
-        assert_eq!(found.len(), 1);
-        let pk = &found[0];
-        assert_eq!(pk.rp_id, "github.com");
-        assert_eq!(pk.credential_id, vec![1, 2, 3, 4, 5, 6, 7, 8]);
-        assert_eq!(pk.user_handle, vec![9, 8, 7]);
-        assert_eq!(pk.user_name.as_deref(), Some("octocat"));
-        assert_eq!(pk.algorithm, CoseAlgorithm::Es256);
-        assert!(pk.backup_eligible && pk.backup_state);
-        assert!(pk.private_key_pem.contains("BEGIN PRIVATE KEY"));
-
-        // lookup by credential id; unknown ids and other RPs return nothing
-        assert!(conn2.get_passkey(&[1, 2, 3, 4, 5, 6, 7, 8]).unwrap().is_some());
-        assert!(conn2.get_passkey(&[0, 0, 0, 0]).unwrap().is_none());
-        assert!(conn2.find_passkeys_for_rp("example.org").unwrap().is_empty());
-    }
-
-    #[test]
-    fn passkey_flags_has_passkey_and_detail_metadata_without_leaking_the_key() {
-        let fx = fixture();
-        let mut conn = open_conn(&fx.path);
-        conn.create_passkey(&sample_passkey("github.com"), &PasskeyTarget::default()).unwrap();
-        let conn2 = open_conn(&fx.path);
-
-        let items = conn2.list_items("kp", "KeePass");
-        let row = items.iter().find(|i| i.has_passkey).expect("a row flags has_passkey");
-
-        let detail = conn2.item_detail("kp", "KeePass", &row.id).unwrap();
-        assert_eq!(detail.passkeys.len(), 1);
-        assert_eq!(detail.passkeys[0].rp_id, "github.com");
-        assert_eq!(detail.passkeys[0].key_algorithm, "ES256");
-        assert_eq!(detail.passkeys[0].user_name.as_deref(), Some("octocat"));
-
-        // SECURITY: the KPEX_PASSKEY_* attributes (incl. the private key) must
-        // never surface as user-visible/editable custom fields.
-        assert!(
-            detail
-                .fields
-                .iter()
-                .all(|f| f.name.as_deref().is_none_or(|n| !n.starts_with("KPEX_PASSKEY_"))),
-            "passkey attributes leaked into custom fields: {:?}",
-            detail.fields
-        );
-        assert!(!conn2.custom_field_names().iter().any(|n| n.starts_with("KPEX_PASSKEY_")));
-    }
-
-    #[test]
-    fn passkey_uses_keepassxc_compatible_attributes() {
-        let fx = fixture();
-        let mut conn = open_conn(&fx.path);
-        conn.create_passkey(&sample_passkey("github.com"), &PasskeyTarget::default()).unwrap();
-
-        // Open the file with the raw crate (no Agate) and assert the exact
-        // KeePassXC attribute names + that the private key is stored protected.
-        let raw = open_raw(&fx.path);
-        let entry = raw
-            .iter_all_entries()
-            .find(|e| e.get("KPEX_PASSKEY_RELYING_PARTY") == Some("github.com"))
-            .expect("a KeePassXC-named passkey entry exists");
-        assert!(entry.get("KPEX_PASSKEY_CREDENTIAL_ID").is_some());
-        assert!(entry.get("KPEX_PASSKEY_USER_HANDLE").is_some());
-        assert_eq!(entry.get("KPEX_PASSKEY_USERNAME"), Some("octocat"));
-        assert!(
-            entry.fields.get("KPEX_PASSKEY_PRIVATE_KEY_PEM").unwrap().is_protected(),
-            "the passkey private key must be stored protected"
-        );
-        assert!(entry.tags.iter().any(|t| t == "Passkey"), "passkey entry carries the Passkey tag");
-    }
-
-    #[test]
-    fn passkey_remove_strips_it_without_deleting_the_item() {
-        let fx = fixture();
-        let mut conn = open_conn(&fx.path);
-        // attach a passkey to the GitHub login, then remove just the passkey
-        let target = PasskeyTarget { item_id: Some(fx.github_id.clone()), folder_id: None };
-        conn.create_passkey(&sample_passkey("github.com"), &target).unwrap();
-        conn.remove_passkey(&[1, 2, 3, 4, 5, 6, 7, 8]).unwrap();
-
-        let conn2 = open_conn(&fx.path);
-        // the passkey is gone from lookups + a cold reopen...
-        assert!(conn2.find_passkeys_for_rp("github.com").unwrap().is_empty());
-        assert!(conn2.get_passkey(&[1, 2, 3, 4, 5, 6, 7, 8]).unwrap().is_none());
-        // ...but the GitHub login is INTACT (not deleted; its fields preserved)
-        let detail = conn2.item_detail("kp", "KeePass", &fx.github_id).unwrap();
-        assert!(detail.passkeys.is_empty(), "passkey metadata gone");
-        assert_eq!(detail.login.as_ref().unwrap().password.as_deref(), Some("hunter2"));
-        assert!(
-            conn2.list_items("kp", "KeePass").iter().any(|i| i.id == fx.github_id && !i.has_passkey),
-            "the login item still exists, without a passkey"
-        );
-
-        // removing an unknown credential is a typed error, not a panic
-        let mut conn3 = open_conn(&fx.path);
-        let err = conn3.remove_passkey(&[0, 0]).unwrap_err();
-        assert!(matches!(err.kind, ErrorKind::BadRequest), "got: {err}");
-    }
-
-    #[test]
-    fn passkey_attaches_to_an_existing_item() {
-        let fx = fixture();
-        let mut conn = open_conn(&fx.path);
-        // attach a passkey to the user's existing GitHub login
-        let target = PasskeyTarget { item_id: Some(fx.github_id.clone()), folder_id: None };
-        conn.create_passkey(&sample_passkey("github.com"), &target).unwrap();
-
-        let conn2 = open_conn(&fx.path);
-        // no NEW entry was created — still the fixture's 3 items
-        assert_eq!(conn2.list_items("kp", "KeePass").len(), 3);
-        // the GitHub item now carries the passkey AND keeps its login fields
-        let detail = conn2.item_detail("kp", "KeePass", &fx.github_id).unwrap();
-        assert_eq!(detail.passkeys.len(), 1);
-        let login = detail.login.as_ref().unwrap();
-        assert_eq!(login.username.as_deref(), Some("octocat"));
-        assert_eq!(login.password.as_deref(), Some("hunter2"), "attaching a passkey preserves the login");
-
-        // a second passkey on the same item is refused
-        let mut conn3 = open_conn(&fx.path);
-        let err = conn3.create_passkey(&sample_passkey("github.com"), &target).unwrap_err();
-        assert!(matches!(err.kind, ErrorKind::BadRequest), "got: {err}");
-    }
-
-    #[test]
-    fn passkey_creates_new_item_in_target_folder() {
-        let fx = fixture();
-        let mut conn = open_conn(&fx.path);
-        let target = PasskeyTarget { item_id: None, folder_id: Some(fx.work_id.clone()) };
-        conn.create_passkey(&sample_passkey("example.com"), &target).unwrap();
-
-        let conn2 = open_conn(&fx.path);
-        let items = conn2.list_items("kp", "KeePass");
-        let created = items.iter().find(|i| i.has_passkey).expect("a new passkey item exists");
-        assert_eq!(
-            created.folder_id.as_deref(),
-            Some(fx.work_id.as_str()),
-            "the new passkey item lands in the chosen folder"
-        );
-        assert_eq!(conn2.find_passkeys_for_rp("example.com").unwrap().len(), 1);
-    }
 }

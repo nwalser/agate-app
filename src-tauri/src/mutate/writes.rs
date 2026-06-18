@@ -13,8 +13,6 @@
 //! to `None`); edit round-trips the decrypted `CipherView` through JSON so fields
 //! we don't enumerate (key, password_history, dates…) are preserved.
 
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use base64::Engine as _;
 use bitwarden_api_api::models::{CipherCreateRequestModel, CipherRequestModel};
 use bitwarden_pm::PasswordManagerClient;
 use bitwarden_vault::{Cipher, CipherId, CipherView};
@@ -356,65 +354,6 @@ pub async fn associate_uri(
             encrypt_and_push(&client, view, Push::Edit(parse_id::<CipherId>(item_id)?)).await
         },
         |k| k.add_autofill_uri(item_id, uri),
-    )
-    .await
-}
-
-/// Remove a stored passkey from an item, identified by its base64url credential
-/// id. KeePass strips the passkey's attributes (the item itself survives);
-/// Bitwarden drops the matching FIDO2 credential from the cipher's login and
-/// re-saves. The frontend re-syncs after a successful write.
-///
-/// ⚠️ The Bitwarden path is UNVERIFIED against a real account (see
-/// `BitwardenConnection::create_passkey`).
-pub async fn remove_passkey(
-    state: &AppState,
-    account_email: &str,
-    item_id: &str,
-    credential_id: &str,
-) -> AgateResult<()> {
-    super::dispatch_write(
-        state,
-        account_email,
-        |client| async move {
-            let mut view = decrypt_one(state, account_email, item_id).await?;
-
-            // Find which FIDO2 credential matches, by its (plaintext) credential id.
-            let idx = {
-                let key_store = client.0.internal.get_key_store();
-                let mut ctx = key_store.context();
-                let creds = view
-                    .decrypt_fido2_credentials(&mut ctx)
-                    .map_err(|e| op_err(ErrorKind::Crypto, "read passkeys", e))?;
-                creds
-                    .iter()
-                    .position(|c| c.credential_id == credential_id)
-                    .ok_or_else(|| AgateError::bad_request("No such passkey."))?
-            };
-
-            // Drop the encrypted credential at that index (order matches the views),
-            // then re-encrypt + save the cipher. Remaining credentials pass through.
-            let removed = view
-                .login
-                .as_mut()
-                .and_then(|l| l.fido2_credentials.as_mut())
-                .filter(|creds| idx < creds.len())
-                .map(|creds| {
-                    creds.remove(idx);
-                })
-                .is_some();
-            if !removed {
-                return Err(AgateError::bad_request("No such passkey."));
-            }
-
-            encrypt_and_push(&client, view, Push::Edit(parse_id::<CipherId>(item_id)?)).await
-        },
-        |k| {
-            let bytes = URL_SAFE_NO_PAD
-                .decode(credential_id)
-                .map_err(|_| AgateError::bad_request("invalid credential id"))?;
-            k.remove_passkey(&bytes)
-        },
     )
     .await
 }
