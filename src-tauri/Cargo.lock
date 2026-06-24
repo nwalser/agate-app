@@ -119,7 +119,7 @@ dependencies = [
  "sequoia-openpgp",
  "serde",
  "serde_json",
- "sha1 0.10.6",
+ "sha1",
  "sha2 0.10.9",
  "specta",
  "specta-typescript",
@@ -767,7 +767,7 @@ dependencies = [
  "serde",
  "serde_bytes",
  "serde_repr",
- "sha1 0.11.0",
+ "sha1",
  "sha2 0.11.0",
  "subtle",
  "thiserror 2.0.18",
@@ -1123,7 +1123,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_repr",
- "sha1 0.11.0",
+ "sha1",
  "sha2 0.11.0",
  "subtle",
  "thiserror 2.0.18",
@@ -2161,7 +2161,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ccc2776f0c61eca1ca32528f85548abd1a4be8fb53d1b21c013e4f18da1e7090"
 dependencies = [
  "data-encoding",
- "syn 2.0.117",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -7168,17 +7168,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "170fb83ab34de17dc69aa7c67482b22218ddb85da56546f9bd6b929e32a05930"
 dependencies = [
  "stable_deref_trait",
-]
-
-[[package]]
-name = "sha1"
-version = "0.10.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e3bf829a2d51ab4a5ddf1352d8470c140cadc8301b2ae1789db023f01cedd6ba"
-dependencies = [
- "cfg-if",
- "cpufeatures 0.2.17",
- "digest 0.10.7",
 ]
 
 [[package]]
