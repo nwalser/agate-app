@@ -8,7 +8,8 @@
 
 import { createMemo, createSignal, Show } from 'solid-js';
 import type { JSX } from 'solid-js';
-import { LoaderCircle, ShieldCheck } from 'lucide-solid';
+import { LoaderCircle } from 'lucide-solid';
+import { AgateLogo } from '../../components/AgateLogo.tsx';
 import { ipc } from '../../lib/ipc.ts';
 import { t } from '../../lib/i18n.ts';
 import { toastError } from '../../state/toast.ts';
@@ -50,7 +51,7 @@ export default function TrayOnboarding(props: { onDone: () => void }): JSX.Eleme
   return (
     <div class="tray-onboard">
       <div class="tray-onboard-brand">
-        <ShieldCheck size={26} strokeWidth={1.75} />
+        <AgateLogo size={26} />
         <span>Agate</span>
       </div>
       <p class="tray-onboard-intro">{t('trayOnboard.intro')}</p>

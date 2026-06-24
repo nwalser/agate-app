@@ -47,6 +47,7 @@ import {
   X,
 } from 'lucide-solid';
 import ToastHost from '../components/Toast.tsx';
+import { AgateLogo } from '../components/AgateLogo.tsx';
 import Favicon from '../components/Favicon.tsx';
 import CopyButton from '../components/CopyButton.tsx';
 import { Dropdown } from '../components/Dropdown.tsx';
@@ -595,7 +596,7 @@ export default function TrayApp() {
                 <div class="tray-unlock-aurora" aria-hidden="true" />
               </Show>
               <span class="tray-lock-badge" classList={{ working: isUnlocking() }}>
-                <LockKeyhole size={26} />
+                <AgateLogo size={26} />
               </span>
               <span>{isUnlocking() ? t('tray.unlocking') : t('tray.locked')}</span>
               {/* Same honest indeterminate sweep as the main Unlock screen. */}
