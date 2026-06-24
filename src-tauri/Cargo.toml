@@ -58,7 +58,7 @@ uuid = { version = "1", features = ["v4"] }
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 argon2 = "0.5"
 aes-gcm = "0.10"
-rand = "0.8"
+rand = "0.10"
 zeroize = { version = "1", features = ["derive"] }
 base64 = "0.22"
 
